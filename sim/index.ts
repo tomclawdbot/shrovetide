@@ -40,7 +40,9 @@ export {
 
 export {
   createWorld,
+  integrateControlVelocity,
   stepWorld,
+  MOVEMENT,
   PLAYER_RADIUS,
   NPC_RADIUS,
   BALL_RADIUS,
@@ -49,6 +51,7 @@ export {
   SIM_DT,
   SQUAD_SIZE,
   type CreateWorldOptions,
+  type MovementTuning,
   type World,
 } from './world.js';
 
@@ -77,4 +80,4 @@ export {
 } from './placement.js';
 
 // Switching
-export { switchControl, quickSwitch, cycleTeammate } from './switching.js';
+export { switchControl, quickSwitch, cycleTeammate, controlRing } from './switching.js';

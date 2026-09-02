@@ -6,9 +6,18 @@
 //
 // quickSwitch(world): switches to the teammate nearest the ball.
 //
+// cycleTeammate(world): steps to the next teammate in a stable ring.
+//
 // Switching is instant (no cooldown per spec). The physics body of the
 // previously-controlled character is just relabelled — positions are
 // preserved. The Map-keyed physics handle means no body shuffle.
+//
+// TICKET 003a fixes:
+//   - cycleTeammate actually cycles. It previously sorted the teammate ids
+//     and always returned the first one, so TAB jumped to the same character
+//     every time.
+//   - Switching resets world._controlVel, so the newly-controlled character
+//     starts from rest instead of inheriting the old one's momentum.
 
 import type { NPC, Player, Role, Team } from './types.js';
 import type { World } from './world.js';
@@ -60,6 +69,10 @@ export function switchControl(world: World, targetId: string): boolean {
   world.npcs[targetIdx] = demoted;
   world.player = promoted;
 
+  // Fresh legs: the new character shouldn't inherit the old one's momentum.
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+
   // Re-tag the physics body label so debug overlays stay readable.
   const demotedBody = world.physics.bodies.get(prev.id);
   if (demotedBody) demotedBody.label = `npc-${prev.id}`;
@@ -98,20 +111,40 @@ export function quickSwitch(world: World): string | null {
   return switchControl(world, bestId) ? bestId : null;
 }
 
-/** Cycle to the next teammate (for TAB). Returns new id or null. */
+/**
+ * Build the full control ring for the player's team: every teammate plus the
+ * currently-controlled character, in stable sorted-id order. Exported mainly
+ * so the client can render a "next up" hint if it wants to.
+ */
+export function controlRing(world: World): string[] {
+  const ids = world.npcs
+    .filter((n) => n.team === world.player.team)
+    .map((n) => n.id);
+  ids.push(world.player.id);
+  return ids.sort();
+}
+
+/**
+ * Cycle to the next teammate in the ring (for TAB).
+ * Returns the new controlled id, or null if the switch didn't happen.
+ */
 export function cycleTeammate(world: World): string | null {
-  const teammates = world.npcs.filter((n) => n.team === world.player.team);
-  if (teammates.length === 0) return null;
-  const currentIdx = teammates.findIndex((n) => n.id === world.player.id);
-  // currentIdx is -1 because the player is not in npcs. Use order after the
-  // controlled character's "previous" slot.
-  // Easier: pick the next teammate in stable id order, skipping nothing.
-  const sortedIds = teammates.map((n) => n.id).sort();
-  // Pick first teammate with a different id from the previous controlled one.
-  // For cycling, just return the first teammate.
-  void currentIdx;
-  const target = sortedIds[0];
-  return target ? (switchControl(world, target) ? target : null) : null;
+  if (world.matchState !== 'playing') return null;
+  const ring = controlRing(world);
+  if (ring.length < 2) return null;
+
+  const currentIdx = ring.indexOf(world.player.id);
+  if (currentIdx < 0) return null;
+
+  // Walk forward around the ring until we land on someone switchable.
+  // In practice the very next entry always works; the loop just makes the
+  // function total rather than relying on that.
+  for (let step = 1; step < ring.length; step++) {
+    const candidate = ring[(currentIdx + step) % ring.length];
+    if (!candidate || candidate === world.player.id) continue;
+    if (switchControl(world, candidate)) return candidate;
+  }
+  return null;
 }
 
 /** Re-export types for clients that import from this barrel. */

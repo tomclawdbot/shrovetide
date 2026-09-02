@@ -8,6 +8,17 @@
 //   - match state machine: 'placement' | 'playing' | 'over'
 //   - match timer + score + goaling + win state
 //   - physics bodies are Map-keyed by character id (for instant switching)
+//
+// TICKET 003a changes (game feel):
+//   - Controlled movement is no longer "velocity = input x maxSpeed". It now
+//     runs through an acceleration / deceleration / turn-rate model held in
+//     world._controlVel. See MOVEMENT below for the tuning constants.
+//   - Input deadzone + rescale so small analog/touch inputs don't snap the
+//     character to full tilt.
+//   - Ball carriers are slightly slower and turn more widely, so breakaways
+//     have weight and defenders can cut angles.
+//   - All of this is pure math: no Math.random, no wall-clock time, so the
+//     sim stays deterministic.
 
 import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
@@ -29,6 +40,41 @@ export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). */
 export const SQUAD_SIZE = 7;
 
+// ---------------------------------------------------------------------------
+// Movement tuning (TICKET 003a)
+//
+// Every constant that governs how the controlled character *feels* lives here
+// and nowhere else. Tune these, re-run, repeat. They are deliberately plain
+// numbers rather than a config file so the sim stays dependency-free.
+// ---------------------------------------------------------------------------
+
+export interface MovementTuning {
+  /** Seconds from standstill to full speed. Lower = twitchier. */
+  timeToMaxSpeed: number;
+  /** Seconds from full speed to standstill once input is released. */
+  timeToStop: number;
+  /** Maximum heading change in radians per second while moving. */
+  maxTurnRateRad: number;
+  /** Input magnitudes at or below this are treated as no input at all. */
+  inputDeadzone: number;
+  /** Speed multiplier applied while carrying the ball. */
+  carrierSpeedMult: number;
+  /** Turn-rate multiplier applied while carrying the ball (wider arcs). */
+  carrierTurnMult: number;
+  /** Speeds below this with no input snap to a dead stop (kills micro-slide). */
+  restSpeedEpsilon: number;
+}
+
+export const MOVEMENT: MovementTuning = {
+  timeToMaxSpeed: 0.15,
+  timeToStop: 0.1,
+  maxTurnRateRad: Math.PI * 3.2,
+  inputDeadzone: 0.15,
+  carrierSpeedMult: 0.88,
+  carrierTurnMult: 0.6,
+  restSpeedEpsilon: 0.5,
+};
+
 /** Full world. Extends SimState with internal handles (physics + RNG). */
 export interface World extends SimState {
   /** Town map data — read-only after createWorld. */
@@ -37,6 +83,13 @@ export interface World extends SimState {
   physics: PhysicsWorldHandle;
   /** Internal — seeded RNG. */
   _rng: () => number;
+  /**
+   * Internal — the controlled character's *intended* velocity, integrated
+   * across ticks by the acceleration model. This is separate from the physics
+   * body's velocity, which also carries collision impulses from the hug.
+   * Reset to zero whenever control switches to a different character.
+   */
+  _controlVel: Vec2;
 }
 
 export interface CreateWorldOptions {
@@ -56,6 +109,14 @@ function mulberry32(seed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** Wrap an angle delta into [-PI, PI]. */
+function wrapAngle(a: number): number {
+  let x = a;
+  while (x > Math.PI) x -= Math.PI * 2;
+  while (x < -Math.PI) x += Math.PI * 2;
+  return x;
 }
 
 /** Build all 14 character records (7 home + 7 away). */
@@ -192,6 +253,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     winState: null,
     physics,
     _rng: rng,
+    _controlVel: { x: 0, y: 0 },
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -215,13 +277,83 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
 }
 
 /**
+ * Integrate the controlled character's velocity for one tick.
+ *
+ * Pure function of (previous control velocity, input, limits, dt) — mutates
+ * `out` in place and returns it. Extracted so it can be unit-tested without
+ * standing up a whole world.
+ */
+export function integrateControlVelocity(
+  out: Vec2,
+  input: Input,
+  maxSpeed: number,
+  carrying: boolean,
+  dt: number,
+): Vec2 {
+  // --- 1. Deadzone + rescale ------------------------------------------------
+  // Rescaling means the character eases in from the deadzone edge instead of
+  // jumping to full tilt the instant the threshold is crossed.
+  const rawLen = Math.hypot(input.move.x, input.move.y);
+  let desiredX = 0;
+  let desiredY = 0;
+  if (rawLen > MOVEMENT.inputDeadzone) {
+    const scaled = Math.min(
+      1,
+      (rawLen - MOVEMENT.inputDeadzone) / (1 - MOVEMENT.inputDeadzone),
+    );
+    desiredX = (input.move.x / rawLen) * scaled;
+    desiredY = (input.move.y / rawLen) * scaled;
+  }
+
+  const desiredLen = Math.hypot(desiredX, desiredY);
+  const targetSpeed =
+    desiredLen * maxSpeed * (carrying ? MOVEMENT.carrierSpeedMult : 1);
+
+  // --- 2. Heading, turn-rate limited ---------------------------------------
+  let curSpeed = Math.hypot(out.x, out.y);
+  let heading: number;
+  if (curSpeed > 1e-3) {
+    heading = Math.atan2(out.y, out.x);
+  } else if (desiredLen > 0) {
+    // From a standstill, snap straight to the input heading — no turn lag.
+    heading = Math.atan2(desiredY, desiredX);
+  } else {
+    heading = 0;
+  }
+
+  if (desiredLen > 0 && curSpeed > 1e-3) {
+    const desiredHeading = Math.atan2(desiredY, desiredX);
+    const delta = wrapAngle(desiredHeading - heading);
+    const maxTurn =
+      MOVEMENT.maxTurnRateRad * (carrying ? MOVEMENT.carrierTurnMult : 1) * dt;
+    heading += Math.max(-maxTurn, Math.min(maxTurn, delta));
+  }
+
+  // --- 3. Accelerate / decelerate toward the target speed -------------------
+  const accel = (maxSpeed / MOVEMENT.timeToMaxSpeed) * dt;
+  const decel = (maxSpeed / MOVEMENT.timeToStop) * dt;
+  if (targetSpeed > curSpeed) {
+    curSpeed = Math.min(targetSpeed, curSpeed + accel);
+  } else {
+    curSpeed = Math.max(targetSpeed, curSpeed - decel);
+  }
+  if (targetSpeed === 0 && curSpeed < MOVEMENT.restSpeedEpsilon) {
+    curSpeed = 0;
+  }
+
+  out.x = curSpeed === 0 ? 0 : Math.cos(heading) * curSpeed;
+  out.y = curSpeed === 0 ? 0 : Math.sin(heading) * curSpeed;
+  return out;
+}
+
+/**
  * Step the world by `dt` seconds.
  *
  * Order of operations (matters for determinism):
  *   1. Tick match state machine (timer + end-on-expiry).
  *   2. Update controlled character stamina.
  *   3. Lock carried ball to carrier.
- *   4. Apply controlled character velocity (input + water/stamina mult).
+ *   4. Integrate + apply controlled character velocity.
  *   5. Steer NPCs (role-based AI).
  *   6. Step matter.js physics.
  *   7. Sync sim positions/velocities from physics bodies.
@@ -249,21 +381,27 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);
 
-  // 4. Controlled character movement — direct velocity for responsiveness.
+  // 4. Controlled character movement.
+  //
+  // The acceleration model runs on world._controlVel, then environmental
+  // multipliers (exhaustion, water) scale the result. Multiplying *after*
+  // integration means wading into the river slows you immediately rather
+  // than bleeding speed over timeToStop seconds.
   const staminaMult = getSpeedMultiplier(player);
   const waterMult = speedMultiplierAt(player.position, map);
-  const len = Math.hypot(input.move.x, input.move.y);
-  let mx = 0;
-  let my = 0;
-  if (len > 0) {
-    mx = input.move.x / len;
-    my = input.move.y / len;
-  }
+  integrateControlVelocity(
+    world._controlVel,
+    input,
+    player.maxSpeed,
+    player.hasBall,
+    dt,
+  );
+  const envMult = staminaMult * waterMult;
   const controlledBody = physics.bodies.get(player.id);
   if (controlledBody) {
     Matter.Body.setVelocity(controlledBody, {
-      x: mx * player.maxSpeed * staminaMult * waterMult,
-      y: my * player.maxSpeed * staminaMult * waterMult,
+      x: world._controlVel.x * envMult,
+      y: world._controlVel.y * envMult,
     });
   }
 
