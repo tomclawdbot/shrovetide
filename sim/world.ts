@@ -1,41 +1,49 @@
 // sim/world.ts — world construction + the per-tick step function.
-// Orchestrates: stamina update, player velocity set, NPC steering,
-// physics step, state sync, ball pickup, ball-carry lock.
+// Orchestrates: stamina, controlled input, NPC steering, physics step,
+// state sync, ball pickup, ball OOB teleport, goaling, match timer.
+//
+// TICKET 002 changes:
+//   - map: TownMap data attached to world
+//   - 14 characters total (7 per team), one is controlled (world.player)
+//   - match state machine: 'placement' | 'playing' | 'over'
+//   - match timer + score + goaling + win state
+//   - physics bodies are Map-keyed by character id (for instant switching)
 
 import Matter from 'matter-js';
-import { createPhysicsWorld, stepPhysics, type PhysicsWorld } from './physics.js';
+import { ASHBOURNE_TOWN, TownMap, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
+import { createPhysicsWorld, stepPhysics, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import { steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
+import { tickMatch } from './match.js';
+import { tapGoal } from './goaling.js';
+import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
 import type { Ball, Input, NPC, Player, SimState, Team, Vec2 } from './types.js';
 
-export const FIELD_WIDTH = 1200;
-export const FIELD_HEIGHT = 800;
 export const PLAYER_RADIUS = 16;
 export const NPC_RADIUS = 14;
 export const BALL_RADIUS = 10;
 export const PLAYER_MAX_SPEED = 240; // pixels/sec
 export const NPC_MAX_SPEED = 180;
 export const SIM_DT = 1 / 60;
+/** Number of characters per team (including the controlled one). */
+export const SQUAD_SIZE = 7;
 
-/**
- * Full world object. Extends SimState with internal handles that are NOT
- * part of the serialized sim state (physics bodies + RNG). The server in
- * a future Colyseus deployment would broadcast SimState and reconstruct
- * physics locally if needed for prediction.
- */
+/** Full world. Extends SimState with internal handles (physics + RNG). */
 export interface World extends SimState {
-  /** Internal — not broadcast over the wire. */
-  _physics: PhysicsWorld;
-  /** Internal — seeded RNG so multiplayer stays deterministic. */
+  /** Town map data — read-only after createWorld. */
+  map: TownMap;
+  /** Internal — not broadcast over the wire in a future Colyseus deploy. */
+  physics: PhysicsWorldHandle;
+  /** Internal — seeded RNG. */
   _rng: () => number;
 }
 
 export interface CreateWorldOptions {
-  width?: number;
-  height?: number;
-  npcCount?: number;
+  map?: TownMap;
   seed?: number;
+  /** Which team the controlled player is on. Default 0 (Up'Ards). */
+  playerTeam?: Team;
 }
 
 /** mulberry32 — fast, deterministic 32-bit PRNG. */
@@ -50,19 +58,27 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function createWorld(opts: CreateWorldOptions = {}): World {
-  const width = opts.width ?? FIELD_WIDTH;
-  const height = opts.height ?? FIELD_HEIGHT;
-  const npcCount = opts.npcCount ?? 30;
-  const seed = opts.seed ?? 1;
+/** Build all 14 character records (7 home + 7 away). */
+function buildCharacters(
+  map: TownMap,
+  rng: () => number,
+  playerTeam: Team,
+): { player: Player; npcs: NPC[] } {
+  const opponentTeam: Team = playerTeam === 0 ? 1 : 0;
 
-  const rng = mulberry32(seed);
+  // Home team: 1 controlled player + 6 teammates.
+  const controlledId = `${playerTeam === 0 ? 'up' : 'down'}-1`;
+  // Spawn controlled player on home half, near their goal.
+  const controlledSpawn: Vec2 = playerTeam === 0
+    ? { x: map.width * 0.20, y: map.height * 0.50 }
+    : { x: map.width * 0.80, y: map.height * 0.50 };
 
   const player: Player = {
-    id: 'player',
+    id: controlledId,
     kind: 'player',
-    team: 0,
-    position: { x: width / 2, y: height / 2 },
+    team: playerTeam,
+    assignedRole: 'chase',
+    position: { ...controlledSpawn },
     velocity: { x: 0, y: 0 },
     radius: PLAYER_RADIUS,
     maxSpeed: PLAYER_MAX_SPEED,
@@ -71,31 +87,27 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     hasBall: false,
   };
 
-  const ball: Ball = {
-    id: 'ball',
-    kind: 'ball',
-    position: { x: width / 2 + 40, y: height / 2 },
-    velocity: { x: 0, y: 0 },
-    radius: BALL_RADIUS,
-    ownerId: null,
-  };
-
-  // 15 per team — split the field in two halves at kickoff.
+  // Build all 14 NPCs (6 teammates + 7 opponents).
   const npcs: NPC[] = [];
-  const npcPositions: Vec2[] = [];
-  for (let i = 0; i < npcCount; i++) {
-    const team: Team = i < npcCount / 2 ? 0 : 1;
-    const x =
-      team === 0
-        ? width * 0.2 + rng() * width * 0.15
-        : width * 0.65 + rng() * width * 0.15;
-    const y = height * 0.15 + rng() * height * 0.7;
-    npcPositions.push({ x, y });
+
+  // Home teammates: 6 (up-2..up-7 or down-2..down-7).
+  for (let i = 2; i <= SQUAD_SIZE; i++) {
+    const id = `${playerTeam === 0 ? 'up' : 'down'}-${i}`;
+    const angle = (i / SQUAD_SIZE) * Math.PI;
+    const r = map.height * 0.25;
+    const cx = playerTeam === 0 ? map.width * 0.30 : map.width * 0.70;
+    const cy = map.height * 0.50;
+    const raw = {
+      x: cx + Math.cos(angle) * r * (0.5 + rng()),
+      y: cy + Math.sin(angle) * r * (0.5 + rng()),
+    };
     npcs.push({
-      id: `npc-${i}`,
+      id,
       kind: 'npc',
-      team,
-      position: { x, y },
+      team: playerTeam,
+      role: 'chase',
+      holdPosition: null,
+      position: { ...nearestLegalPoint(raw, map) },
       velocity: { x: 0, y: 0 },
       radius: NPC_RADIUS,
       maxSpeed: NPC_MAX_SPEED,
@@ -104,50 +116,142 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     });
   }
 
-  const physics = createPhysicsWorld(
-    width,
-    height,
-    { playerPosition: player.position, npcPositions, ballPosition: ball.position },
-    { player: PLAYER_RADIUS, npc: NPC_RADIUS, ball: BALL_RADIUS },
-  );
+  // Opponent team: 7 NPCs on the other half.
+  for (let i = 1; i <= SQUAD_SIZE; i++) {
+    const id = `${opponentTeam === 0 ? 'up' : 'down'}-${i}`;
+    const angle = ((i + 0.5) / SQUAD_SIZE) * Math.PI;
+    const r = map.height * 0.25;
+    const cx = opponentTeam === 0 ? map.width * 0.30 : map.width * 0.70;
+    const cy = map.height * 0.50;
+    const raw = {
+      x: cx + Math.cos(angle) * r * (0.5 + rng()),
+      y: cy + Math.sin(angle) * r * (0.5 + rng()),
+    };
+    npcs.push({
+      id,
+      kind: 'npc',
+      team: opponentTeam,
+      role: 'chase',
+      holdPosition: null,
+      position: { ...nearestLegalPoint(raw, map) },
+      velocity: { x: 0, y: 0 },
+      radius: NPC_RADIUS,
+      maxSpeed: NPC_MAX_SPEED,
+      stamina: 100,
+      maxStamina: 100,
+    });
+  }
 
-  return {
-    width,
-    height,
+  return { player, npcs };
+}
+
+export function createWorld(opts: CreateWorldOptions = {}): World {
+  const map = opts.map ?? ASHBOURNE_TOWN;
+  const seed = opts.seed ?? 1;
+  const playerTeam: Team = opts.playerTeam ?? 0;
+  const rng = mulberry32(seed);
+
+  const { player, npcs } = buildCharacters(map, rng, playerTeam);
+
+  const ball: Ball = {
+    id: 'ball',
+    kind: 'ball',
+    position: { ...map.turnUp },
+    velocity: { x: 0, y: 0 },
+    radius: BALL_RADIUS,
+    ownerId: null,
+  };
+
+  // Build physics for all 14 characters + ball.
+  const characterBodies = [
+    { id: player.id, position: player.position, radius: player.radius, label: 'player' },
+    ...npcs.map((n) => ({ id: n.id, position: n.position, radius: n.radius, label: `npc-${n.id}` })),
+  ];
+  const physics = createPhysicsWorld(map, characterBodies, ball.position, ball.radius);
+
+  // Compose world so placement helpers can mutate it.
+  const world: World = {
+    width: map.width,
+    height: map.height,
+    map,
     player,
     npcs,
     ball,
     tick: 0,
     rngSeed: seed,
-    _physics: physics,
+    matchState: 'placement',
+    matchTimeRemaining: 0,
+    score: [0, 0],
+    goaling: {
+      carrierId: null,
+      taps: 0,
+      lastTapTick: 0,
+      spacing: 30,
+      maxChainTicks: 180,
+    },
+    winState: null,
+    physics,
     _rng: rng,
   };
+
+  // Default strategy-phase placement — player can re-place teammates + re-role.
+  autoPlaceHome(world);
+  autoPlaceOpponents(world);
+
+  // Re-sync physics bodies to the placed positions so the first tick
+  // doesn't teleport characters between the build-time spawn and their
+  // strategy-phase spots.
+  for (const [id, body] of physics.bodies) {
+    if (id === player.id) {
+      Matter.Body.setPosition(body, player.position);
+    } else {
+      const npc = npcs.find((n) => n.id === id);
+      if (npc) Matter.Body.setPosition(body, npc.position);
+    }
+  }
+  Matter.Body.setPosition(physics.ballBody, ball.position);
+
+  return world;
 }
 
 /**
- * Step the world by `dt` seconds with the given input.
+ * Step the world by `dt` seconds.
  *
  * Order of operations (matters for determinism):
- *   1. Update player stamina
- *   2. Lock carried ball to player (so physics doesn't drift it)
- *   3. Apply player velocity (direct set, force-based feels sluggish for the player)
- *   4. Steer NPCs toward target (force-based so they pile up via collisions)
- *   5. Step the physics engine
- *   6. Sync sim positions/velocities from physics bodies
- *   7. Try ball pickup (proximity check after physics)
- *   8. Tick++
+ *   1. Tick match state machine (timer + end-on-expiry).
+ *   2. Update controlled character stamina.
+ *   3. Lock carried ball to carrier.
+ *   4. Apply controlled character velocity (input + water/stamina mult).
+ *   5. Steer NPCs (role-based AI).
+ *   6. Step matter.js physics.
+ *   7. Sync sim positions/velocities from physics bodies.
+ *   8. Handle ball OOB (teleport to nearest legal point).
+ *   9. Try ball pickup.
+ *   10. Register goal tap if input.goalTap.
+ *   11. Increment tick.
+ *
+ * During matchState 'placement' or 'over', this function is a no-op.
  */
 export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void {
-  const { player, npcs, ball, _physics } = world;
+  if (world.matchState === 'placement' || world.matchState === 'over') {
+    return;
+  }
 
-  // 1. Stamina
+  // 1. Match timer + auto-end on expiry
+  tickMatch(world, dt);
+  if ((world.matchState as string) === 'over') return;
+
+  const { player, npcs, ball, map, physics } = world;
+
+  // 2. Stamina
   updateStamina(player, input.sprint, dt);
 
-  // 2. Lock ball to player if carried (must come before step so physics uses correct pos)
+  // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);
 
-  // 3. Player movement — direct velocity for responsiveness.
-  const speedMult = getSpeedMultiplier(player);
+  // 4. Controlled character movement — direct velocity for responsiveness.
+  const staminaMult = getSpeedMultiplier(player);
+  const waterMult = speedMultiplierAt(player.position, map);
   const len = Math.hypot(input.move.x, input.move.y);
   let mx = 0;
   let my = 0;
@@ -155,40 +259,65 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     mx = input.move.x / len;
     my = input.move.y / len;
   }
-  const targetVx = mx * player.maxSpeed * speedMult;
-  const targetVy = my * player.maxSpeed * speedMult;
-  Matter.Body.setVelocity(_physics.playerBody, { x: targetVx, y: targetVy });
-
-  // 4. NPC steering (force-based — collisions create the "hug").
-  steerNPCs(world);
-
-  // 5. Physics
-  stepPhysics(_physics, dt);
-
-  // 6. Sync state from physics bodies.
-  player.position.x = _physics.playerBody.position.x;
-  player.position.y = _physics.playerBody.position.y;
-  player.velocity.x = _physics.playerBody.velocity.x;
-  player.velocity.y = _physics.playerBody.velocity.y;
-
-  ball.position.x = _physics.ballBody.position.x;
-  ball.position.y = _physics.ballBody.position.y;
-  ball.velocity.x = _physics.ballBody.velocity.x;
-  ball.velocity.y = _physics.ballBody.velocity.y;
-
-  for (let i = 0; i < npcs.length; i++) {
-    const npc = npcs[i];
-    const body = _physics.npcBodies[i];
-    if (!npc || !body) continue;
-    npc.position.x = body.position.x;
-    npc.position.y = body.position.y;
-    npc.velocity.x = body.velocity.x;
-    npc.velocity.y = body.velocity.y;
+  const controlledBody = physics.bodies.get(player.id);
+  if (controlledBody) {
+    Matter.Body.setVelocity(controlledBody, {
+      x: mx * player.maxSpeed * staminaMult * waterMult,
+      y: my * player.maxSpeed * staminaMult * waterMult,
+    });
   }
 
-  // 7. Pickup (proximity check after physics has resolved collisions).
+  // 5. NPC steering (role-based; collisions deflect them around obstacles)
+  steerNPCs(world);
+
+  // 6. Physics
+  stepPhysics(physics, dt);
+
+  // 7. Sync state from physics bodies (Map iteration).
+  for (const [id, body] of physics.bodies) {
+    if (id === player.id) {
+      player.position.x = body.position.x;
+      player.position.y = body.position.y;
+      player.velocity.x = body.velocity.x;
+      player.velocity.y = body.velocity.y;
+    } else {
+      const npc = npcs.find((n) => n.id === id);
+      if (npc) {
+        npc.position.x = body.position.x;
+        npc.position.y = body.position.y;
+        npc.velocity.x = body.velocity.x;
+        npc.velocity.y = body.velocity.y;
+      }
+    }
+  }
+  ball.position.x = physics.ballBody.position.x;
+  ball.position.y = physics.ballBody.position.y;
+  ball.velocity.x = physics.ballBody.velocity.x;
+  ball.velocity.y = physics.ballBody.velocity.y;
+
+  // 8. Ball OOB teleport (rare — happens if a pass lands inside an OOB zone
+  // or physics kicks the ball into one).
+  if (isOutOfBounds(ball.position, map)) {
+    const legal = nearestLegalPoint(ball.position, map);
+    ball.position.x = legal.x;
+    ball.position.y = legal.y;
+    ball.velocity.x = 0;
+    ball.velocity.y = 0;
+    Matter.Body.setPosition(physics.ballBody, { x: legal.x, y: legal.y });
+    Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
+    ball.ownerId = null;
+    player.hasBall = false;
+  }
+
+  // 9. Pickup (proximity check after physics has resolved collisions).
   tryPickupBall(world);
 
-  // 8. Tick.
+  // 10. Goal tap (rising-edge driven by input.goalTap).
+  if (input.goalTap) tapGoal(world);
+
+  // 11. Tick.
   world.tick += 1;
 }
+
+/** Pure helper — re-export here for backwards compat with TICKET 001 callers. */
+void isInWater;

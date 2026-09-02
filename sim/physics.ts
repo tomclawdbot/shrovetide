@@ -1,35 +1,38 @@
-// sim/physics.ts — matter.js wrapper. Circle bodies only.
+// sim/physics.ts — matter.js wrapper. Circle bodies for dynamic characters
+// (controlled player + teammates + opponents + ball). Static rectangles for
+// obstacles and walls.
+//
 // Top-down (no gravity). Deterministic given identical inputs + dt.
+//
+// v1 (TICKET 002): bodies are keyed by character id via a Map, so player
+// switching is just a matter of changing world.player.id — no body shuffling.
 
 import Matter from 'matter-js';
+import type { Obstacle, RectZone, TownMap } from './maps.js';
 import type { Vec2 } from './types.js';
 
-export interface PhysicsWorld {
+export interface PhysicsWorldHandle {
   engine: Matter.Engine;
+  /** All character bodies (controlled + teammates + opponents) keyed by id. */
+  bodies: Map<string, Matter.Body>;
   ballBody: Matter.Body;
-  playerBody: Matter.Body;
-  npcBodies: Matter.Body[];
+  obstacleBodies: Matter.Body[];
   walls: Matter.Body[];
 }
 
-export interface PhysicsBodies {
-  playerPosition: Vec2;
-  npcPositions: Vec2[];
-  ballPosition: Vec2;
-}
-
-export interface PhysicsRadii {
-  player: number;
-  npc: number;
-  ball: number;
+export interface CharacterBodySpec {
+  id: string;
+  position: Vec2;
+  radius: number;
+  label: string;
 }
 
 export function createPhysicsWorld(
-  width: number,
-  height: number,
-  bodies: PhysicsBodies,
-  radii: PhysicsRadii,
-): PhysicsWorld {
+  map: TownMap,
+  characters: CharacterBodySpec[],
+  ballPosition: Vec2,
+  ballRadius: number,
+): PhysicsWorldHandle {
   // No gravity — top-down field.
   const engine = Matter.Engine.create();
   engine.gravity.x = 0;
@@ -39,7 +42,19 @@ export function createPhysicsWorld(
   engine.velocityIterations = 4;
   engine.constraintIterations = 4;
 
-  const ballBody = Matter.Bodies.circle(bodies.ballPosition.x, bodies.ballPosition.y, radii.ball, {
+  const bodies = new Map<string, Matter.Body>();
+  for (const ch of characters) {
+    const body = Matter.Bodies.circle(ch.position.x, ch.position.y, ch.radius, {
+      label: ch.label,
+      frictionAir: 0.25,
+      restitution: 0.05,
+      density: 0.002,
+      inertia: Infinity,
+    });
+    bodies.set(ch.id, body);
+  }
+
+  const ballBody = Matter.Bodies.circle(ballPosition.x, ballPosition.y, ballRadius, {
     label: 'ball',
     frictionAir: 0.05,
     restitution: 0.55,
@@ -47,60 +62,69 @@ export function createPhysicsWorld(
     inertia: Infinity,
   });
 
-  const playerBody = Matter.Bodies.circle(
-    bodies.playerPosition.x,
-    bodies.playerPosition.y,
-    radii.player,
-    {
-      label: 'player',
-      frictionAir: 0.25,
-      restitution: 0.05,
-      density: 0.002,
-      inertia: Infinity,
-    },
-  );
+  // Obstacle bodies — static, derived from map data.
+  const obstacleBodies: Matter.Body[] = map.obstacles.map((o: Obstacle) => {
+    if ('radius' in o) {
+      return Matter.Bodies.circle(o.position.x, o.position.y, o.radius, {
+        isStatic: true,
+        label: 'obstacle',
+      });
+    }
+    return Matter.Bodies.rectangle(
+      o.position.x,
+      o.position.y,
+      o.width,
+      o.height,
+      { isStatic: true, label: 'obstacle' },
+    );
+  });
 
-  const npcBodies: Matter.Body[] = bodies.npcPositions.map((pos, i) =>
-    Matter.Bodies.circle(pos.x, pos.y, radii.npc, {
-      label: `npc-${i}`,
-      frictionAir: 0.25,
-      restitution: 0.05,
-      density: 0.002,
-      inertia: Infinity,
+  // Out-of-bounds — also static, so players physically can't enter.
+  // Ball entering OOB is handled separately (teleport to nearest legal point).
+  const oobBodies: Matter.Body[] = map.outOfBounds.map((z: RectZone) =>
+    Matter.Bodies.rectangle(z.position.x, z.position.y, z.width, z.height, {
+      isStatic: true,
+      label: 'oob',
     }),
   );
 
-  // Walls — thick static rectangles just outside the field boundary.
+  // Walls — thick static rectangles just outside the map boundary.
   const wallThickness = 200;
   const walls: Matter.Body[] = [
-    Matter.Bodies.rectangle(width / 2, -wallThickness / 2, width + wallThickness * 2, wallThickness, {
+    Matter.Bodies.rectangle(map.width / 2, -wallThickness / 2, map.width + wallThickness * 2, wallThickness, {
       isStatic: true,
       label: 'wall',
     }),
-    Matter.Bodies.rectangle(width / 2, height + wallThickness / 2, width + wallThickness * 2, wallThickness, {
+    Matter.Bodies.rectangle(map.width / 2, map.height + wallThickness / 2, map.width + wallThickness * 2, wallThickness, {
       isStatic: true,
       label: 'wall',
     }),
-    Matter.Bodies.rectangle(-wallThickness / 2, height / 2, wallThickness, height + wallThickness * 2, {
+    Matter.Bodies.rectangle(-wallThickness / 2, map.height / 2, wallThickness, map.height + wallThickness * 2, {
       isStatic: true,
       label: 'wall',
     }),
-    Matter.Bodies.rectangle(width + wallThickness / 2, height / 2, wallThickness, height + wallThickness * 2, {
+    Matter.Bodies.rectangle(map.width + wallThickness / 2, map.height / 2, wallThickness, map.height + wallThickness * 2, {
       isStatic: true,
       label: 'wall',
     }),
   ];
 
-  Matter.World.add(engine.world, [ballBody, playerBody, ...npcBodies, ...walls]);
+  Matter.World.add(engine.world, [
+    ...bodies.values(),
+    ballBody,
+    ...obstacleBodies,
+    ...oobBodies,
+    ...walls,
+  ]);
 
-  return { engine, ballBody, playerBody, npcBodies, walls };
+  return { engine, bodies, ballBody, obstacleBodies, walls };
 }
 
 /**
  * Step the physics engine. dt is in seconds.
  * Deterministic for a given engine state and dt.
  */
-export function stepPhysics(physics: PhysicsWorld, dt: number): void {
+export function stepPhysics(physics: PhysicsWorldHandle, dt: number): void {
   // matter.js takes delta in milliseconds.
   Matter.Engine.update(physics.engine, dt * 1000);
 }

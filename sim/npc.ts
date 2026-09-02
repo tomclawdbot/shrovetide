@@ -1,37 +1,35 @@
-// sim/npc.ts — NPC AI steering. Force-based attraction toward the ball
-// (or toward the player if they have it). matter.js handles the collisions
-// that produce the "hug" scrum feel.
+// sim/npc.ts — NPC AI steering. Role-based (TICKET 002):
+//   - chase: full commitment to ball/player (the "hug" from TICKET 001)
+//   - hold: stay near holdPosition, but engage ball if it's within range
+//
+// NPCs are steered via matter.js applyForce; obstacles deflect them naturally
+// via collision (the "hug" still works). Water slow-down is applied at the
+// velocity-clamp step using speedMultiplierAt(map).
 
 import Matter from 'matter-js';
+import { speedMultiplierAt } from './maps.js';
+import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
-/**
- * Per-NPC steering force magnitude. Tuned for matter.js force units +
- * frictionAir damping so NPCs reach ~80% of maxSpeed within a couple
- * of seconds and then settle at their terminal velocity.
- */
 const NPC_STEER_FORCE = 0.00045;
+/** Distance (px) at which a HOLD-roled NPC engages the ball over its hold point. */
+const HOLD_BALL_ENGAGE_DISTANCE = 220;
 
 export function steerNPCs(world: World): void {
-  const { npcs, ball, player, _physics } = world;
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i];
+    if (!npc) continue;
+    const body = world.physics.bodies.get(npc.id);
+    if (!body) continue;
 
-  // When the player has the ball, NPCs swarm the player instead —
-  // that's where the "hug" scrum lives.
-  const targetIsPlayer = ball.ownerId === player.id;
-  const tx = targetIsPlayer ? player.position.x : ball.position.x;
-  const ty = targetIsPlayer ? player.position.y : ball.position.y;
+    const target = pickTarget(npc, world);
+    if (!target) continue;
 
-  for (let i = 0; i < npcs.length; i++) {
-    const npc = npcs[i];
-    const body = _physics.npcBodies[i];
-    if (!npc || !body) continue;
-
-    const dx = tx - npc.position.x;
-    const dy = ty - npc.position.y;
+    const dx = target.x - npc.position.x;
+    const dy = target.y - npc.position.y;
     const dist = Math.hypot(dx, dy);
     if (dist < 0.5) continue;
 
-    // Normalized direction + scaled force.
     const dirX = dx / dist;
     const dirY = dy / dist;
 
@@ -41,13 +39,45 @@ export function steerNPCs(world: World): void {
       { x: dirX * NPC_STEER_FORCE, y: dirY * NPC_STEER_FORCE },
     );
 
-    // Clamp velocity to maxSpeed so we don't get out-of-control drift.
+    // Clamp velocity to (maxSpeed × water mult).
+    const waterMult = speedMultiplierAt(npc.position, world.map);
+    const maxSpeed = npc.maxSpeed * waterMult;
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.hypot(vx, vy);
-    if (speed > npc.maxSpeed) {
-      const k = npc.maxSpeed / speed;
+    if (speed > maxSpeed) {
+      const k = maxSpeed / speed;
       Matter.Body.setVelocity(body, { x: vx * k, y: vy * k });
     }
   }
+}
+
+/** Pick the target position for an NPC based on its role + ball/player state. */
+function pickTarget(npc: World['npcs'][number], world: World): Vec2 | null {
+  if (npc.role === 'chase') {
+    // CHASE — go to ball, or to whoever has the ball.
+    if (world.ball.ownerId !== null) {
+      const carrier = findCharacter(world, world.ball.ownerId);
+      if (carrier) return carrier.position;
+    }
+    return world.ball.position;
+  }
+
+  // HOLD — guard holdPosition, but engage ball if it drifts into the zone.
+  if (!npc.holdPosition) {
+    // No placement yet (pre-confirm) — default to ball.
+    return world.ball.position;
+  }
+  const dxBall = world.ball.position.x - npc.holdPosition.x;
+  const dyBall = world.ball.position.y - npc.holdPosition.y;
+  if (Math.hypot(dxBall, dyBall) < HOLD_BALL_ENGAGE_DISTANCE) {
+    return world.ball.position;
+  }
+  return npc.holdPosition;
+}
+
+function findCharacter(world: World, id: string): { position: Vec2 } | null {
+  if (id === world.player.id) return world.player;
+  const npc = world.npcs.find((n) => n.id === id);
+  return npc ?? null;
 }
