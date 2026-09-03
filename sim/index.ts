@@ -73,6 +73,7 @@ export { tapGoal, GOAL_REACH_DISTANCE } from './goaling.js';
 // Squad placement (strategy phase)
 export {
   placeTeammate,
+  moveControlled,
   setTeammateRole,
   isValidPlacement,
   autoPlaceOpponents,

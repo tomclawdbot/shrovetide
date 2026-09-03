@@ -10,7 +10,7 @@
 import type { Team } from './types.js';
 import type { World } from './world.js';
 
-export const DEFAULT_MATCH_DURATION_SECONDS = 8 * 60; // 8 minutes
+export const DEFAULT_MATCH_DURATION_SECONDS = 90; // first-run: 90s to a millstone
 
 /** Tick count for goaling tap spacing — 0.5s at 60 Hz. */
 export const GOAL_TAP_SPACING_TICKS = 30;

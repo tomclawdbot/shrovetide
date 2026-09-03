@@ -5,9 +5,17 @@
 // or CHASE). Opponents (7) auto-place via a heuristic. confirmPlacement
 // transitions matchState to 'playing'.
 
+import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, isWalkable, nearestLegalPoint } from './maps.js';
 import type { Role, Team } from './types.js';
 import type { World } from './world.js';
+
+function pinBody(world: World, id: string, x: number, y: number): void {
+  const body = world.physics.bodies.get(id);
+  if (!body) return;
+  Matter.Body.setPosition(body, { x, y });
+  Matter.Body.setVelocity(body, { x: 0, y: 0 });
+}
 
 /** Move a teammate to (x, y) — snap to nearest legal point if invalid. */
 export function placeTeammate(world: World, npcId: string, x: number, y: number): boolean {
@@ -18,8 +26,22 @@ export function placeTeammate(world: World, npcId: string, x: number, y: number)
   const target = nearestLegalPoint({ x, y }, world.map);
   npc.position = { ...target };
   npc.velocity = { x: 0, y: 0 };
-  // HOLD-role NPCs have their holdPosition tracked wherever they're placed.
   if (npc.role === 'hold') npc.holdPosition = { ...target };
+  pinBody(world, npc.id, target.x, target.y);
+  return true;
+}
+
+/** Walk the controlled player during placement. Physics is pinned so kickoff doesn't snap. */
+export function moveControlled(world: World, dx: number, dy: number): boolean {
+  if (world.matchState !== 'placement') return false;
+  if (dx === 0 && dy === 0) return false;
+  const target = nearestLegalPoint(
+    { x: world.player.position.x + dx, y: world.player.position.y + dy },
+    world.map,
+  );
+  world.player.position = { ...target };
+  world.player.velocity = { x: 0, y: 0 };
+  pinBody(world, world.player.id, target.x, target.y);
   return true;
 }
 
@@ -53,7 +75,6 @@ export function autoPlaceOpponents(world: World): void {
   const opponents = world.npcs.filter((n) => n.team === opponentTeam);
   const w = world.map.width;
   const h = world.map.height;
-  // 7 slots: 3 defensive (hold), 4 attacking (chase).
   const slots: { xRatio: number; y: number; role: Role }[] = [
     { xRatio: 0.66, y: 0.30, role: 'hold' },
     { xRatio: 0.66, y: 0.70, role: 'hold' },
@@ -71,6 +92,7 @@ export function autoPlaceOpponents(world: World): void {
     npc.velocity = { x: 0, y: 0 };
     npc.role = slot.role;
     npc.holdPosition = slot.role === 'hold' ? { ...npc.position } : null;
+    pinBody(world, npc.id, npc.position.x, npc.position.y);
   }
 }
 
@@ -86,7 +108,6 @@ export function autoPlaceHome(world: World): void {
   for (const npc of world.npcs) {
     if (npc.team === homeTeam) homeChars.push({ id: npc.id, position: npc.position });
   }
-  // Spread them in a 2-row formation behind their goal.
   const w = world.map.width;
   const h = world.map.height;
   const baseX = homeTeam === 0 ? w * 0.30 : w * 0.70;
@@ -102,16 +123,17 @@ export function autoPlaceHome(world: World): void {
   for (let i = 0; i < homeChars.length; i++) {
     const target = homeChars[i]!;
     const slot = slots[i]!;
-    target.position = nearestLegalPoint(slot, world.map);
+    const next = nearestLegalPoint(slot, world.map);
+    target.position.x = next.x;
+    target.position.y = next.y;
+    pinBody(world, target.id, next.x, next.y);
   }
-  // All teammates start as CHASE; player can re-role via UI.
   for (const npc of world.npcs) {
     if (npc.team === homeTeam) {
       npc.role = 'chase';
       npc.holdPosition = null;
     }
   }
-  // Player's assignedRole defaults to 'chase'.
   world.player.assignedRole = 'chase';
 }
 
