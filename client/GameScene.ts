@@ -176,6 +176,7 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(PALETTE.bg);
     this.cameras.main.setSize(VIEW_W, VIEW_H);
+    this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
 
     const kb = this.input.keyboard!;
     kb.addCapture('TAB,SPACE,E,Q,W,A,S,D,SHIFT');
