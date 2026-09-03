@@ -58,10 +58,14 @@ export {
 export { releasePass, PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
 export {
   STAMINA_REGEN_RATE,
+  STAMINA_MOVE_DRAIN,
   STAMINA_SPRINT_DRAIN,
+  STAMINA_CARRY_DRAIN,
   EXHAUSTED_SPEED_MULT,
   SPRINT_SPEED_MULT,
 } from './stamina.js';
+
+export { GOAL_CONTEST_RADIUS, GOAL_DEFEND_SPEED_MULT, threatenedGoalTeam } from './npc.js';
 
 // Match state machine + scoring
 export {
