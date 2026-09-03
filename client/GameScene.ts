@@ -1,31 +1,37 @@
-// client/GameScene.ts — Phaser scene for TICKET 002.
+// client/GameScene.ts — Phaser scene.
 //
 // Pure render + input. All game logic lives in /sim.
 //
-// New in v1:
-//   - Camera follows the controlled character (not the centre of the field).
-//   - Minimap HUD (top-right) shows all 14 characters + ball.
-//   - TAB cycles teammates, Q quick-switches to nearest teammate.
-//   - E (rising edge) is the goal-tap press.
-//   - Match state overlays: placement hints, in-play HUD, win screen.
-//   - Map rendering: obstacles, river, bridges, OOB zones, goals, turn-up.
+// TICKET 003a changes:
+//   - Character colours are resolved EVERY FRAME from world.player.id rather
+//     than baked in at sprite-creation time. Previously the gold "you" marker
+//     stayed stuck on whichever character you started as, because switching
+//     changes world.player.id but nothing ever recoloured the sprites.
+//   - Camera now zooms in and uses startFollow with lerp + velocity lead,
+//     instead of centerOn() at zoom 1. At zoom 1 the 1200x800 viewport on a
+//     2400x1600 map meant the camera clamped within 600px of the left/right
+//     edges — and both millstones sit inside that dead zone, so the camera
+//     froze during the most important moments of a match.
+//   - Ball carrier gets a pulsing halo; the HUD names the carrier.
+//   - Palette consolidated into one object; ground gets seeded noise texture,
+//     characters get drop shadows and a heading tick, screen gets a vignette.
 //
-// Deliberately skipped for v1 (out of scope of this rewrite, can be TICKET 003):
-//   - Strategy-phase click-to-place teammates + role-toggle UI.
-//     (autoPlaceHome / autoPlaceOpponents in sim still produce a sensible
-//     default formation, so the game is playable start-to-finish without it.)
+// Deliberately still missing (needs its own ticket):
+//   - Strategy-phase click-to-place teammates + role-toggle UI. autoPlaceHome
+//     / autoPlaceOpponents in the sim still produce a sensible default
+//     formation, so the game is playable start-to-finish without it.
+//   - Accumulating trampled-ground texture where the hug has been.
 
 import Phaser from 'phaser';
 import {
-  ASHBOURNE_TOWN,
   createWorld,
   cycleTeammate,
-  endMatch,
   quickSwitch,
   releasePass,
   startMatch,
   stepWorld,
   type Input,
+  type Team,
   type World,
 } from '../sim/index.js';
 import { EXHAUSTED_SPEED_MULT } from '../sim/stamina.js';
@@ -35,25 +41,48 @@ const MAX_STEPS_PER_FRAME = 4;
 
 const VIEW_W = 1200;
 const VIEW_H = 800;
-const MINIMAP_W = 180;
-const MINIMAP_H = 120;
+const MINIMAP_W = 200;
+const MINIMAP_H = 133;
 const MINIMAP_PAD = 12;
 
-const COLOR_FIELD = 0x2d6a3a;
-const COLOR_FIELD_LINE = 0xffffff;
-const COLOR_OBSTACLE = 0x6b4f3a;
-const COLOR_RIVER = 0x4a86c5;
-const COLOR_BRIDGE = 0xb5936a;
-const COLOR_OOB = 0x4a3322;
-const COLOR_GOAL = 0xfacc15;
-const COLOR_PLAYER = 0x60a5fa;
-const COLOR_NPC_TEAM_0 = 0x4ade80;
-const COLOR_NPC_TEAM_1 = 0xf87171;
-const COLOR_BALL = 0xffffff;
-const COLOR_BG = 0x0d1f12;
-const COLOR_STAMINA_BG = 0x222222;
-const COLOR_STAMINA_GOOD = 0x4ade80;
-const COLOR_STAMINA_LOW = 0xf87171;
+/** Base camera zoom. >1 means we see less of the map but the camera can
+ *  actually pan almost everywhere instead of clamping at the bounds. */
+const CAMERA_BASE_ZOOM = 1.5;
+/** How far the camera zooms out when you're deep in a crowd. */
+const CAMERA_CROWD_ZOOM_OUT = 0.35;
+/** Radius (px) used to measure how crowded it is around you. */
+const CROWD_RADIUS = 260;
+/** Camera follow smoothing (0..1 per frame; lower = floatier). */
+const CAMERA_LERP = 0.09;
+/** Seconds of velocity the camera looks ahead by. */
+const CAMERA_LEAD = 0.22;
+/** Zoom easing per frame. */
+const ZOOM_LERP = 0.04;
+
+const PALETTE = {
+  bg: 0x0d1f12,
+  grass: 0x35603c,
+  grassAlt: 0x2f5636,
+  grassDark: 0x264a2d,
+  building: 0x6b5240,
+  buildingEdge: 0x3f2f24,
+  water: 0x3f6f96,
+  waterEdge: 0x2e5470,
+  bridge: 0xa9855f,
+  oob: 0x2b2118,
+  oobEdge: 0x171009,
+  millstone: 0xe8d8a8,
+  millstoneEdge: 0x6b5a33,
+  teamUp: 0x4f9dd9,
+  teamDown: 0xd9614f,
+  controlled: 0xffd24a,
+  ball: 0xf5f0e6,
+  ballEdge: 0x2a2419,
+  shadow: 0x000000,
+  staminaBg: 0x1a1a1a,
+  staminaGood: 0x6ede8a,
+  staminaLow: 0xe8705f,
+} as const;
 
 interface KeyState {
   W: Phaser.Input.Keyboard.Key;
@@ -71,25 +100,47 @@ interface KeyState {
   Q: Phaser.Input.Keyboard.Key;
 }
 
+/** Flattened view of a character for rendering. */
+interface RenderChar {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  team: Team;
+  controlled: boolean;
+}
+
 export class GameScene extends Phaser.Scene {
   private world!: World;
   private inputState!: Input;
   private accumulator = 0;
   private passChargeStartedAt = 0;
   private isPassing = false;
+  /** Last non-zero movement direction — used as the default pass aim. */
+  private lastAim = { x: 1, y: 0 };
 
   private keys!: KeyState;
-  private sprites = new Map<string, Phaser.GameObjects.Arc>();
+  private bodySprites = new Map<string, Phaser.GameObjects.Arc>();
+  private shadowSprites = new Map<string, Phaser.GameObjects.Ellipse>();
+  private ballSprite!: Phaser.GameObjects.Arc;
+  private ballShadow!: Phaser.GameObjects.Ellipse;
   private mapGfx!: Phaser.GameObjects.Graphics;
+  private markerGfx!: Phaser.GameObjects.Graphics;
+  private followTarget!: Phaser.GameObjects.Arc;
+  private currentZoom = CAMERA_BASE_ZOOM;
 
   private staminaBg!: Phaser.GameObjects.Rectangle;
   private staminaFill!: Phaser.GameObjects.Rectangle;
   private staminaLabel!: Phaser.GameObjects.Text;
+  private carrierLabel!: Phaser.GameObjects.Text;
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private overlayText!: Phaser.GameObjects.Text;
   private minimapBg!: Phaser.GameObjects.Rectangle;
   private minimapGfx!: Phaser.GameObjects.Graphics;
+  private vignetteGfx!: Phaser.GameObjects.Graphics;
 
   private switchToast: { text: Phaser.GameObjects.Text; expires: number } | null = null;
 
@@ -103,17 +154,15 @@ export class GameScene extends Phaser.Scene {
       move: { x: 0, y: 0 },
       sprint: false,
       charging: false,
-      passAim: { x: 0, y: -1 },
+      passAim: { x: 1, y: 0 },
       goalTap: false,
     };
 
     // Strategy phase → auto-place + skip directly into playing.
-    // (Full strategy-phase click-to-place UI is TICKET 003.)
     startMatch(this.world);
 
-    this.cameras.main.setBackgroundColor(COLOR_BG.toString(16).padStart(6, '0'));
+    this.cameras.main.setBackgroundColor(PALETTE.bg);
     this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
-    this.cameras.main.setViewport(0, 0, VIEW_W, VIEW_H);
 
     const kb = this.input.keyboard!;
     this.keys = {
@@ -141,164 +190,310 @@ export class GameScene extends Phaser.Scene {
     this.drawMapStatic();
     this.createSprites();
     this.createHUD();
+
+    // Camera follows an invisible proxy so switching control doesn't require
+    // re-targeting the camera at a different sprite.
+    this.followTarget = this.add
+      .circle(this.world.player.position.x, this.world.player.position.y, 1, 0xffffff, 0)
+      .setVisible(false);
+    this.cameras.main.startFollow(this.followTarget, false, CAMERA_LERP, CAMERA_LERP);
+    this.cameras.main.setZoom(this.currentZoom);
   }
+
+  // -------------------------------------------------------------------------
+  // Static map rendering
+  // -------------------------------------------------------------------------
 
   private drawMapStatic(): void {
     const map = this.world.map;
     this.mapGfx = this.add.graphics().setDepth(0);
 
     // Field base
-    this.mapGfx.fillStyle(COLOR_FIELD, 1);
+    this.mapGfx.fillStyle(PALETTE.grass, 1);
     this.mapGfx.fillRect(0, 0, map.width, map.height);
 
-    // OOB zones (drawn first so obstacles/river overlay them)
+    // Seeded noise so the turf isn't a flat slab of green. Deterministic —
+    // same layout every load, no Math.random.
+    let s = 0x9e3779b9;
+    const rand = (): number => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < 1400; i++) {
+      const x = rand() * map.width;
+      const y = rand() * map.height;
+      const w = 6 + rand() * 22;
+      const h = 3 + rand() * 8;
+      this.mapGfx.fillStyle(rand() > 0.5 ? PALETTE.grassAlt : PALETTE.grassDark, 0.35);
+      this.mapGfx.fillRect(x, y, w, h);
+    }
+
+    // OOB zones (drawn before obstacles/river so those overlay them)
     for (const z of map.outOfBounds) {
-      this.mapGfx.fillStyle(COLOR_OOB, 1);
-      this.mapGfx.fillRect(
-        z.position.x - z.width / 2,
-        z.position.y - z.height / 2,
-        z.width,
-        z.height,
-      );
-      this.mapGfx.lineStyle(1, 0x000000, 0.6);
-      this.mapGfx.strokeRect(
-        z.position.x - z.width / 2,
-        z.position.y - z.height / 2,
-        z.width,
-        z.height,
-      );
+      const x = z.position.x - z.width / 2;
+      const y = z.position.y - z.height / 2;
+      this.mapGfx.fillStyle(PALETTE.oob, 1);
+      this.mapGfx.fillRect(x, y, z.width, z.height);
+      this.mapGfx.lineStyle(3, PALETTE.oobEdge, 0.9);
+      this.mapGfx.strokeRect(x, y, z.width, z.height);
     }
 
     // River
-    this.mapGfx.fillStyle(COLOR_RIVER, 1);
-    this.mapGfx.fillRect(
-      map.river.position.x - map.river.width / 2,
-      map.river.position.y - map.river.height / 2,
-      map.river.width,
-      map.river.height,
-    );
+    const rx = map.river.position.x - map.river.width / 2;
+    const ry = map.river.position.y - map.river.height / 2;
+    this.mapGfx.fillStyle(PALETTE.water, 1);
+    this.mapGfx.fillRect(rx, ry, map.river.width, map.river.height);
+    // Bank shading
+    this.mapGfx.fillStyle(PALETTE.waterEdge, 0.55);
+    this.mapGfx.fillRect(rx, ry, map.river.width, 8);
+    this.mapGfx.fillRect(rx, ry + map.river.height - 8, map.river.width, 8);
 
     // Bridges (drawn over river)
     for (const b of map.bridges) {
-      this.mapGfx.fillStyle(COLOR_BRIDGE, 1);
-      this.mapGfx.fillRect(
-        b.position.x - b.width / 2,
-        b.position.y - b.height / 2,
-        b.width,
-        b.height,
-      );
+      const bx = b.position.x - b.width / 2;
+      const by = b.position.y - b.height / 2;
+      this.mapGfx.fillStyle(PALETTE.bridge, 1);
+      this.mapGfx.fillRect(bx, by, b.width, b.height);
+      // Plank lines
+      this.mapGfx.lineStyle(1, PALETTE.buildingEdge, 0.35);
+      for (let py = by + 8; py < by + b.height; py += 14) {
+        this.mapGfx.lineBetween(bx, py, bx + b.width, py);
+      }
     }
 
     // Obstacles (town buildings)
     for (const o of map.obstacles) {
-      this.mapGfx.fillStyle(COLOR_OBSTACLE, 1);
+      this.mapGfx.fillStyle(PALETTE.building, 1);
       if ('radius' in o) {
         this.mapGfx.fillCircle(o.position.x, o.position.y, o.radius);
+        this.mapGfx.lineStyle(2, PALETTE.buildingEdge, 0.9);
+        this.mapGfx.strokeCircle(o.position.x, o.position.y, o.radius);
       } else {
-        this.mapGfx.fillRect(
-          o.position.x - o.width / 2,
-          o.position.y - o.height / 2,
-          o.width,
-          o.height,
-        );
+        const ox = o.position.x - o.width / 2;
+        const oy = o.position.y - o.height / 2;
+        this.mapGfx.fillRect(ox, oy, o.width, o.height);
+        this.mapGfx.lineStyle(2, PALETTE.buildingEdge, 0.9);
+        this.mapGfx.strokeRect(ox, oy, o.width, o.height);
       }
     }
 
     // Goals (millstones)
     for (const g of map.goals) {
-      this.mapGfx.fillStyle(COLOR_GOAL, 1);
-      this.mapGfx.fillCircle(g.position.x, g.position.y, 14);
-      this.mapGfx.lineStyle(2, 0x000000, 0.8);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 14);
+      const tint = g.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
+      this.mapGfx.lineStyle(4, tint, 0.7);
+      this.mapGfx.strokeCircle(g.position.x, g.position.y, 30);
+      this.mapGfx.fillStyle(PALETTE.millstone, 1);
+      this.mapGfx.fillCircle(g.position.x, g.position.y, 18);
+      this.mapGfx.lineStyle(3, PALETTE.millstoneEdge, 1);
+      this.mapGfx.strokeCircle(g.position.x, g.position.y, 18);
+      this.mapGfx.fillStyle(PALETTE.millstoneEdge, 1);
+      this.mapGfx.fillCircle(g.position.x, g.position.y, 4);
     }
 
     // Turn-up marker
-    this.mapGfx.fillStyle(0xffffff, 0.7);
-    this.mapGfx.fillCircle(map.turnUp.x, map.turnUp.y, 4);
+    this.mapGfx.lineStyle(2, 0xffffff, 0.5);
+    this.mapGfx.strokeCircle(map.turnUp.x, map.turnUp.y, 10);
 
     // Map border
-    this.mapGfx.lineStyle(2, COLOR_FIELD_LINE, 0.5);
+    this.mapGfx.lineStyle(3, 0xffffff, 0.35);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  private createSprites(): void {
-    const playerSprite = this.add.circle(
-      this.world.player.position.x,
-      this.world.player.position.y,
-      this.world.player.radius,
-      COLOR_PLAYER,
-    );
-    playerSprite.setStrokeStyle(3, 0xffffff);
-    playerSprite.setDepth(2);
-    this.sprites.set(this.world.player.id, playerSprite);
+  // -------------------------------------------------------------------------
+  // Sprites
+  // -------------------------------------------------------------------------
 
-    for (const npc of this.world.npcs) {
-      const color = npc.team === 0 ? COLOR_NPC_TEAM_0 : COLOR_NPC_TEAM_1;
-      const sprite = this.add.circle(npc.position.x, npc.position.y, npc.radius, color);
-      sprite.setStrokeStyle(1, 0xffffff);
-      sprite.setDepth(1);
-      this.sprites.set(npc.id, sprite);
+  private createSprites(): void {
+    // One sprite per character id. Colours are NOT decided here — render()
+    // resolves them every frame from the current world.player.id.
+    for (const ch of this.collectCharacters()) {
+      const shadow = this.add
+        .ellipse(ch.x, ch.y + ch.radius * 0.55, ch.radius * 1.9, ch.radius * 0.9, PALETTE.shadow, 0.28)
+        .setDepth(1);
+      this.shadowSprites.set(ch.id, shadow);
+
+      const body = this.add.circle(ch.x, ch.y, ch.radius, PALETTE.teamUp);
+      body.setDepth(2);
+      this.bodySprites.set(ch.id, body);
     }
 
-    const ballSprite = this.add.circle(
+    this.ballShadow = this.add
+      .ellipse(
+        this.world.ball.position.x,
+        this.world.ball.position.y + 6,
+        this.world.ball.radius * 1.8,
+        this.world.ball.radius * 0.9,
+        PALETTE.shadow,
+        0.3,
+      )
+      .setDepth(3);
+
+    this.ballSprite = this.add.circle(
       this.world.ball.position.x,
       this.world.ball.position.y,
       this.world.ball.radius,
-      COLOR_BALL,
+      PALETTE.ball,
     );
-    ballSprite.setStrokeStyle(1, 0x000000);
-    ballSprite.setDepth(3);
-    this.sprites.set('ball', ballSprite);
+    this.ballSprite.setStrokeStyle(2, PALETTE.ballEdge);
+    this.ballSprite.setDepth(4);
+
+    // World-space overlay for control rings, heading ticks, carrier halo.
+    this.markerGfx = this.add.graphics().setDepth(5);
   }
+
+  /** Flatten player + npcs into one render-friendly list. */
+  private collectCharacters(): RenderChar[] {
+    const p = this.world.player;
+    const out: RenderChar[] = [
+      {
+        id: p.id,
+        x: p.position.x,
+        y: p.position.y,
+        vx: p.velocity.x,
+        vy: p.velocity.y,
+        radius: p.radius,
+        team: p.team,
+        controlled: true,
+      },
+    ];
+    for (const n of this.world.npcs) {
+      out.push({
+        id: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        vx: n.velocity.x,
+        vy: n.velocity.y,
+        radius: n.radius,
+        team: n.team,
+        controlled: false,
+      });
+    }
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
+  // HUD
+  // -------------------------------------------------------------------------
 
   private createHUD(): void {
     const pad = 16;
-    this.staminaBg = this.add.rectangle(pad, pad, 220, 22, COLOR_STAMINA_BG).setOrigin(0, 0).setScrollFactor(0).setDepth(10);
-    this.staminaFill = this.add.rectangle(pad + 2, pad + 2, 216, 18, COLOR_STAMINA_GOOD).setOrigin(0, 0).setScrollFactor(0).setDepth(11);
-    this.staminaLabel = this.add.text(pad, pad + 26, 'Stamina', {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: '#ffffff',
-    }).setScrollFactor(0).setDepth(11);
+    this.staminaBg = this.add
+      .rectangle(pad, pad, 240, 22, PALETTE.staminaBg)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(10);
+    this.staminaFill = this.add
+      .rectangle(pad + 2, pad + 2, 236, 18, PALETTE.staminaGood)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(11);
+    this.staminaLabel = this.add
+      .text(pad, pad + 26, 'Stamina', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#ffffff',
+      })
+      .setScrollFactor(0)
+      .setDepth(11);
 
-    this.timerText = this.add.text(VIEW_W / 2, 14, '08:00', {
-      fontFamily: 'monospace',
-      fontSize: '20px',
-      color: '#ffffff',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(11);
+    this.carrierLabel = this.add
+      .text(pad, pad + 46, 'Ball: loose', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#ffd24a',
+      })
+      .setScrollFactor(0)
+      .setDepth(11);
 
-    this.scoreText = this.add.text(VIEW_W / 2, 40, 'Up 0 — 0 Down', {
-      fontFamily: 'monospace',
-      fontSize: '16px',
-      color: '#ffffff',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(11);
+    this.timerText = this.add
+      .text(VIEW_W / 2, 14, '08:00', {
+        fontFamily: 'monospace',
+        fontSize: '22px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(11);
 
-    this.overlayText = this.add.text(VIEW_W / 2, VIEW_H / 2, '', {
-      fontFamily: 'monospace',
-      fontSize: '28px',
-      color: '#ffffff',
-      align: 'center',
-      backgroundColor: '#000000aa',
-      padding: { x: 16, y: 12 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(12);
+    this.scoreText = this.add
+      .text(VIEW_W / 2, 42, "Up'Ards 0 — 0 Down'Ards", {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(11);
+
+    this.overlayText = this.add
+      .text(VIEW_W / 2, VIEW_H / 2, '', {
+        fontFamily: 'monospace',
+        fontSize: '30px',
+        color: '#ffffff',
+        align: 'center',
+        backgroundColor: '#000000cc',
+        padding: { x: 20, y: 14 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(13);
 
     // Minimap (top-right)
-    this.minimapBg = this.add.rectangle(
-      VIEW_W - MINIMAP_W / 2 - MINIMAP_PAD,
-      MINIMAP_H / 2 + MINIMAP_PAD,
-      MINIMAP_W,
-      MINIMAP_H,
-      0x000000,
-      0.55,
-    ).setOrigin(0.5).setStrokeStyle(1, 0xffffff, 0.5).setScrollFactor(0).setDepth(10);
+    this.minimapBg = this.add
+      .rectangle(
+        VIEW_W - MINIMAP_W / 2 - MINIMAP_PAD,
+        MINIMAP_H / 2 + MINIMAP_PAD,
+        MINIMAP_W,
+        MINIMAP_H,
+        0x000000,
+        0.55,
+      )
+      .setOrigin(0.5)
+      .setStrokeStyle(1, 0xffffff, 0.5)
+      .setScrollFactor(0)
+      .setDepth(10);
     this.minimapGfx = this.add.graphics().setScrollFactor(0).setDepth(11);
 
+    // Vignette — drawn once, sits above the world but below text.
+    this.vignetteGfx = this.add.graphics().setScrollFactor(0).setDepth(9);
+    this.drawVignette();
+
     // Hint text bottom-left
-    this.add.text(pad, VIEW_H - pad - 36,
-      'WASD/Arrows move  ·  Shift sprint  ·  Space pass  ·  E goal-tap  ·  Tab/Q switch',
-      { fontFamily: 'monospace', fontSize: '13px', color: '#dddddd' },
-    ).setScrollFactor(0).setDepth(11);
+    this.add
+      .text(
+        pad,
+        VIEW_H - pad - 20,
+        'WASD/Arrows move  ·  Shift sprint  ·  Space pass  ·  E goal-tap  ·  Tab cycle  ·  Q nearest',
+        { fontFamily: 'monospace', fontSize: '13px', color: '#dddddd' },
+      )
+      .setScrollFactor(0)
+      .setDepth(11);
   }
+
+  private drawVignette(): void {
+    const g = this.vignetteGfx;
+    const band = 120;
+    const a = 0.5;
+    // top
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, a, a, 0, 0);
+    g.fillRect(0, 0, VIEW_W, band);
+    // bottom
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, a, a);
+    g.fillRect(0, VIEW_H - band, VIEW_W, band);
+    // left
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, a, 0, a, 0);
+    g.fillRect(0, 0, band, VIEW_H);
+    // right
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, a, 0, a);
+    g.fillRect(VIEW_W - band, 0, band, VIEW_H);
+  }
+
+  // -------------------------------------------------------------------------
+  // Input handlers
+  // -------------------------------------------------------------------------
 
   private handlePassStart = (): void => {
     if (this.isPassing) return;
@@ -311,10 +506,11 @@ export class GameScene extends Phaser.Scene {
   private handlePassRelease = (): void => {
     if (!this.isPassing) return;
     const chargeSeconds = (this.time.now - this.passChargeStartedAt) / 1000;
-    const aim =
-      this.inputState.move.x !== 0 || this.inputState.move.y !== 0
-        ? { ...this.inputState.move }
-        : { x: 0, y: -1 };
+    const moving =
+      this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
+    // Aim where you're heading; if you're stationary, aim where you last were
+    // heading rather than defaulting to north.
+    const aim = moving ? { ...this.inputState.move } : { ...this.lastAim };
     releasePass(this.world, aim, chargeSeconds);
     this.isPassing = false;
     this.inputState.charging = false;
@@ -341,15 +537,23 @@ export class GameScene extends Phaser.Scene {
 
   private flashSwitch(fromId: string, toId: string): void {
     if (this.switchToast) this.switchToast.text.destroy();
-    const text = this.add.text(VIEW_W / 2, VIEW_H - 60, `Switch: ${fromId} → ${toId}`, {
-      fontFamily: 'monospace',
-      fontSize: '16px',
-      color: '#ffffff',
-      backgroundColor: '#000000aa',
-      padding: { x: 10, y: 6 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(13);
-    this.switchToast = { text, expires: this.time.now + 1500 };
+    const text = this.add
+      .text(VIEW_W / 2, VIEW_H - 70, `${fromId} → ${toId}`, {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#ffd24a',
+        backgroundColor: '#000000aa',
+        padding: { x: 10, y: 6 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(12);
+    this.switchToast = { text, expires: this.time.now + 1400 };
   }
+
+  // -------------------------------------------------------------------------
+  // Loop
+  // -------------------------------------------------------------------------
 
   override update(_time: number, deltaMs: number): void {
     this.readInput();
@@ -365,7 +569,6 @@ export class GameScene extends Phaser.Scene {
     }
     if (steps >= MAX_STEPS_PER_FRAME) this.accumulator = 0;
 
-    // Switch toast expiry
     if (this.switchToast && this.time.now > this.switchToast.expires) {
       this.switchToast.text.destroy();
       this.switchToast = null;
@@ -386,55 +589,146 @@ export class GameScene extends Phaser.Scene {
     if (len > 0) {
       mx /= len;
       my /= len;
+      this.lastAim = { x: mx, y: my };
     }
     this.inputState.move = { x: mx, y: my };
     this.inputState.sprint = k.SHIFT.isDown;
-    if (this.inputState.charging) this.inputState.passAim = { x: mx, y: my };
+    if (this.inputState.charging) {
+      this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
+    }
   }
 
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
+
   private render(): void {
-    // Camera follow controlled player
-    this.cameras.main.centerOn(this.world.player.position.x, this.world.player.position.y);
+    const chars = this.collectCharacters();
+    const p = this.world.player;
+    const carrierId = this.world.ball.ownerId;
 
-    // Update sprite positions
-    const playerSprite = this.sprites.get(this.world.player.id);
-    if (playerSprite) playerSprite.setPosition(this.world.player.position.x, this.world.player.position.y);
-    for (const npc of this.world.npcs) {
-      const sprite = this.sprites.get(npc.id);
-      if (sprite) sprite.setPosition(npc.position.x, npc.position.y);
-    }
-    const ballSprite = this.sprites.get('ball');
-    if (ballSprite) ballSprite.setPosition(this.world.ball.position.x, this.world.ball.position.y);
-
-    // Stamina bar
-    const ratio = this.world.player.stamina / this.world.player.maxStamina;
-    this.staminaFill.setSize(216 * ratio, 18);
-    this.staminaFill.setFillStyle(ratio < 0.3 ? COLOR_STAMINA_LOW : COLOR_STAMINA_GOOD);
-    const exhausted = this.world.player.stamina <= 0;
-    const ballTag = this.world.player.hasBall ? ' · BALL' : '';
-    const speedTag = exhausted ? ` · EXHAUSTED (×${EXHAUSTED_SPEED_MULT})` : '';
-    this.staminaLabel.setText(
-      `Stamina ${Math.round(this.world.player.stamina)}/${this.world.player.maxStamina}${ballTag}${speedTag}`,
+    // --- Camera -------------------------------------------------------------
+    this.followTarget.setPosition(
+      p.position.x + p.velocity.x * CAMERA_LEAD,
+      p.position.y + p.velocity.y * CAMERA_LEAD,
     );
 
-    // Timer
+    let nearby = 0;
+    for (const c of chars) {
+      if (c.controlled) continue;
+      const dx = c.x - p.position.x;
+      const dy = c.y - p.position.y;
+      if (dx * dx + dy * dy < CROWD_RADIUS * CROWD_RADIUS) nearby += 1;
+    }
+    const crowdFactor = Math.min(1, nearby / 8);
+    const targetZoom = CAMERA_BASE_ZOOM - CAMERA_CROWD_ZOOM_OUT * crowdFactor;
+    this.currentZoom += (targetZoom - this.currentZoom) * ZOOM_LERP;
+    this.cameras.main.setZoom(this.currentZoom);
+
+    // --- Characters ---------------------------------------------------------
+    this.markerGfx.clear();
+
+    for (const c of chars) {
+      const body = this.bodySprites.get(c.id);
+      const shadow = this.shadowSprites.get(c.id);
+      if (!body || !shadow) continue;
+
+      body.setPosition(c.x, c.y);
+      shadow.setPosition(c.x, c.y + c.radius * 0.55);
+
+      // Colour is resolved from live state every frame, so it follows control.
+      const teamColor = c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
+      body.setFillStyle(teamColor);
+      if (c.controlled) {
+        body.setStrokeStyle(4, PALETTE.controlled);
+        body.setDepth(3);
+      } else {
+        body.setStrokeStyle(2, 0x000000, 0.45);
+        body.setDepth(2);
+      }
+
+      // Heading tick — a short spoke in the direction of travel.
+      const speed = Math.hypot(c.vx, c.vy);
+      if (speed > 4) {
+        const ux = c.vx / speed;
+        const uy = c.vy / speed;
+        this.markerGfx.lineStyle(3, 0x000000, 0.5);
+        this.markerGfx.lineBetween(
+          c.x + ux * c.radius * 0.3,
+          c.y + uy * c.radius * 0.3,
+          c.x + ux * (c.radius + 9),
+          c.y + uy * (c.radius + 9),
+        );
+      }
+
+      // Carrier halo — pulses so a loose ball reads differently from a held one.
+      if (carrierId !== null && carrierId === c.id) {
+        const pulse = 3 + Math.sin(this.time.now / 130) * 2;
+        this.markerGfx.lineStyle(3, PALETTE.ball, 0.9);
+        this.markerGfx.strokeCircle(c.x, c.y, c.radius + 7 + pulse);
+      }
+
+      // "You" chevron above the controlled character.
+      if (c.controlled) {
+        const ty = c.y - c.radius - 14;
+        this.markerGfx.fillStyle(PALETTE.controlled, 1);
+        this.markerGfx.fillTriangle(c.x - 8, ty - 9, c.x + 8, ty - 9, c.x, ty);
+      }
+    }
+
+    // --- Ball ---------------------------------------------------------------
+    const b = this.world.ball;
+    this.ballSprite.setPosition(b.position.x, b.position.y);
+    this.ballShadow.setPosition(b.position.x, b.position.y + 6);
+    if (carrierId === null) {
+      // Loose ball: give it a faint ring so it's findable in a scrum.
+      const pulse = 2 + Math.sin(this.time.now / 90) * 2;
+      this.markerGfx.lineStyle(2, PALETTE.ball, 0.55);
+      this.markerGfx.strokeCircle(b.position.x, b.position.y, b.radius + 6 + pulse);
+    }
+
+    // --- HUD ----------------------------------------------------------------
+    const ratio = p.stamina / p.maxStamina;
+    this.staminaFill.setSize(236 * ratio, 18);
+    this.staminaFill.setFillStyle(ratio < 0.3 ? PALETTE.staminaLow : PALETTE.staminaGood);
+    const exhausted = p.stamina <= 0;
+    const speedTag = exhausted ? ` · EXHAUSTED (×${EXHAUSTED_SPEED_MULT})` : '';
+    this.staminaLabel.setText(
+      `${p.id}  ${Math.round(p.stamina)}/${p.maxStamina}${speedTag}`,
+    );
+
+    if (carrierId === null) {
+      this.carrierLabel.setText('Ball: loose');
+      this.carrierLabel.setColor('#ffffff');
+    } else if (carrierId === p.id) {
+      this.carrierLabel.setText('Ball: YOU');
+      this.carrierLabel.setColor('#ffd24a');
+    } else {
+      const carrier = this.world.npcs.find((n) => n.id === carrierId);
+      const side = carrier && carrier.team === p.team ? 'teammate' : 'opponent';
+      this.carrierLabel.setText(`Ball: ${carrierId} (${side})`);
+      this.carrierLabel.setColor(
+        carrier && carrier.team === p.team ? '#6ede8a' : '#e8705f',
+      );
+    }
+
     const t = Math.max(0, this.world.matchTimeRemaining);
     const mm = Math.floor(t / 60).toString().padStart(2, '0');
     const ss = Math.floor(t % 60).toString().padStart(2, '0');
     this.timerText.setText(`${mm}:${ss}`);
 
-    // Score
-    this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
+    this.scoreText.setText(
+      `Up'Ards ${this.world.score[0]} — ${this.world.score[1]} Down'Ards`,
+    );
 
-    // Overlay: end-of-match banner
     if (this.world.matchState === 'over' && this.world.winState) {
       const ws = this.world.winState;
       let msg: string;
-      if (ws.winner === null) msg = `Draw — time up`;
-      else {
-        const teamLabel = ws.winner === 0 ? 'Up\'Ards' : 'Down\'Ards';
-        const scorerLabel = ws.scorerId ?? '?';
-        msg = `${teamLabel} win!\nScorer: ${scorerLabel}`;
+      if (ws.winner === null) {
+        msg = 'Draw — time up';
+      } else {
+        const teamLabel = ws.winner === 0 ? "Up'Ards" : "Down'Ards";
+        msg = `${teamLabel} win!\nGoaled by ${ws.scorerId ?? '?'}`;
       }
       this.overlayText.setText(msg);
       this.overlayText.setVisible(true);
@@ -442,11 +736,10 @@ export class GameScene extends Phaser.Scene {
       this.overlayText.setVisible(false);
     }
 
-    // Minimap
-    this.renderMinimap();
+    this.renderMinimap(chars);
   }
 
-  private renderMinimap(): void {
+  private renderMinimap(chars: RenderChar[]): void {
     const g = this.minimapGfx;
     g.clear();
     const map = this.world.map;
@@ -455,31 +748,37 @@ export class GameScene extends Phaser.Scene {
     const ox = VIEW_W - MINIMAP_W - MINIMAP_PAD;
     const oy = MINIMAP_PAD;
 
-    // Map background tint
-    g.fillStyle(COLOR_FIELD, 0.6);
+    g.fillStyle(PALETTE.grass, 0.6);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
-    // River on minimap
-    g.fillStyle(COLOR_RIVER, 0.8);
-    g.fillRect(ox, oy + (map.river.position.y - map.river.height / 2) * sy, MINIMAP_W, map.river.height * sy);
+    g.fillStyle(PALETTE.water, 0.85);
+    g.fillRect(
+      ox,
+      oy + (map.river.position.y - map.river.height / 2) * sy,
+      MINIMAP_W,
+      map.river.height * sy,
+    );
 
-    // All characters
-    const draw = (x: number, y: number, color: number, r = 2.5) => {
-      g.fillStyle(color, 1);
-      g.fillCircle(ox + x * sx, oy + y * sy, r);
-    };
-    // Controlled player
-    draw(this.world.player.position.x, this.world.player.position.y, COLOR_PLAYER, 3.5);
-    // Teammates
-    for (const npc of this.world.npcs) {
-      if (npc.team === this.world.player.team) {
-        draw(npc.position.x, npc.position.y, COLOR_NPC_TEAM_0, 2.5);
-      } else {
-        draw(npc.position.x, npc.position.y, COLOR_NPC_TEAM_1, 2.5);
-      }
+    // Millstones
+    for (const goal of map.goals) {
+      g.fillStyle(PALETTE.millstone, 1);
+      g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3);
     }
-    // Ball
-    draw(this.world.ball.position.x, this.world.ball.position.y, COLOR_BALL, 2);
+
+    // Everyone else first, so the controlled marker and ball draw on top.
+    for (const c of chars) {
+      if (c.controlled) continue;
+      g.fillStyle(c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown, 0.85);
+      g.fillCircle(ox + c.x * sx, oy + c.y * sy, 2.2);
+    }
+
+    const b = this.world.ball;
+    g.fillStyle(PALETTE.ball, 1);
+    g.fillCircle(ox + b.position.x * sx, oy + b.position.y * sy, 3);
+
+    const p = this.world.player;
+    g.fillStyle(PALETTE.controlled, 1);
+    g.fillCircle(ox + p.position.x * sx, oy + p.position.y * sy, 4);
+    g.lineStyle(1, 0x000000, 0.8);
+    g.strokeCircle(ox + p.position.x * sx, oy + p.position.y * sy, 4);
   }
 }
-
-// (no unused aliases — staminaBg uses Phaser.GameObjects.Rectangle directly)
