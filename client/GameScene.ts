@@ -606,7 +606,7 @@ export class GameScene extends Phaser.Scene {
     this.isPassing = true;
     this.passChargeStartedAt = this.now();
     this.inputState.charging = true;
-    if (this.teach === 'kick') this.teach = 'sprint';
+    if (this.teach === 'kick') this.teach = 'goal';
   };
 
   private handlePassRelease = (): void => {
@@ -751,7 +751,6 @@ export class GameScene extends Phaser.Scene {
     }
     this.inputState.move = { x: mx, y: my };
     this.inputState.sprint = k.SHIFT.isDown;
-    if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'goal';
     if (this.inputState.charging) {
       this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
     }
@@ -767,7 +766,8 @@ export class GameScene extends Phaser.Scene {
     const g = opponentGoalFor(this.world.player.team, this.world.map);
     const dx = this.world.player.position.x - g.x;
     const dy = this.world.player.position.y - g.y;
-    return Math.hypot(dx, dy) <= GOAL_REACH_DISTANCE + 8;
+    // Same radius as tapGoal — no HUD slop that shows HOLD then eats taps.
+    return Math.hypot(dx, dy) <= GOAL_REACH_DISTANCE;
   }
 
   // -------------------------------------------------------------------------
@@ -1019,7 +1019,7 @@ export class GameScene extends Phaser.Scene {
       move: 'WASD — run',
       ball: 'Get the stone',
       kick: 'Hold Space — kick',
-      sprint: 'Shift — burst',
+      sprint: '',
       goal: 'At their millstone, tap E',
       done: '',
     };

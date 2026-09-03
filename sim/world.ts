@@ -22,7 +22,7 @@
 
 import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
-import { createPhysicsWorld, stepPhysics, type PhysicsWorldHandle } from './physics.js';
+import { createPhysicsWorld, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import { steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
@@ -434,10 +434,14 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   const envMult = staminaMult * waterMult;
   const controlledBody = physics.bodies.get(player.id);
   if (controlledBody) {
-    Matter.Body.setVelocity(controlledBody, {
-      x: world._controlVel.x * envMult,
-      y: world._controlVel.y * envMult,
-    });
+    // _controlVel is px/s; Matter setVelocity expects px per baseDelta.
+    Matter.Body.setVelocity(
+      controlledBody,
+      toMatterVelocity({
+        x: world._controlVel.x * envMult,
+        y: world._controlVel.y * envMult,
+      }),
+    );
   }
 
   // 5. NPC steering (role-based; collisions deflect them around obstacles)
@@ -447,26 +451,28 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   stepPhysics(physics, dt);
 
   // 7. Sync state from physics bodies (Map iteration).
+  // Matter stores velocity as px/baseDelta; expose px/s on sim records.
+  const fromMatter = 1 / MATTER_VELOCITY_SCALE;
   for (const [id, body] of physics.bodies) {
     if (id === player.id) {
       player.position.x = body.position.x;
       player.position.y = body.position.y;
-      player.velocity.x = body.velocity.x;
-      player.velocity.y = body.velocity.y;
+      player.velocity.x = body.velocity.x * fromMatter;
+      player.velocity.y = body.velocity.y * fromMatter;
     } else {
       const npc = npcs.find((n) => n.id === id);
       if (npc) {
         npc.position.x = body.position.x;
         npc.position.y = body.position.y;
-        npc.velocity.x = body.velocity.x;
-        npc.velocity.y = body.velocity.y;
+        npc.velocity.x = body.velocity.x * fromMatter;
+        npc.velocity.y = body.velocity.y * fromMatter;
       }
     }
   }
   ball.position.x = physics.ballBody.position.x;
   ball.position.y = physics.ballBody.position.y;
-  ball.velocity.x = physics.ballBody.velocity.x;
-  ball.velocity.y = physics.ballBody.velocity.y;
+  ball.velocity.x = physics.ballBody.velocity.x * fromMatter;
+  ball.velocity.y = physics.ballBody.velocity.y * fromMatter;
 
   pinOnPitch(world, player.id, player.position, player.velocity, player.radius);
   for (const npc of npcs) {
