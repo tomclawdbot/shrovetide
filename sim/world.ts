@@ -21,7 +21,7 @@
 //     sim stays deterministic.
 
 import Matter from 'matter-js';
-import { ASHBOURNE_TOWN, TownMap, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
+import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
 import { createPhysicsWorld, stepPhysics, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import { steerNPCs } from './npc.js';
@@ -346,6 +346,41 @@ export function integrateControlVelocity(
   return out;
 }
 
+
+/** Keep a body on the pitch. Physics walls can miss a tick; the camera then follows you into the void. */
+function pinOnPitch(
+  world: World,
+  id: string,
+  pos: Vec2,
+  vel: Vec2,
+  radius: number,
+): void {
+  const map = world.map;
+  const pad = radius + 4;
+  let x = Math.min(map.width - pad, Math.max(pad, pos.x));
+  let y = Math.min(map.height - pad, Math.max(pad, pos.y));
+  let stopped = x !== pos.x || y !== pos.y;
+  // Water is legal (slow). Only bounce OOB/buildings, never the millstone in the river.
+  if (isOutOfBounds({ x, y }, map) || isInObstacle({ x, y }, map)) {
+    const legal = nearestLegalPoint({ x, y }, map);
+    x = legal.x;
+    y = legal.y;
+    stopped = true;
+  }
+  const moved = x !== pos.x || y !== pos.y;
+  pos.x = x;
+  pos.y = y;
+  if (stopped) {
+    vel.x = 0;
+    vel.y = 0;
+  }
+  if (!moved && !stopped) return;
+  const body = world.physics.bodies.get(id);
+  if (!body) return;
+  Matter.Body.setPosition(body, { x, y });
+  if (stopped) Matter.Body.setVelocity(body, { x: 0, y: 0 });
+}
+
 /**
  * Step the world by `dt` seconds.
  *
@@ -432,6 +467,11 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   ball.position.y = physics.ballBody.position.y;
   ball.velocity.x = physics.ballBody.velocity.x;
   ball.velocity.y = physics.ballBody.velocity.y;
+
+  pinOnPitch(world, player.id, player.position, player.velocity, player.radius);
+  for (const npc of npcs) {
+    pinOnPitch(world, npc.id, npc.position, npc.velocity, npc.radius);
+  }
 
   // 8. Ball OOB teleport (rare — happens if a pass lands inside an OOB zone
   // or physics kicks the ball into one).

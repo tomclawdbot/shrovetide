@@ -35,10 +35,10 @@ export function placeTeammate(world: World, npcId: string, x: number, y: number)
 export function moveControlled(world: World, dx: number, dy: number): boolean {
   if (world.matchState !== 'placement') return false;
   if (dx === 0 && dy === 0) return false;
-  const target = nearestLegalPoint(
-    { x: world.player.position.x + dx, y: world.player.position.y + dy },
-    world.map,
-  );
+  const pad = world.player.radius + 4;
+  const rawX = Math.min(world.map.width - pad, Math.max(pad, world.player.position.x + dx));
+  const rawY = Math.min(world.map.height - pad, Math.max(pad, world.player.position.y + dy));
+  const target = nearestLegalPoint({ x: rawX, y: rawY }, world.map);
   world.player.position = { ...target };
   world.player.velocity = { x: 0, y: 0 };
   pinBody(world, world.player.id, target.x, target.y);

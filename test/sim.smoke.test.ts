@@ -275,3 +275,14 @@ test('smoke: goaling — 3 taps within spacing scores and ends match', () => {
   assert.equal(world.score[world.player.team], 1, 'scoring team gets +1');
   assert.ok(world.winState !== null, 'winState populated');
 });
+
+test('feel: holding one direction stays on the pitch', () => {
+  const world = createWorld();
+  startMatch(world);
+  const west: Input = { ...IDLE, move: { x: -1, y: 0 } };
+  runTicks(world, west, 600);
+  assert.ok(world.player.position.x >= world.player.radius, 'not past the left sideline');
+  assert.ok(world.player.position.x <= world.map.width - world.player.radius, 'not past the right sideline');
+  assert.ok(world.player.position.y >= world.player.radius, 'not past the top');
+  assert.ok(world.player.position.y <= world.map.height - world.player.radius, 'not past the bottom');
+});
