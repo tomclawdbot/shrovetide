@@ -2,27 +2,223 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="theme-color" content="#0d1f12" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Shrovetide" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
     <title>Shrovetide</title>
     <style>
+      :root {
+        --pad-t: env(safe-area-inset-top, 0px);
+        --pad-r: env(safe-area-inset-right, 0px);
+        --pad-b: env(safe-area-inset-bottom, 0px);
+        --pad-l: env(safe-area-inset-left, 0px);
+        --ink: #f3ead4;
+        --dusk: #140e0a;
+        --moss: #0d1f12;
+      }
       html, body {
         margin: 0;
         padding: 0;
-        background: #0d1f12;
+        background: var(--moss);
         overflow: hidden;
+        width: 100%;
         height: 100%;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        height: 100dvh;
+        font-family: Palatino, "Palatino Linotype", Georgia, serif;
+        position: fixed;
+        inset: 0;
+        overscroll-behavior: none;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
       }
       #game {
-        width: 100vw;
-        height: 100vh;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
         display: block;
+        overflow: hidden;
+        touch-action: none;
+      }
+      #game canvas {
+        touch-action: none;
+        display: block;
+      }
+      #safe-probe {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        padding: var(--pad-t) var(--pad-r) var(--pad-b) var(--pad-l);
+        visibility: hidden;
+      }
+      #shell {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 20;
+      }
+      #touch-layer {
+        position: absolute;
+        inset: 0;
+      }
+      #touch-layer[hidden] {
+        display: none !important;
+      }
+      .stick-well {
+        position: absolute;
+        left: calc(var(--pad-l) + 18px);
+        bottom: calc(var(--pad-b) + 18px);
+        width: 132px;
+        height: 132px;
+        pointer-events: auto;
+        touch-action: none;
+      }
+      .stick-base,
+      .stick-knob {
+        position: absolute;
+        border-radius: 50%;
+        box-sizing: border-box;
+      }
+      .stick-base {
+        inset: 10px;
+        background: rgba(20, 14, 10, 0.45);
+        border: 2px solid rgba(243, 234, 212, 0.45);
+      }
+      .stick-knob {
+        left: 50%;
+        top: 50%;
+        width: 52px;
+        height: 52px;
+        margin: -26px 0 0 -26px;
+        background: rgba(243, 234, 212, 0.88);
+        border: 2px solid #1a140c;
+        will-change: transform;
+      }
+      .pad-btn {
+        position: absolute;
+        pointer-events: auto;
+        touch-action: none;
+        color: var(--dusk);
+        background: #e4d4a8;
+        border: 2px solid #1a140c;
+        font-family: inherit;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        padding: 0;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .pad-btn[hidden] {
+        display: none !important;
+      }
+      .pad-btn:active,
+      .pad-btn.held {
+        background: #c4a35a;
+      }
+      #kick-btn {
+        right: calc(var(--pad-r) + 22px);
+        bottom: calc(var(--pad-b) + 22px);
+        width: 108px;
+        height: 108px;
+        border-radius: 50%;
+        font-size: 20px;
+      }
+      #switch-btn {
+        right: calc(var(--pad-r) + 34px);
+        bottom: calc(var(--pad-b) + 142px);
+        min-width: 84px;
+        height: 40px;
+        border-radius: 20px;
+        font-size: 16px;
+        padding: 0 14px;
+        background: rgba(20, 14, 10, 0.72);
+        color: var(--ink);
+        border-color: rgba(243, 234, 212, 0.55);
+      }
+      #ready-btn {
+        left: 50%;
+        bottom: calc(var(--pad-b) + 22px);
+        transform: translateX(-50%);
+        min-width: 168px;
+        height: 48px;
+        border-radius: 24px;
+        font-size: 20px;
+        padding: 0 22px;
+      }
+      #unmute-btn {
+        position: absolute;
+        top: calc(var(--pad-t) + 10px);
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: auto;
+        touch-action: manipulation;
+        color: var(--dusk);
+        background: #e4d4a8;
+        border: 2px solid #1a140c;
+        border-radius: 20px;
+        font-family: inherit;
+        font-size: 16px;
+        padding: 6px 16px;
+        z-index: 25;
+      }
+      #unmute-btn[hidden] {
+        display: none !important;
+      }
+      #rotate-hint {
+        display: none;
+        position: absolute;
+        inset: 0;
+        background: var(--moss);
+        color: var(--ink);
+        pointer-events: auto;
+        z-index: 40;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 24px;
+        font-size: 28px;
+        line-height: 1.35;
+      }
+      @media (pointer: coarse) and (orientation: portrait) {
+        #rotate-hint {
+          display: flex;
+        }
+        #touch-layer {
+          visibility: hidden;
+        }
       }
     </style>
   </head>
   <body>
+    <div id="safe-probe" aria-hidden="true"></div>
     <div id="game"></div>
+    <div id="shell">
+      <div id="rotate-hint">Turn the phone sideways<br />to run</div>
+      <button id="unmute-btn" type="button" hidden>Tap for sound</button>
+      <div id="touch-layer" hidden data-flow="title">
+        <div id="stick-well" class="stick-well">
+          <div class="stick-base"></div>
+          <div id="stick-knob" class="stick-knob"></div>
+        </div>
+        <button id="kick-btn" type="button">Kick</button>
+        <button id="switch-btn" type="button">Switch</button>
+        <button id="ready-btn" type="button">Whistle</button>
+      </div>
+    </div>
     <script type="module" src="/client/index.ts"></script>
   </body>
 </html>

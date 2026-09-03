@@ -2,6 +2,7 @@
 
 import Phaser from 'phaser';
 import { GameScene } from './GameScene.js';
+import { installGameShell } from './shell.js';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -12,6 +13,10 @@ const config: Phaser.Types.Core.GameConfig = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 1200,
     height: 800,
+  },
+  input: {
+    activePointers: 3,
+    windowEvents: false,
   },
   scene: [GameScene],
   fps: {
@@ -24,4 +29,13 @@ const config: Phaser.Types.Core.GameConfig = {
   },
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+installGameShell({
+  onUnlock: () => {
+    try {
+      game.sound.unlock();
+    } catch {
+      /* Phaser sound may not be ready yet */
+    }
+  },
+});
