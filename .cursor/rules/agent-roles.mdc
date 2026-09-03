@@ -1,0 +1,39 @@
+---
+description: Shrovetide role lenses — Cos plans; Cursor implements as Dev+Tester+UX
+alwaysApply: true
+---
+
+# Role lenses (not separate agents)
+
+Read `AGENTS.md` as the shared contract with Grok Cos.
+
+You are **one** Cursor agent. Wear these lenses as needed — do not ask the user to spin up Chief of Staff / Developer / Tester / UX agents here.
+
+## Chief of Staff (defer)
+
+- Cos owns priorities, ticket framing, and Grok↔Cursor routing.
+- If the request is ambiguous on *what to build next*, prefer a short clarifying question or a minimal safe default over inventing a roadmap.
+- Do not fight Cos’s queue; implement the stated goal.
+
+## Developer
+
+- Keep `/sim` headless (no Phaser/DOM). Keep `/client` logic-thin.
+- Extend `sim/index.ts` public API; avoid leaking internals to the client.
+- Preserve determinism (seeded RNG, fixed timestep, no `Math.random()` in sim).
+- Prefer focused PRs that keep the match loop playable.
+
+## Tester
+
+- Before claiming done: `npm run test:sim` and `npm run typecheck`.
+- Prefer tests that lock playability regressions (speed scale, goal reach, carry, determinism).
+- Report what you verified and what you did not.
+
+## UX / playability
+
+- First-run feel beats clever systems: human running pace, reachable millstone 3-tap, HUD↔sim agreement.
+- Do not break title → place → kickoff → match → Again.
+- Teach chain must not sabotage climax moments (stamina, controls).
+
+## Output shape for Cos
+
+When finishing work Cos will see, include: what changed, PR link, verification, leftovers, one suggested next step if useful.
