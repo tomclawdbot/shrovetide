@@ -138,6 +138,8 @@ export class GameScene extends Phaser.Scene {
   private flow: Flow = 'title';
   private placeEndsAt = 0;
   private placeTargetId: string | null = null;
+  private spaceReady = false;
+  private eatPointer = false;
   private teach: Teach = 'move';
   private playStartedAt = 0;
   private hitStopUntil = 0;
@@ -192,6 +194,9 @@ export class GameScene extends Phaser.Scene {
     kb.on('keydown-Q', this.handleQuickSwitch);
 
     this.input.on('pointerdown', this.handlePointer);
+    this.input.on('pointerup', () => {
+      this.eatPointer = false;
+    });
 
     this.drawMapStatic();
     this.createSprites();
@@ -507,8 +512,7 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(14)
-        .setVisible(false)
-        .setInteractive({ useHandCursor: true }),
+        .setVisible(false),
     );
     this.againBtn.on('pointerdown', () => this.scene.restart());
 
@@ -558,7 +562,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.flow === 'placing') {
-      this.whistle();
+      if (this.spaceReady) this.whistle();
       return;
     }
     if (this.isPassing) return;
@@ -570,6 +574,7 @@ export class GameScene extends Phaser.Scene {
   };
 
   private handlePassRelease = (): void => {
+    this.spaceReady = true;
     if (this.flow !== 'playing' || !this.isPassing) return;
     const chargeSeconds = (this.time.now - this.passChargeStartedAt) / 1000;
     const moving = this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
@@ -586,6 +591,7 @@ export class GameScene extends Phaser.Scene {
   };
 
   private handleTab = (): void => {
+    if (this.flow === 'title') return;
     if (this.flow === 'placing') {
       const mates = this.world.npcs.filter((n) => n.team === this.world.player.team);
       if (mates.length === 0) return;
@@ -607,6 +613,10 @@ export class GameScene extends Phaser.Scene {
   };
 
   private handlePointer = (pointer: Phaser.Input.Pointer): void => {
+    if (this.eatPointer) {
+      this.eatPointer = false;
+      return;
+    }
     if (this.flow === 'title') {
       this.beginPlacement();
       return;
@@ -620,6 +630,8 @@ export class GameScene extends Phaser.Scene {
     if (this.flow !== 'title') return;
     this.flow = 'placing';
     this.placeEndsAt = this.time.now + PLACE_SECONDS * 1000;
+    this.spaceReady = false;
+    this.eatPointer = true;
     this.titleCard.setVisible(false);
   }
 
@@ -817,6 +829,7 @@ export class GameScene extends Phaser.Scene {
       this.pipGfx.clear();
       this.overlayText.setVisible(false);
       this.againBtn.setVisible(false);
+      this.againBtn.disableInteractive();
       this.drawPrompts();
       return;
     }
@@ -856,6 +869,7 @@ export class GameScene extends Phaser.Scene {
       this.overlayText.setText(msg);
       this.overlayText.setVisible(true);
       this.againBtn.setVisible(true);
+      this.againBtn.setInteractive({ useHandCursor: true });
       this.promptText.setText('');
       if (ws.reason === 'goal' && !this.scoredJuice) {
         this.scoredJuice = true;
@@ -878,7 +892,7 @@ export class GameScene extends Phaser.Scene {
     if (this.time.now < this.feedbackUntil) return;
 
     if (this.flow === 'placing') {
-      this.promptText.setText(`Place your people · ${this.placeCountdown()} · WASD you · click a body · Space whistle`);
+      this.promptText.setText(`Walk them out · ${this.placeCountdown()} · Space when ready`);
       return;
     }
     if (this.flow !== 'playing') {
