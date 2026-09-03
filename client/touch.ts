@@ -67,6 +67,29 @@ export class TouchControls {
     this.sync();
   }
 
+  /** Teach/flow copy in the DOM rail (never overlaps Whistle/Kick/Switch). */
+  setCaption(text: string): void {
+    const node = this.el('caption-text');
+    if (node) node.textContent = text;
+    this.syncCaption();
+  }
+
+  /** Goal pips under the caption. Pass null to hide. */
+  setPips(taps: number | null): void {
+    const pips = this.el('caption-pips');
+    if (!pips) return;
+    if (taps === null) {
+      pips.hidden = true;
+    } else {
+      pips.hidden = false;
+      const dots = pips.querySelectorAll('i');
+      dots.forEach((dot, i) => {
+        dot.classList.toggle('filled', i < taps);
+      });
+    }
+    this.syncCaption();
+  }
+
   dispose(): void {
     this.abort?.abort();
     this.abort = null;
@@ -103,6 +126,15 @@ export class TouchControls {
 
     sw.addEventListener('pointerdown', this.onSwitch, { signal });
     ready.addEventListener('pointerdown', this.onReady, { signal });
+    const rail = this.el('caption-rail');
+    rail?.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      },
+      { signal },
+    );
   }
 
   private sync(): void {
@@ -122,6 +154,17 @@ export class TouchControls {
       this.move.y = 0;
       this.nudgeKnob(0, 0);
     }
+    this.syncCaption();
+  }
+
+  private syncCaption(): void {
+    const rail = this.el('caption-rail');
+    if (!rail) return;
+    const text = this.el('caption-text')?.textContent?.trim() ?? '';
+    const pips = this.el('caption-pips');
+    const pipsOn = !!pips && !pips.hidden;
+    const show = this.enabled && this.flow !== 'title' && this.flow !== 'over' && (text.length > 0 || pipsOn);
+    rail.hidden = !show;
   }
 
   private onStickDown = (ev: PointerEvent): void => {
