@@ -3,17 +3,21 @@
 //   - hold: stay near holdPosition, but engage ball if it's within range
 //
 // NPCs are steered via matter.js applyForce; obstacles deflect them naturally
-// via collision (the "hug" still works). Water slow-down is applied at the
-// velocity-clamp step using speedMultiplierAt(map).
+// via collision (the "hug" still works). Terrain slow-down (river / hedge)
+// is applied at the velocity-clamp step using speedMultiplierAt(map).
+// Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
 import { speedMultiplierAt } from './maps.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
 import type { Team, Vec2 } from './types.js';
-import { MOVEMENT, type World } from './world.js';
+import { countHugNeighbors, hugShoveAuthority, MOVEMENT, type World } from './world.js';
 
-/** Strong enough to hit chase cap in about a second so kickoff isn't open grass. */
-const NPC_STEER_FORCE = 0.00055;
+/**
+ * Scaled with CHAR_DENSITY so an isolated chaser still hits cap in ~1s.
+ * Packed bodies get this cut (see hugShoveAuthority) so the scrum grinds.
+ */
+const NPC_STEER_FORCE = 0.0015;
 /** Distance (px) at which a HOLD NPC engages a carried ball over its hold point. */
 const HOLD_BALL_ENGAGE_DISTANCE = 220;
 /** Loose ball: hold players join the scrum from much further out. */
@@ -48,19 +52,20 @@ export function steerNPCs(world: World): void {
     const dirX = dx / dist;
     const dirY = dy / dist;
 
+    const shove = hugShoveAuthority(countHugNeighbors(world, npc.id, npc.position));
     Matter.Body.applyForce(
       body,
       body.position,
-      { x: dirX * NPC_STEER_FORCE, y: dirY * NPC_STEER_FORCE },
+      { x: dirX * NPC_STEER_FORCE * shove, y: dirY * NPC_STEER_FORCE * shove },
     );
 
     const looseBoost =
       world.ball.ownerId === null && target === world.ball.position ? LOOSE_BALL_SPEED_MULT : 1;
     const carryMult = world.ball.ownerId === npc.id ? MOVEMENT.carrierSpeedMult : 1;
     const defendBoost = collapsing ? GOAL_DEFEND_SPEED_MULT : 1;
-    const waterMult = speedMultiplierAt(npc.position, world.map);
+    const terrainMult = speedMultiplierAt(npc.position, world.map);
     const maxMatter =
-      npc.maxSpeed * looseBoost * waterMult * carryMult * defendBoost * MATTER_VELOCITY_SCALE;
+      npc.maxSpeed * looseBoost * terrainMult * carryMult * defendBoost * MATTER_VELOCITY_SCALE;
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.hypot(vx, vy);

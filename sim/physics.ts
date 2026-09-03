@@ -34,6 +34,18 @@ export interface CharacterBodySpec {
  */
 export const MATTER_VELOCITY_SCALE = 1 / 60;
 
+/** Character body density — heavy enough that a packed hug resists a shove. */
+export const CHAR_DENSITY = 0.006;
+/** Air damping on characters. Packs settle instead of sliding as a raft. */
+export const CHAR_FRICTION_AIR = 0.08;
+/** Contact friction so bodies grab each other in the scrum. */
+export const CHAR_FRICTION = 0.35;
+export const CHAR_FRICTION_STATIC = 0.45;
+/** Ball stays light so it can still squirt out of a packed hug. */
+export const BALL_DENSITY = 0.0008;
+export const BALL_FRICTION_AIR = 0.04;
+export const BALL_RESTITUTION = 0.7;
+
 /** Convert a px/s vector into Matter setVelocity units. */
 export function toMatterVelocity(pxPerSec: Vec2): Vec2 {
   return {
@@ -53,18 +65,21 @@ export function createPhysicsWorld(
   engine.gravity.x = 0;
   engine.gravity.y = 0;
   engine.enableSleeping = false;
-  engine.positionIterations = 6;
-  engine.velocityIterations = 4;
+  engine.positionIterations = 8;
+  engine.velocityIterations = 6;
   engine.constraintIterations = 4;
 
   const bodies = new Map<string, Matter.Body>();
   for (const ch of characters) {
     const body = Matter.Bodies.circle(ch.position.x, ch.position.y, ch.radius, {
       label: ch.label,
-      // Controlled movement rewrites velocity each tick; air drag only fought that model.
-      frictionAir: 0.02,
+      // Heavy + grabby: a packed hug is a grinding mass, not a sliding raft.
+      // Isolated running still uses setVelocity, so this does not rocket or stall open grass.
+      frictionAir: CHAR_FRICTION_AIR,
+      friction: CHAR_FRICTION,
+      frictionStatic: CHAR_FRICTION_STATIC,
       restitution: 0.05,
-      density: 0.002,
+      density: CHAR_DENSITY,
       inertia: Infinity,
     });
     bodies.set(ch.id, body);
@@ -72,9 +87,9 @@ export function createPhysicsWorld(
 
   const ballBody = Matter.Bodies.circle(ballPosition.x, ballPosition.y, ballRadius, {
     label: 'ball',
-    frictionAir: 0.05,
-    restitution: 0.55,
-    density: 0.001,
+    frictionAir: BALL_FRICTION_AIR,
+    restitution: BALL_RESTITUTION,
+    density: BALL_DENSITY,
     inertia: Infinity,
   });
 

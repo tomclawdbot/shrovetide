@@ -56,6 +56,9 @@ const PALETTE = {
   buildingEdge: 0x1a100a,
   water: 0x2d4a5c,
   waterEdge: 0x1a3040,
+  hedge: 0x1c3a16,
+  hedgeLeaf: 0x3a6a28,
+  hedgeEdge: 0x0c1a0a,
   bridge: 0x8a6844,
   oob: 0x2a2218,
   oobEdge: 0x120e0a,
@@ -364,7 +367,7 @@ export class GameScene extends Phaser.Scene {
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    for (let i = 0; i < 1800; i++) {
+    for (let i = 0; i < 4000; i++) {
       const x = rand() * map.width;
       const y = rand() * map.height;
       this.mapGfx.fillStyle(rand() > 0.5 ? PALETTE.grassAlt : PALETTE.grassDark, 0.4);
@@ -387,6 +390,25 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.fillRect(x, y, z.width, z.height);
       this.mapGfx.lineStyle(4, PALETTE.oobEdge, 1);
       this.mapGfx.strokeRect(x, y, z.width, z.height);
+    }
+
+    for (const h of map.hedges) {
+      const hx = h.position.x - h.width / 2;
+      const hy = h.position.y - h.height / 2;
+      this.mapGfx.fillStyle(PALETTE.hedge, 1);
+      this.mapGfx.fillRect(hx, hy, h.width, h.height);
+      this.mapGfx.lineStyle(3, PALETTE.hedgeEdge, 0.9);
+      this.mapGfx.strokeRect(hx, hy, h.width, h.height);
+      // Seeded leaf clumps so a hedge reads as a hedge, not a dark bar.
+      const along = Math.max(h.width, h.height);
+      const clumps = Math.max(3, Math.floor(along / 28));
+      for (let i = 0; i < clumps; i++) {
+        const t = (i + 0.5) / clumps;
+        const px = hx + (h.width >= h.height ? t * h.width : h.width * (0.25 + (i % 3) * 0.25));
+        const py = hy + (h.height > h.width ? t * h.height : h.height * (0.3 + (i % 2) * 0.4));
+        this.mapGfx.fillStyle(PALETTE.hedgeLeaf, 0.85);
+        this.mapGfx.fillCircle(px, py, 5 + (i % 3));
+      }
     }
 
     const rx = map.river.position.x - map.river.width / 2;
@@ -1189,6 +1211,15 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
+    g.fillStyle(PALETTE.hedge, 0.95);
+    for (const h of map.hedges) {
+      g.fillRect(
+        ox + (h.position.x - h.width / 2) * sx,
+        oy + (h.position.y - h.height / 2) * sy,
+        Math.max(1.5, h.width * sx),
+        Math.max(1.5, h.height * sy),
+      );
+    }
     g.fillStyle(PALETTE.water, 0.9);
     g.fillRect(
       ox,
