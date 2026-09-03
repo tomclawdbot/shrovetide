@@ -146,6 +146,8 @@ export class GameScene extends Phaser.Scene {
   private lastGoalingTaps = 0;
   private scoredJuice = false;
   private feedbackUntil = 0;
+  private identityUntil = 0;
+  private lastThumpAt = 0;
 
   constructor() {
     super('GameScene');
@@ -642,7 +644,7 @@ export class GameScene extends Phaser.Scene {
     this.playStartedAt = this.time.now;
     this.teach = 'move';
     this.cameras.main.shake(200, 0.008);
-    this.flash('Ball’s up');
+    this.identityUntil = this.time.now + 3500;
   }
 
   private flash(msg: string): void {
@@ -766,8 +768,7 @@ export class GameScene extends Phaser.Scene {
         this.markerGfx.fillTriangle(c.x - 9, ty - 10, c.x + 9, ty - 10, c.x, ty);
       } else {
         body.setRadius(c.radius);
-        const placing = this.flow === 'placing' && c.id === this.placeTargetId;
-        body.setStrokeStyle(placing ? 4 : 3, placing ? PALETTE.youRing : PALETTE.buildingEdge, 1);
+        body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
         body.setDepth(2);
       }
 
@@ -804,6 +805,49 @@ export class GameScene extends Phaser.Scene {
       const charge = Math.min(1, (this.time.now - this.passChargeStartedAt) / 900);
       this.markerGfx.lineStyle(4, PALETTE.youRing, 0.9);
       this.markerGfx.strokeCircle(p.position.x, p.position.y, p.radius * 1.4 + charge * 28);
+    }
+
+    if (this.flow === 'playing' && this.time.now < this.identityUntil) {
+      const goal = opponentGoalFor(p.team, this.world.map);
+      const dx = goal.x - p.position.x;
+      const dy = goal.y - p.position.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const x1 = p.position.x + ux * 36;
+      const y1 = p.position.y + uy * 36;
+      const x2 = p.position.x + ux * 110;
+      const y2 = p.position.y + uy * 110;
+      this.markerGfx.lineStyle(6, PALETTE.youRing, 0.95);
+      this.markerGfx.lineBetween(x1, y1, x2, y2);
+      this.markerGfx.fillStyle(PALETTE.youRing, 1);
+      this.markerGfx.fillTriangle(
+        x2 + ux * 18,
+        y2 + uy * 18,
+        x2 - uy * 12,
+        y2 + ux * 12,
+        x2 + uy * 12,
+        y2 - ux * 12,
+      );
+    }
+
+    if (this.flow === 'playing') {
+      let thump = false;
+      for (const c of chars) {
+        if (c.controlled) continue;
+        const reach = p.radius + c.radius + 2;
+        const dx = c.x - p.position.x;
+        const dy = c.y - p.position.y;
+        if (dx * dx + dy * dy <= reach * reach) {
+          thump = true;
+          break;
+        }
+      }
+      if (thump && this.time.now - this.lastThumpAt > 180) {
+        this.lastThumpAt = this.time.now;
+        this.hitStopUntil = Math.max(this.hitStopUntil, this.time.now + 45);
+        this.cameras.main.shake(70, 0.006);
+      }
     }
 
     this.renderHud();
@@ -897,6 +941,11 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.flow !== 'playing') {
       this.promptText.setText('');
+      return;
+    }
+    if (this.time.now < this.identityUntil) {
+      const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
+      this.promptText.setText(`${label} — that way`);
       return;
     }
 
