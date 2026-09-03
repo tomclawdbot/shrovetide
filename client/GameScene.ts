@@ -3,6 +3,7 @@
 // First-run: HUD lives on a zoom-1 camera (main zoom was swallowing scrollFactor(0)
 // overlays). Kickoff is title → ~20s place-your-people → whistle. Who-am-I follows
 // control. Scoring has HOLD THE STONE + pips + hit-stop.
+// Phone (Chrome iOS / WebKit): DOM stick + kick/switch (see touch.ts); keyboard still drives Input.move.
 
 import Phaser from 'phaser';
 import {
@@ -16,10 +17,13 @@ import {
   releasePass,
   startMatch,
   stepWorld,
+  switchControl,
   type Input,
   type Team,
   type World,
 } from '../sim/index.js';
+import { canvasSafePad, unlockAudio } from './shell.js';
+import { TouchControls } from './touch.js';
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 2;
@@ -108,7 +112,9 @@ export class GameScene extends Phaser.Scene {
   private isPassing = false;
   private lastAim = { x: 1, y: 0 };
 
-  private keys!: KeyState;
+  private keys: KeyState | null = null;
+  private touch: TouchControls | null = null;
+  private hudPad = { l: 16, r: 16, t: 16, b: 16 };
   private bodySprites = new Map<string, Phaser.GameObjects.Arc>();
   private shadowSprites = new Map<string, Phaser.GameObjects.Ellipse>();
   private ballSprite!: Phaser.GameObjects.Arc;
@@ -178,34 +184,50 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setSize(VIEW_W, VIEW_H);
     this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
 
-    const kb = this.input.keyboard!;
-    kb.addCapture('TAB,SPACE,E,Q,W,A,S,D,SHIFT');
-    this.keys = {
-      W: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      S: kb.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      D: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-      UP: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
-      DOWN: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
-      LEFT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
-      RIGHT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
-      SHIFT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
-      SPACE: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
-      E: kb.addKey(Phaser.Input.Keyboard.KeyCodes.E),
-      TAB: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
-      Q: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
-    };
-
-    kb.on('keydown-SPACE', this.handleSpace);
-    kb.on('keyup-SPACE', this.handlePassRelease);
-    kb.on('keydown-E', this.handleGoalTap);
-    kb.on('keydown-TAB', this.handleTab);
-    kb.on('keydown-Q', this.handleQuickSwitch);
+    const kb = this.input.keyboard;
+    if (kb) {
+      kb.addCapture('TAB,SPACE,E,Q,W,A,S,D,SHIFT');
+      this.keys = {
+        W: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+        A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+        S: kb.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+        D: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+        UP: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+        DOWN: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+        LEFT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+        RIGHT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
+        SHIFT: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT),
+        SPACE: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+        E: kb.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+        TAB: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
+        Q: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
+      };
+      kb.on('keydown-SPACE', this.handleSpace);
+      kb.on('keyup-SPACE', this.handlePassRelease);
+      kb.on('keydown-E', this.handleGoalTap);
+      kb.on('keydown-TAB', this.handleTab);
+      kb.on('keydown-Q', this.handleQuickSwitch);
+    }
 
     this.input.on('pointerdown', this.handlePointer);
     this.input.on('pointerup', () => {
       this.eatPointer = false;
     });
+
+    this.touch = new TouchControls({
+      onKickDown: () => this.handleSpace(),
+      onKickUp: () => this.handlePassRelease(),
+      onSwitch: () => this.handleTab(),
+      onReady: () => this.whistle(),
+    });
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.layoutHud, this);
+      window.visualViewport?.removeEventListener('resize', this.layoutHud);
+      this.touch?.dispose();
+      this.touch = null;
+    });
+    this.scale.on('resize', this.layoutHud, this);
+    window.visualViewport?.addEventListener('resize', this.layoutHud);
 
     this.drawMapStatic();
     this.createSprites();
@@ -215,7 +237,39 @@ export class GameScene extends Phaser.Scene {
     this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
 
     this.setMatchHud(false);
+    this.layoutHud();
+    this.syncTouchFlow();
   }
+
+  private syncTouchFlow(): void {
+    if (!this.touch) return;
+    const flow =
+      this.world.matchState === 'over'
+        ? 'over'
+        : this.flow === 'title'
+          ? 'title'
+          : this.flow === 'placing'
+            ? 'placing'
+            : 'playing';
+    this.touch.setFlow(flow);
+  }
+
+  private layoutHud = (): void => {
+    this.hudPad = canvasSafePad(VIEW_W, VIEW_H);
+    const { l, r, t, b } = this.hudPad;
+    const touch = !!this.touch?.active && this.flow !== 'title';
+    this.staminaBg?.setPosition(l, t);
+    this.staminaFill?.setPosition(l + 2, t + 2);
+    this.staminaLabel?.setPosition(l, t + 26);
+    this.timerText?.setPosition(VIEW_W / 2, t);
+    this.scoreText?.setPosition(VIEW_W / 2, t + 30);
+    this.minimapBg?.setPosition(
+      VIEW_W - MINIMAP_W / 2 - Math.max(MINIMAP_PAD, r),
+      MINIMAP_H / 2 + Math.max(MINIMAP_PAD, t),
+    );
+    const promptY = touch ? VIEW_H - Math.max(176, b + 148) : VIEW_H - Math.max(56, b + 36);
+    this.promptText?.setPosition(VIEW_W / 2, promptY);
+  };
 
   private adoptWorld(obj: Phaser.GameObjects.GameObject): void {
     this.worldObjs.push(obj);
@@ -520,7 +574,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nUp'Ards  vs  Down'Ards\n\nUp play to the Down millstone (right).\nDown play the other way.\n\nSpace — walk out",
+          "SHROVETIDE\n\nUp'Ards  vs  Down'Ards\n\nUp play to the Down millstone (right).\nDown play the other way.\n\nSpace or tap — walk out",
           {
             fontFamily: FONT,
             fontSize: '28px',
@@ -606,7 +660,7 @@ export class GameScene extends Phaser.Scene {
     this.isPassing = true;
     this.passChargeStartedAt = this.now();
     this.inputState.charging = true;
-    if (this.teach === 'kick') this.teach = 'goal';
+    if (this.teach === 'kick') this.teach = this.touch?.active ? 'goal' : 'sprint';
   };
 
   private handlePassRelease = (): void => {
@@ -650,6 +704,7 @@ export class GameScene extends Phaser.Scene {
   };
 
   private handlePointer = (pointer: Phaser.Input.Pointer): void => {
+    void unlockAudio();
     if (this.eatPointer) {
       this.eatPointer = false;
       return;
@@ -658,10 +713,48 @@ export class GameScene extends Phaser.Scene {
       this.beginPlacement();
       return;
     }
-    if (this.flow !== 'placing' || !this.placeTargetId) return;
-    const pt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    placeTeammate(this.world, this.placeTargetId, pt.x, pt.y);
+    const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const tappedMate = this.teammateAt(worldPt.x, worldPt.y);
+    if (this.flow === 'placing') {
+      if (tappedMate) {
+        this.placeTargetId = tappedMate;
+        this.flash('Place this one');
+        return;
+      }
+      if (!this.placeTargetId) return;
+      placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
+      return;
+    }
+    if (this.flow !== 'playing') return;
+    if (tappedMate) {
+      if (switchControl(this.world, tappedMate)) this.punchCamera();
+      return;
+    }
+    if (this.atStone() && this.millstoneHit(worldPt.x, worldPt.y)) {
+      this.handleGoalTap();
+    }
   };
+
+  private teammateAt(x: number, y: number): string | null {
+    const team = this.world.player.team;
+    let bestId: string | null = null;
+    let best = 48;
+    for (const n of this.world.npcs) {
+      if (n.team !== team) continue;
+      const d = Math.hypot(n.position.x - x, n.position.y - y);
+      const reach = n.radius * 2.4;
+      if (d <= reach && d < best) {
+        best = d;
+        bestId = n.id;
+      }
+    }
+    return bestId;
+  }
+
+  private millstoneHit(x: number, y: number): boolean {
+    const g = opponentGoalFor(this.world.player.team, this.world.map);
+    return Math.hypot(x - g.x, y - g.y) <= 48;
+  }
 
   private beginPlacement(): void {
     if (this.flow !== 'title') return;
@@ -671,6 +764,8 @@ export class GameScene extends Phaser.Scene {
     this.spaceReady = false;
     this.eatPointer = true;
     this.titleCard.setVisible(false);
+    this.syncTouchFlow();
+    this.layoutHud();
   }
 
   private whistle(): void {
@@ -681,6 +776,8 @@ export class GameScene extends Phaser.Scene {
     this.teach = 'move';
     this.lastWall = this.now();
     this.kickoffLeft = KICKOFF_SECONDS;
+    this.syncTouchFlow();
+    this.layoutHud();
   }
 
   private flash(msg: string): void {
@@ -707,7 +804,7 @@ export class GameScene extends Phaser.Scene {
         this.inputState.move.y * PLACE_SPEED * dt,
       );
       this.placeLeft = Math.max(0, this.placeLeft - dt);
-      if (this.spaceReady && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
+      if (this.spaceReady && this.keys && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
       else if (this.placeLeft <= 0) this.whistle();
     }
 
@@ -730,6 +827,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.world.matchState === 'over') this.flow = 'playing';
+    this.syncTouchFlow();
 
     this.render();
   }
@@ -738,19 +836,28 @@ export class GameScene extends Phaser.Scene {
     const k = this.keys;
     let mx = 0;
     let my = 0;
-    if (k.W.isDown || k.UP.isDown) my -= 1;
-    if (k.S.isDown || k.DOWN.isDown) my += 1;
-    if (k.A.isDown || k.LEFT.isDown) mx -= 1;
-    if (k.D.isDown || k.RIGHT.isDown) mx += 1;
+    if (k) {
+      if (k.W.isDown || k.UP.isDown) my -= 1;
+      if (k.S.isDown || k.DOWN.isDown) my += 1;
+      if (k.A.isDown || k.LEFT.isDown) mx -= 1;
+      if (k.D.isDown || k.RIGHT.isDown) mx += 1;
+    }
+    const keyLen = Math.hypot(mx, my);
+    if (keyLen > 0) {
+      mx /= keyLen;
+      my /= keyLen;
+    } else if (this.touch) {
+      mx = this.touch.move.x;
+      my = this.touch.move.y;
+    }
     const len = Math.hypot(mx, my);
     if (len > 0) {
-      mx /= len;
-      my /= len;
       this.lastAim = { x: mx, y: my };
       if (this.teach === 'move' && this.flow === 'playing') this.teach = 'ball';
     }
     this.inputState.move = { x: mx, y: my };
-    this.inputState.sprint = k.SHIFT.isDown;
+    this.inputState.sprint = !!k?.SHIFT.isDown;
+    if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'goal';
     if (this.inputState.charging) {
       this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
     }
@@ -979,7 +1086,8 @@ export class GameScene extends Phaser.Scene {
     if (this.now() < this.feedbackUntil) return;
 
     if (this.flow === 'placing') {
-      this.promptText.setText(`Walk them out · ${this.placeCountdown()} · Space when ready`);
+      const ready = this.touch?.active ? 'Whistle when ready' : 'Space when ready';
+      this.promptText.setText(`Walk them out · ${this.placeCountdown()} · ${ready}`);
       return;
     }
     if (this.flow !== 'playing') {
@@ -997,9 +1105,9 @@ export class GameScene extends Phaser.Scene {
       if (taps > this.lastGoalingTaps) {
       }
       this.lastGoalingTaps = taps;
-      this.promptText.setText('HOLD THE STONE');
+      this.promptText.setText(this.touch?.active ? 'HOLD THE STONE — tap the millstone' : 'HOLD THE STONE');
       const cx = VIEW_W / 2;
-      const cy = VIEW_H - 96;
+      const cy = (this.promptText.y ?? VIEW_H - 56) - 40;
       for (let i = 0; i < 3; i++) {
         const filled = i < taps;
         this.pipGfx.lineStyle(3, 0xf3ead4, 1);
@@ -1015,12 +1123,13 @@ export class GameScene extends Phaser.Scene {
       this.promptText.setText('');
       return;
     }
+    const touch = !!this.touch?.active;
     const copy: Record<Teach, string> = {
-      move: 'WASD — run',
+      move: touch ? 'Stick — run' : 'WASD — run',
       ball: 'Get the stone',
-      kick: 'Hold Space — kick',
-      sprint: '',
-      goal: 'At their millstone, tap E',
+      kick: touch ? 'Hold Kick' : 'Hold Space — kick',
+      sprint: 'Shift — burst',
+      goal: touch ? 'At their millstone, tap it' : 'At their millstone, tap E',
       done: '',
     };
     this.promptText.setText(copy[this.teach]);
@@ -1032,8 +1141,8 @@ export class GameScene extends Phaser.Scene {
     const map = this.world.map;
     const sx = MINIMAP_W / map.width;
     const sy = MINIMAP_H / map.height;
-    const ox = VIEW_W - MINIMAP_W - MINIMAP_PAD;
-    const oy = MINIMAP_PAD;
+    const ox = VIEW_W - MINIMAP_W - Math.max(MINIMAP_PAD, this.hudPad.r);
+    const oy = Math.max(MINIMAP_PAD, this.hudPad.t);
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
