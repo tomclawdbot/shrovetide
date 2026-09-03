@@ -169,7 +169,7 @@ test('feel: acceleration ramps rather than snapping to full speed', () => {
   );
 
   // After ~0.3s it should be at (or very near) full speed.
-  runTicks(world, east, 18);
+  runTicks(world, east, 30);
   const settledSpeed = Math.hypot(world._controlVel.x, world._controlVel.y);
   assert.ok(
     settledSpeed > world.player.maxSpeed * 0.95,

@@ -79,9 +79,9 @@ export function autoPlaceOpponents(world: World): void {
     { xRatio: 0.66, y: 0.30, role: 'hold' },
     { xRatio: 0.66, y: 0.70, role: 'hold' },
     { xRatio: 0.78, y: 0.50, role: 'hold' },
-    { xRatio: 0.80, y: 0.40, role: 'chase' },
-    { xRatio: 0.80, y: 0.60, role: 'chase' },
-    { xRatio: 0.88, y: 0.50, role: 'chase' },
+    { xRatio: 0.84, y: 0.38, role: 'hold' },
+    { xRatio: 0.84, y: 0.62, role: 'hold' },
+    { xRatio: 0.90, y: 0.50, role: 'hold' },
     { xRatio: 0.72, y: 0.50, role: 'chase' },
   ];
   for (let i = 0; i < opponents.length; i++) {

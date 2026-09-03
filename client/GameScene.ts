@@ -34,7 +34,7 @@ const CAMERA_BASE_ZOOM = 1.5;
 const CAMERA_CROWD_ZOOM_OUT = 0.35;
 const CROWD_RADIUS = 260;
 const CAMERA_LERP = 0.12;
-const CAMERA_LEAD = 0.22;
+const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
 const PLACE_SECONDS = 20;
 const PLACE_SPEED = 220;
@@ -251,6 +251,17 @@ export class GameScene extends Phaser.Scene {
     const cx = cam.worldView.centerX;
     const cy = cam.worldView.centerY;
     cam.centerOn(cx + (tx - cx) * CAMERA_LERP, cy + (ty - cy) * CAMERA_LERP);
+  }
+
+  /** Freeze-frame beat: you + their millstone in the same shot. */
+  private frameKickoff(): void {
+    const p = this.world.player;
+    const g = opponentGoalFor(p.team, this.world.map);
+    const dist = Math.hypot(g.x - p.position.x, g.y - p.position.y);
+    const need = Math.max(dist * 1.2, 1000);
+    const zoom = Math.max(0.42, Math.min(1.05, VIEW_W / need));
+    this.cameras.main.setZoom(zoom);
+    this.cameras.main.centerOn((p.position.x + g.x) / 2, (p.position.y + g.y) / 2);
   }
 
   // -------------------------------------------------------------------------
@@ -563,10 +574,7 @@ export class GameScene extends Phaser.Scene {
       this.beginPlacement();
       return;
     }
-    if (this.flow === 'placing') {
-      if (this.spaceReady) this.whistle();
-      return;
-    }
+    if (this.flow === 'placing') return;
     if (this.isPassing) return;
     if (!this.world.player.hasBall) return;
     this.isPassing = true;
@@ -584,6 +592,7 @@ export class GameScene extends Phaser.Scene {
     releasePass(this.world, aim, chargeSeconds);
     this.isPassing = false;
     this.inputState.charging = false;
+    this.trackPlayer(true);
   };
 
   private handleGoalTap = (): void => {
@@ -644,7 +653,7 @@ export class GameScene extends Phaser.Scene {
     this.playStartedAt = this.time.now;
     this.teach = 'move';
     this.cameras.main.shake(200, 0.008);
-    this.identityUntil = this.time.now + 3500;
+    this.identityUntil = this.time.now + 2200;
   }
 
   private flash(msg: string): void {
@@ -666,10 +675,11 @@ export class GameScene extends Phaser.Scene {
         this.inputState.move.x * PLACE_SPEED * dt,
         this.inputState.move.y * PLACE_SPEED * dt,
       );
-      if (this.time.now >= this.placeEndsAt) this.whistle();
+      if (this.spaceReady && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
+      else if (this.time.now >= this.placeEndsAt) this.whistle();
     }
 
-    if (this.flow === 'playing' && this.time.now >= this.hitStopUntil) {
+    if (this.flow === 'playing' && this.time.now >= this.hitStopUntil && this.time.now >= this.identityUntil) {
       this.accumulator += deltaMs / 1000;
       let steps = 0;
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
@@ -742,8 +752,12 @@ export class GameScene extends Phaser.Scene {
     const crowdFactor = Math.min(1, nearby / 8);
     const targetZoom = CAMERA_BASE_ZOOM - CAMERA_CROWD_ZOOM_OUT * crowdFactor;
     this.currentZoom += (targetZoom - this.currentZoom) * ZOOM_LERP;
-    this.cameras.main.setZoom(this.currentZoom);
-    this.trackPlayer(false);
+    if (this.flow === 'playing' && this.time.now < this.identityUntil) {
+      this.frameKickoff();
+    } else {
+      this.cameras.main.setZoom(this.currentZoom);
+      this.trackPlayer(false);
+    }
     this.hudCam.setScroll(0, 0);
 
     this.markerGfx.clear();
@@ -760,10 +774,10 @@ export class GameScene extends Phaser.Scene {
       body.setFillStyle(teamColor);
 
       if (c.controlled) {
-        body.setRadius(c.radius * 1.28);
-        body.setStrokeStyle(5, PALETTE.youRing, 1);
+        body.setRadius(c.radius * 1.5);
+        body.setStrokeStyle(6, PALETTE.youRing, 1);
         body.setDepth(3);
-        const ty = c.y - c.radius * 1.28 - 16;
+        const ty = c.y - c.radius * 1.5 - 16;
         this.markerGfx.fillStyle(PALETTE.youRing, 1);
         this.markerGfx.fillTriangle(c.x - 9, ty - 10, c.x + 9, ty - 10, c.x, ty);
       } else {
