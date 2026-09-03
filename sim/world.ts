@@ -23,7 +23,7 @@
 import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
 import { createPhysicsWorld, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
-import { getSpeedMultiplier, updateStamina } from './stamina.js';
+import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamina.js';
 import { steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
@@ -35,7 +35,7 @@ export const PLAYER_RADIUS = 16;
 export const NPC_RADIUS = 14;
 export const BALL_RADIUS = 10;
 export const PLAYER_MAX_SPEED = 190; // pixels/sec
-export const NPC_MAX_SPEED = 110;
+export const NPC_MAX_SPEED = 145;
 export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). */
 export const SQUAD_SIZE = 7;
@@ -90,6 +90,12 @@ export interface World extends SimState {
    * Reset to zero whenever control switches to a different character.
    */
   _controlVel: Vec2;
+  /**
+   * After a pass/kick, this character cannot pick the ball up until
+   * `passImmuneUntilTick`. Stops instant re-grab of a just-released ball.
+   */
+  passImmuneId: string | null;
+  passImmuneUntilTick: number;
 }
 
 export interface CreateWorldOptions {
@@ -254,6 +260,8 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     physics,
     _rng: rng,
     _controlVel: { x: 0, y: 0 },
+    passImmuneId: null,
+    passImmuneUntilTick: 0,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -423,11 +431,12 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // integration means wading into the river slows you immediately rather
   // than bleeding speed over timeToStop seconds.
   const staminaMult = getSpeedMultiplier(player);
+  const sprintMult = getSprintMultiplier(player, input.sprint);
   const waterMult = speedMultiplierAt(player.position, map);
   integrateControlVelocity(
     world._controlVel,
     input,
-    player.maxSpeed,
+    player.maxSpeed * sprintMult,
     player.hasBall,
     dt,
   );

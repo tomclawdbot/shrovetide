@@ -13,10 +13,14 @@ import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
 const PICKUP_PADDING = 10;
+/** Extra gap past pickup range so the kicker does not re-grab on the next tick. */
+const RELEASE_CLEARANCE = 8;
 const MIN_CHARGE_SECONDS = 0.2;
 const MAX_CHARGE_SECONDS = 1.5;
 const MIN_PASS_SPEED = 120;
 const MAX_PASS_SPEED = 340;
+/** ~0.3s at 60 Hz — covers the first kick's pickup bubble. */
+export const PASS_PICKUP_IMMUNITY_TICKS = 18;
 
 /**
  * If the ball is loose and the controlled character is close enough, pick it up.
@@ -24,6 +28,12 @@ const MAX_PASS_SPEED = 340;
 export function tryPickupBall(world: World): void {
   const { ball, player } = world;
   if (ball.ownerId !== null) return;
+  if (
+    world.passImmuneId === player.id &&
+    world.tick < world.passImmuneUntilTick
+  ) {
+    return;
+  }
 
   const dx = ball.position.x - player.position.x;
   const dy = ball.position.y - player.position.y;
@@ -72,6 +82,9 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
     // No aim direction → drop the ball in place rather than firing it.
     player.hasBall = false;
     ball.ownerId = null;
+    world.passImmuneId = player.id;
+    world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
+    physics.ballBody.isSensor = false;
     Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
     return false;
   }
@@ -86,12 +99,14 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   const inaccuracyRad = (0.10 * (1 - chargeRatio) + 0.02) * (_rng() - 0.5) * 2;
   const angle = Math.atan2(dirY, dirX) + inaccuracyRad;
 
-  const offset = player.radius + ball.radius + 2;
+  const offset = player.radius + ball.radius + PICKUP_PADDING + RELEASE_CLEARANCE;
   const releaseX = player.position.x + Math.cos(angle) * offset;
   const releaseY = player.position.y + Math.sin(angle) * offset;
 
   player.hasBall = false;
   ball.ownerId = null;
+  world.passImmuneId = player.id;
+  world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
 
   // Solid again before the kick impulse so the ball interacts with the pitch.
   physics.ballBody.isSensor = false;

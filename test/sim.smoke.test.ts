@@ -5,12 +5,16 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import Matter from 'matter-js';
 import {
   ASHBOURNE_TOWN,
   createWorld,
   cycleTeammate,
+  isCarrierAtOpponentGoal,
   moveControlled,
+  PASS_PICKUP_IMMUNITY_TICKS,
   quickSwitch,
+  releasePass,
   startMatch,
   stepWorld,
   switchControl,
@@ -34,11 +38,24 @@ const IDLE: Input = {
 
 /** Move a character in both the sim record and its physics body. */
 function teleportPlayer(world: World, x: number, y: number): void {
-  world.player.position = { x, y };
-  const body = world.physics.bodies.get(world.player.id);
+  teleportId(world, world.player.id, x, y);
+}
+
+function teleportId(world: World, id: string, x: number, y: number): void {
+  if (id === world.player.id) {
+    world.player.position = { x, y };
+    world.player.velocity = { x: 0, y: 0 };
+  } else {
+    const npc = world.npcs.find((n) => n.id === id);
+    if (npc) {
+      npc.position = { x, y };
+      npc.velocity = { x: 0, y: 0 };
+    }
+  }
+  const body = world.physics.bodies.get(id);
   if (body) {
-    (body as { position: { x: number; y: number } }).position = { x, y };
-    (body as { velocity: { x: number; y: number } }).velocity = { x: 0, y: 0 };
+    Matter.Body.setPosition(body, { x, y });
+    Matter.Body.setVelocity(body, { x: 0, y: 0 });
   }
 }
 
@@ -366,4 +383,105 @@ test('feel: millstones are reachable from walkable bank ground', () => {
     Math.hypot(dx, dy) <= 56,
     `bank stand should be within GOAL_REACH, dist=${Math.hypot(dx, dy)}`,
   );
+  assert.equal(isCarrierAtOpponentGoal(world), true);
 });
+
+test('goal: millstone reach is false until the carrier is next to the stone', () => {
+  const world = createWorld();
+  startMatch(world);
+  assert.equal(isCarrierAtOpponentGoal(world), false);
+  teleportPlayer(world, 1700, 1300);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  assert.equal(isCarrierAtOpponentGoal(world), false, 'carrying mid-field is not a goal');
+});
+
+test('pass: kicker cannot instantly re-grab the ball', () => {
+  const world = createWorld();
+  startMatch(world);
+  teleportPlayer(world, 1700, 1300);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
+  assert.equal(world.player.hasBall, false);
+  assert.equal(world.physics.ballBody.isSensor, false);
+  runTicks(world, IDLE, PASS_PICKUP_IMMUNITY_TICKS - 1);
+  assert.equal(world.player.hasBall, false, 'still immune');
+  assert.equal(world.ball.ownerId, null);
+});
+
+test('pass: a second kick works after picking the ball up again', () => {
+  const world = createWorld();
+  startMatch(world);
+  teleportPlayer(world, 1700, 1300);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  assert.equal(releasePass(world, { x: 1, y: 0 }, 0.5), true);
+
+  runTicks(world, IDLE, PASS_PICKUP_IMMUNITY_TICKS + 4);
+  world.ball.ownerId = null;
+  world.player.hasBall = false;
+  Matter.Body.setPosition(world.physics.ballBody, world.player.position);
+  world.ball.position = { ...world.player.position };
+  runTicks(world, IDLE, 4);
+  assert.equal(world.player.hasBall, true, 'picked up again');
+
+  assert.equal(releasePass(world, { x: 0, y: 1 }, 0.6), true);
+  assert.equal(world.player.hasBall, false);
+  assert.equal(world.ball.ownerId, null);
+  assert.equal(world.physics.ballBody.isSensor, false);
+});
+
+test('feel: sprint is faster than a walk and drains Breath without the ball', () => {
+  const walk = createWorld({ seed: 7 });
+  const burst = createWorld({ seed: 7 });
+  startMatch(walk);
+  startMatch(burst);
+  teleportPlayer(walk, 1700, 1300);
+  teleportPlayer(burst, 1700, 1300);
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  const eastSprint: Input = { ...east, sprint: true };
+  runTicks(walk, east, 60);
+  runTicks(burst, eastSprint, 60);
+  const dxWalk = walk.player.position.x - 1700;
+  const dxBurst = burst.player.position.x - 1700;
+  assert.ok(dxBurst > dxWalk + 20, `sprint should outrun a walk (${dxBurst} vs ${dxWalk})`);
+  assert.ok(burst.player.stamina < burst.player.maxStamina - 10, 'Breath should drop while sprinting');
+  assert.equal(walk.player.stamina, walk.player.maxStamina, 'a walk does not drain Breath');
+});
+
+test('feel: chase NPCs close on a loose ball within a few seconds', () => {
+  const world = createWorld({ seed: 3 });
+  startMatch(world);
+  teleportPlayer(world, 400, 1300);
+  const hunter = world.npcs.find((n) => n.team !== world.player.team && n.role === 'chase');
+  assert.ok(hunter);
+  Matter.Body.setPosition(world.physics.ballBody, { x: 1700, y: 1300 });
+  world.ball.position = { x: 1700, y: 1300 };
+  world.ball.velocity = { x: 0, y: 0 };
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+  teleportId(world, hunter!.id, 1200, 1300);
+  const d0 = Math.hypot(
+    hunter!.position.x - world.ball.position.x,
+    hunter!.position.y - world.ball.position.y,
+  );
+  runTicks(world, IDLE, 180);
+  const d1 = Math.hypot(
+    hunter!.position.x - world.ball.position.x,
+    hunter!.position.y - world.ball.position.y,
+  );
+  assert.ok(d1 < d0 - 180, `should close hard on the ball (${d0.toFixed(0)} → ${d1.toFixed(0)})`);
+  assert.ok(d1 < 260, `should be in the scrum within 3s, dist=${d1.toFixed(0)}`);
+});
+
+test('feel: kickoff packs bodies around the turn-up', () => {
+  const world = createWorld({ seed: 3 });
+  startMatch(world);
+  runTicks(world, IDLE, 180);
+  const near = world.npcs.filter((n) => {
+    const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
+    return d < 300;
+  }).length;
+  assert.ok(near >= 3, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
+});
+

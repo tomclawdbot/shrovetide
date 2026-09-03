@@ -7,6 +7,7 @@
 // stepWorld() in world.ts calls tickMatch() each frame to advance the timer
 // and detect state transitions.
 
+import Matter from 'matter-js';
 import type { Team } from './types.js';
 import type { World } from './world.js';
 
@@ -25,6 +26,11 @@ export function startMatch(world: World): void {
   world.ball.velocity = { x: 0, y: 0 };
   world.ball.ownerId = null;
   world.player.hasBall = false;
+  world.passImmuneId = null;
+  world.passImmuneUntilTick = 0;
+  Matter.Body.setPosition(world.physics.ballBody, world.ball.position);
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+  world.physics.ballBody.isSensor = false;
   // Reset timer.
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
 }

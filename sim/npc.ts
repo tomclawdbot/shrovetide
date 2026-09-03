@@ -12,9 +12,14 @@ import { MATTER_VELOCITY_SCALE } from './physics.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
-const NPC_STEER_FORCE = 0.00022;
-/** Distance (px) at which a HOLD-roled NPC engages the ball over its hold point. */
-const HOLD_BALL_ENGAGE_DISTANCE = 140;
+/** Strong enough to hit chase cap in about a second so kickoff isn't open grass. */
+const NPC_STEER_FORCE = 0.00055;
+/** Distance (px) at which a HOLD NPC engages a carried ball over its hold point. */
+const HOLD_BALL_ENGAGE_DISTANCE = 220;
+/** Loose ball: hold players join the scrum from much further out. */
+const HOLD_LOOSE_ENGAGE_DISTANCE = 780;
+/** Extra speed while the ball is free so either side can contest the turn-up. */
+const LOOSE_BALL_SPEED_MULT = 1.22;
 
 export function steerNPCs(world: World): void {
   for (let i = 0; i < world.npcs.length; i++) {
@@ -40,9 +45,10 @@ export function steerNPCs(world: World): void {
       { x: dirX * NPC_STEER_FORCE, y: dirY * NPC_STEER_FORCE },
     );
 
-    // Clamp Matter velocity (px/baseDelta) to maxSpeed px/s × water mult.
+    const looseBoost =
+      world.ball.ownerId === null && target === world.ball.position ? LOOSE_BALL_SPEED_MULT : 1;
     const waterMult = speedMultiplierAt(npc.position, world.map);
-    const maxMatter = npc.maxSpeed * waterMult * MATTER_VELOCITY_SCALE;
+    const maxMatter = npc.maxSpeed * looseBoost * waterMult * MATTER_VELOCITY_SCALE;
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.hypot(vx, vy);
@@ -56,12 +62,7 @@ export function steerNPCs(world: World): void {
 /** Pick the target position for an NPC based on its role + ball/player state. */
 function pickTarget(npc: World['npcs'][number], world: World): Vec2 | null {
   if (npc.role === 'chase') {
-    // First-run: opponents hesitate so a human can actually carry.
-    if (npc.team !== world.player.team) {
-      const bx = world.ball.position.x - npc.position.x;
-      const by = world.ball.position.y - npc.position.y;
-      if (Math.hypot(bx, by) > 420) return npc.holdPosition ?? npc.position;
-    }
+    // Commit immediately — a 420px hesitate left kickoff as open grass.
     if (world.ball.ownerId !== null) {
       const carrier = findCharacter(world, world.ball.ownerId);
       if (carrier) return carrier.position;
@@ -69,14 +70,15 @@ function pickTarget(npc: World['npcs'][number], world: World): Vec2 | null {
     return world.ball.position;
   }
 
-  // HOLD — guard holdPosition, but engage ball if it drifts into the zone.
+  // HOLD — guard holdPosition, but crash the loose ball from a long way out.
   if (!npc.holdPosition) {
-    // No placement yet (pre-confirm) — default to ball.
     return world.ball.position;
   }
   const dxBall = world.ball.position.x - npc.holdPosition.x;
   const dyBall = world.ball.position.y - npc.holdPosition.y;
-  if (Math.hypot(dxBall, dyBall) < HOLD_BALL_ENGAGE_DISTANCE) {
+  const engage =
+    world.ball.ownerId === null ? HOLD_LOOSE_ENGAGE_DISTANCE : HOLD_BALL_ENGAGE_DISTANCE;
+  if (Math.hypot(dxBall, dyBall) < engage) {
     return world.ball.position;
   }
   return npc.holdPosition;

@@ -15,6 +15,11 @@ import { GOAL_TAP_MAX_CHAIN_TICKS, GOAL_TAP_SPACING_TICKS } from './match.js';
 /** Distance from carrier centre to goal centre to count as "adjacent". */
 export const GOAL_REACH_DISTANCE = 56;
 
+/** True when the current carrier is in millstone reach (HUD and Goal pad). */
+export function isCarrierAtOpponentGoal(world: World): boolean {
+  return carrierAtOpponentGoal(world) !== null;
+}
+
 /** Check whether the ball's carrier is currently tap-eligible. */
 function carrierAtOpponentGoal(world: World): { carrierId: string; goalX: number; goalY: number } | null {
   const ownerId = world.ball.ownerId;
