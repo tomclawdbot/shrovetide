@@ -71,9 +71,34 @@ export {
   STAMINA_MOVE_DRAIN,
   STAMINA_SPRINT_DRAIN,
   STAMINA_CARRY_DRAIN,
+  STAMINA_RIP_DRAIN,
+  STAMINA_WRIGGLE_DRAIN,
   EXHAUSTED_SPEED_MULT,
   SPRINT_SPEED_MULT,
 } from './stamina.js';
+
+export {
+  applyWriggleProgress,
+  canRip,
+  canWriggle,
+  popBallFree,
+  setWriggleFriction,
+  tickWrestle,
+  wrestleMode,
+  RIP_IMMUNITY_TICKS,
+  RIP_MIN_NEIGHBORS,
+  RIP_POP_SPEED,
+  RIP_REACH,
+  RIP_SUCCESS_SECONDS,
+  WRIGGLE_APPROACH_RADIUS,
+  WRIGGLE_CONTACT_NEIGHBORS,
+  WRIGGLE_INWARD_SPEED,
+  WRIGGLE_NUDGE,
+  WRIGGLE_PACK_AROUND_BALL,
+  WRIGGLE_SHOVE_FLOOR,
+  type WrestleMode,
+  type WrestleTick,
+} from './wrestle.js';
 
 export { GOAL_CONTEST_RADIUS, GOAL_DEFEND_SPEED_MULT, threatenedGoalTeam } from './npc.js';
 
@@ -100,4 +125,11 @@ export {
 } from './placement.js';
 
 // Switching
-export { switchControl, quickSwitch, cycleTeammate, controlRing } from './switching.js';
+export {
+  switchControl,
+  quickSwitch,
+  cycleTeammate,
+  controlRing,
+  teammatesByBallDistance,
+  teammateAtPoint,
+} from './switching.js';

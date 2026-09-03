@@ -29,7 +29,25 @@ import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal } from './goaling.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
+import { countHugNeighbors, hugShoveAuthority } from './hug.js';
+import {
+  applyWriggleProgress,
+  setWriggleFriction,
+  tickWrestle,
+  WRIGGLE_INWARD_SPEED,
+  WRIGGLE_SHOVE_FLOOR,
+} from './wrestle.js';
 import type { Ball, Input, NPC, Player, SimState, Team, Vec2 } from './types.js';
+
+export {
+  countBodiesNear,
+  countHugNeighbors,
+  hugNeighborCentroid,
+  hugShoveAuthority,
+  HUG_MIN_SHOVE,
+  HUG_NEIGHBOR_RADIUS,
+  HUG_PACK_COUNT,
+} from './hug.js';
 
 export const PLAYER_RADIUS = 16;
 export const NPC_RADIUS = 14;
@@ -40,41 +58,6 @@ export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). 17v17 scrum. */
 export const SQUAD_SIZE = 17;
 
-/**
- * Bodies inside this radius count toward hug density. ~2 overlapping
- * character radii — close enough to be in the scrum, not just nearby.
- */
-export const HUG_NEIGHBOR_RADIUS = 54;
-/** Neighbor count that is treated as a fully packed hug. */
-export const HUG_PACK_COUNT = 6;
-/** Residual shove when the hug is fully packed (attritional crawl). */
-export const HUG_MIN_SHOVE = 0.18;
-
-/** How many other characters sit inside the hug radius around `pos`. */
-export function countHugNeighbors(world: World, id: string, pos: Vec2): number {
-  const r2 = HUG_NEIGHBOR_RADIUS * HUG_NEIGHBOR_RADIUS;
-  let n = 0;
-  if (id !== world.player.id) {
-    const dx = world.player.position.x - pos.x;
-    const dy = world.player.position.y - pos.y;
-    if (dx * dx + dy * dy < r2) n += 1;
-  }
-  for (const npc of world.npcs) {
-    if (npc.id === id) continue;
-    const dx = npc.position.x - pos.x;
-    const dy = npc.position.y - pos.y;
-    if (dx * dx + dy * dy < r2) n += 1;
-  }
-  return n;
-}
-
-/** 1.0 in open grass; HUG_MIN_SHOVE when HUG_PACK_COUNT+ bodies are on you. */
-export function hugShoveAuthority(neighbors: number): number {
-  if (neighbors <= 0) return 1;
-  if (neighbors >= HUG_PACK_COUNT) return HUG_MIN_SHOVE;
-  const packed = neighbors / HUG_PACK_COUNT;
-  return 1 - packed * (1 - HUG_MIN_SHOVE);
-}
 
 // ---------------------------------------------------------------------------
 // Movement tuning (TICKET 003a)
@@ -132,6 +115,8 @@ export interface World extends SimState {
    */
   passImmuneId: string | null;
   passImmuneUntilTick: number;
+  /** 0..1 Rip contest. Resets on release, ineligibility, or switch. */
+  _ripPressure: number;
 }
 
 export interface CreateWorldOptions {
@@ -297,6 +282,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     _controlVel: { x: 0, y: 0 },
     passImmuneId: null,
     passImmuneUntilTick: 0,
+    _ripPressure: 0,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -429,14 +415,14 @@ function pinOnPitch(
  *
  * Order of operations (matters for determinism):
  *   1. Tick match state machine (timer + end-on-expiry).
- *   2. Update controlled character stamina.
+ *   2. Update controlled character stamina (walk / Sprint / Rip / Wriggle).
  *   3. Lock carried ball to carrier.
- *   4. Integrate + apply controlled character velocity.
+ *   4. Integrate + apply controlled character velocity (Wriggle adds inward).
  *   5. Steer NPCs (role-based AI).
  *   6. Step matter.js physics.
  *   7. Sync sim positions/velocities from physics bodies.
  *   8. Handle ball OOB (teleport to nearest legal point).
- *   9. Try ball pickup.
+ *   9. Try ball pickup unless a wrestle hold is live.
  *   10. Register goal tap if input.goalTap.
  *   11. Increment tick.
  *
@@ -453,12 +439,20 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
 
   const { player, npcs, ball, map, physics } = world;
 
-  // 2. Stamina — walking costs Breath; Sprint costs more; idle regenerates.
+  // 2. Wrestle mode (Rip / Wriggle) then stamina.
+  // Rip may pop the stone here so physics carries the squirt this tick.
+  const wrestle = tickWrestle(world, input, dt);
   const moving =
     Math.hypot(input.move.x, input.move.y) > MOVEMENT.inputDeadzone;
   updateStamina(
     player,
-    { sprinting: input.sprint, moving, carrying: player.hasBall },
+    {
+      sprinting: input.sprint,
+      moving,
+      carrying: player.hasBall,
+      ripping: wrestle.mode === 'rip',
+      wriggling: wrestle.mode === 'wriggle',
+    },
     dt,
   );
 
@@ -482,19 +476,27 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     player.hasBall,
     dt,
   );
-  const shove = hugShoveAuthority(countHugNeighbors(world, player.id, player.position));
+  let shove = hugShoveAuthority(countHugNeighbors(world, player.id, player.position));
+  if (wrestle.wriggleDir) shove = Math.max(shove, WRIGGLE_SHOVE_FLOOR);
   const envMult = staminaMult * terrainMult * shove;
+  let vx = world._controlVel.x * envMult;
+  let vy = world._controlVel.y * envMult;
+  if (wrestle.wriggleDir) {
+    vx += wrestle.wriggleDir.x * WRIGGLE_INWARD_SPEED;
+    vy += wrestle.wriggleDir.y * WRIGGLE_INWARD_SPEED;
+  }
   const controlledBody = physics.bodies.get(player.id);
+  setWriggleFriction(world, !!wrestle.wriggleDir);
   if (controlledBody) {
     // _controlVel is px/s; Matter setVelocity expects px per baseDelta.
     Matter.Body.setVelocity(
       controlledBody,
-      toMatterVelocity({
-        x: world._controlVel.x * envMult,
-        y: world._controlVel.y * envMult,
-      }),
+      toMatterVelocity({ x: vx, y: vy }),
     );
   }
+  const wriggleDistBefore = wrestle.wriggleDir
+    ? Math.hypot(ball.position.x - player.position.x, ball.position.y - player.position.y)
+    : 0;
 
   // 5. NPC steering (role-based; collisions deflect them around obstacles)
   steerNPCs(world);
@@ -545,8 +547,12 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     player.hasBall = false;
   }
 
-  // 9. Pickup (proximity check after physics has resolved collisions).
-  tryPickupBall(world);
+  // 9. Wriggle inward correction (undo pack ejection), then pickup —
+  // skipped while a wrestle hold is live so Rip can finish.
+  if (wrestle.wriggleDir && player.stamina > 0) {
+    applyWriggleProgress(world, wrestle.wriggleDir, wriggleDistBefore);
+  }
+  if (!wrestle.suppressPickup) tryPickupBall(world);
 
   // 10. Goal tap (rising-edge driven by input.goalTap).
   if (input.goalTap) tapGoal(world);

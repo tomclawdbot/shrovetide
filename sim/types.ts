@@ -85,6 +85,16 @@ export interface Input {
   passAim: Vec2;
   /** Goal-tap press (rising edge per tick). 3 taps with 0.5s spacing = score. */
   goalTap: boolean;
+  /**
+   * Rip held — wrestle a trapped stone out of a packed hug.
+   * Desktop F / touch Wriggle·Rip (shared hold with wriggle; sim picks mode).
+   */
+  rip: boolean;
+  /**
+   * Wriggle held — burrow into a packed hug toward the stone.
+   * Same desktop F / touch pad as rip.
+   */
+  wriggle: boolean;
 }
 
 /** Goaling tap state. Three taps within window = score. */
