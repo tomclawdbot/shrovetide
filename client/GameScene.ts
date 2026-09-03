@@ -33,7 +33,6 @@ const MINIMAP_PAD = 12;
 const CAMERA_BASE_ZOOM = 1.5;
 const CAMERA_CROWD_ZOOM_OUT = 0.35;
 const CROWD_RADIUS = 260;
-const CAMERA_LERP = 0.12;
 const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
 const PLACE_SECONDS = 20;
@@ -238,30 +237,56 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(140, 0.005);
   }
 
-  /** Pin the world camera on the controlled player. startFollow + zoom drifted off them. */
-  private trackPlayer(snap: boolean): void {
+  /** Pin the world camera on the controlled body. Never read worldView after a zoom change. */
+  private trackPlayer(_snap: boolean): void {
     const p = this.world.player;
-    const tx = p.position.x + p.velocity.x * CAMERA_LEAD;
-    const ty = p.position.y + p.velocity.y * CAMERA_LEAD;
-    const cam = this.cameras.main;
-    if (snap) {
-      cam.centerOn(tx, ty);
-      return;
-    }
-    const cx = cam.worldView.centerX;
-    const cy = cam.worldView.centerY;
-    cam.centerOn(cx + (tx - cx) * CAMERA_LERP, cy + (ty - cy) * CAMERA_LERP);
+    this.cameras.main.centerOn(
+      p.position.x + p.velocity.x * CAMERA_LEAD,
+      p.position.y + p.velocity.y * CAMERA_LEAD,
+    );
+  }
+
+  private kickoffZoom(): number {
+    const p = this.world.player;
+    const g = opponentGoalFor(p.team, this.world.map);
+    const dist = Math.hypot(g.x - p.position.x, g.y - p.position.y);
+    const need = Math.max(dist * 1.2, 1000);
+    return Math.max(0.42, Math.min(1.05, VIEW_W / need));
   }
 
   /** Freeze-frame beat: you + their millstone in the same shot. */
   private frameKickoff(): void {
     const p = this.world.player;
     const g = opponentGoalFor(p.team, this.world.map);
-    const dist = Math.hypot(g.x - p.position.x, g.y - p.position.y);
-    const need = Math.max(dist * 1.2, 1000);
-    const zoom = Math.max(0.42, Math.min(1.05, VIEW_W / need));
-    this.cameras.main.setZoom(zoom);
-    this.cameras.main.centerOn((p.position.x + g.x) / 2, (p.position.y + g.y) / 2);
+    const cam = this.cameras.main;
+    cam.setZoom(this.kickoffZoom());
+    cam.centerOn((p.position.x + g.x) / 2, (p.position.y + g.y) / 2);
+  }
+
+  /** Kickoff holds the tableau, then pulls onto you. After that, lock to the body every frame. */
+  private applyCamera(): void {
+    const cam = this.cameras.main;
+    const now = this.time.now;
+    if (this.flow === 'playing' && now < this.identityUntil) {
+      const remain = this.identityUntil - now;
+      const pullIn = 450;
+      if (remain > pullIn) {
+        this.frameKickoff();
+        return;
+      }
+      const t = 1 - remain / pullIn;
+      const ease = t * t * (3 - 2 * t);
+      const p = this.world.player;
+      const g = opponentGoalFor(p.team, this.world.map);
+      const kx = (p.position.x + g.x) / 2;
+      const ky = (p.position.y + g.y) / 2;
+      const kz = this.kickoffZoom();
+      cam.setZoom(kz + (this.currentZoom - kz) * ease);
+      cam.centerOn(kx + (p.position.x - kx) * ease, ky + (p.position.y - ky) * ease);
+      return;
+    }
+    cam.setZoom(this.currentZoom);
+    this.trackPlayer(true);
   }
 
   // -------------------------------------------------------------------------
@@ -752,12 +777,7 @@ export class GameScene extends Phaser.Scene {
     const crowdFactor = Math.min(1, nearby / 8);
     const targetZoom = CAMERA_BASE_ZOOM - CAMERA_CROWD_ZOOM_OUT * crowdFactor;
     this.currentZoom += (targetZoom - this.currentZoom) * ZOOM_LERP;
-    if (this.flow === 'playing' && this.time.now < this.identityUntil) {
-      this.frameKickoff();
-    } else {
-      this.cameras.main.setZoom(this.currentZoom);
-      this.trackPlayer(false);
-    }
+    this.applyCamera();
     this.hudCam.setScroll(0, 0);
 
     this.markerGfx.clear();
