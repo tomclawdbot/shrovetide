@@ -4,7 +4,7 @@
 //
 // TICKET 002 changes:
 //   - map: TownMap data attached to world
-//   - 14 characters total (7 per team), one is controlled (world.player)
+//   - squad: SQUAD_SIZE per team (17v17), one is controlled (world.player)
 //   - match state machine: 'placement' | 'playing' | 'over'
 //   - match timer + score + goaling + win state
 //   - physics bodies are Map-keyed by character id (for instant switching)
@@ -15,7 +15,7 @@
 //     world._controlVel. See MOVEMENT below for the tuning constants.
 //   - Input deadzone + rescale so small analog/touch inputs don't snap the
 //     character to full tilt.
-//   - Ball carriers are slightly slower and turn more widely, so breakaways
+//   - Ball carriers are slower and turn more widely, so breakaways
 //     have weight and defenders can cut angles.
 //   - All of this is pure math: no Math.random, no wall-clock time, so the
 //     sim stays deterministic.
@@ -37,8 +37,8 @@ export const BALL_RADIUS = 10;
 export const PLAYER_MAX_SPEED = 190; // pixels/sec
 export const NPC_MAX_SPEED = 145;
 export const SIM_DT = 1 / 60;
-/** Number of characters per team (including the controlled one). */
-export const SQUAD_SIZE = 7;
+/** Number of characters per team (including the controlled one). 17v17 scrum. */
+export const SQUAD_SIZE = 17;
 
 // ---------------------------------------------------------------------------
 // Movement tuning (TICKET 003a)
@@ -70,8 +70,8 @@ export const MOVEMENT: MovementTuning = {
   timeToStop: 0.18,
   maxTurnRateRad: Math.PI * 1.7,
   inputDeadzone: 0.15,
-  carrierSpeedMult: 0.78,
-  carrierTurnMult: 0.45,
+  carrierSpeedMult: 0.62,
+  carrierTurnMult: 0.40,
   restSpeedEpsilon: 0.5,
 };
 
@@ -125,7 +125,7 @@ function wrapAngle(a: number): number {
   return x;
 }
 
-/** Build all 14 character records (7 home + 7 away). */
+/** Build all character records (SQUAD_SIZE home + SQUAD_SIZE away). */
 function buildCharacters(
   map: TownMap,
   rng: () => number,
@@ -133,7 +133,7 @@ function buildCharacters(
 ): { player: Player; npcs: NPC[] } {
   const opponentTeam: Team = playerTeam === 0 ? 1 : 0;
 
-  // Home team: 1 controlled player + 6 teammates.
+  // Home team: 1 controlled player + (SQUAD_SIZE - 1) teammates.
   const controlledId = `${playerTeam === 0 ? 'up' : 'down'}-1`;
   // Spawn controlled player on home half, near their goal.
   const controlledSpawn: Vec2 = playerTeam === 0
@@ -154,10 +154,9 @@ function buildCharacters(
     hasBall: false,
   };
 
-  // Build all 14 NPCs (6 teammates + 7 opponents).
   const npcs: NPC[] = [];
 
-  // Home teammates: 6 (up-2..up-7 or down-2..down-7).
+  // Home teammates: up-2..up-N or down-2..down-N.
   for (let i = 2; i <= SQUAD_SIZE; i++) {
     const id = `${playerTeam === 0 ? 'up' : 'down'}-${i}`;
     const angle = (i / SQUAD_SIZE) * Math.PI;
@@ -183,7 +182,7 @@ function buildCharacters(
     });
   }
 
-  // Opponent team: 7 NPCs on the other half.
+  // Opponent team: full squad on the other half.
   for (let i = 1; i <= SQUAD_SIZE; i++) {
     const id = `${opponentTeam === 0 ? 'up' : 'down'}-${i}`;
     const angle = ((i + 0.5) / SQUAD_SIZE) * Math.PI;
@@ -229,7 +228,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     ownerId: null,
   };
 
-  // Build physics for all 14 characters + ball.
+  // Build physics for every character + ball.
   const characterBodies = [
     { id: player.id, position: player.position, radius: player.radius, label: 'player' },
     ...npcs.map((n) => ({ id: n.id, position: n.position, radius: n.radius, label: `npc-${n.id}` })),
@@ -418,8 +417,14 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
 
   const { player, npcs, ball, map, physics } = world;
 
-  // 2. Stamina
-  updateStamina(player, input.sprint, dt);
+  // 2. Stamina — walking costs Breath; Sprint costs more; idle regenerates.
+  const moving =
+    Math.hypot(input.move.x, input.move.y) > MOVEMENT.inputDeadzone;
+  updateStamina(
+    player,
+    { sprinting: input.sprint, moving, carrying: player.hasBall },
+    dt,
+  );
 
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);

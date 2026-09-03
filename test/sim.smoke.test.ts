@@ -10,14 +10,17 @@ import {
   ASHBOURNE_TOWN,
   createWorld,
   cycleTeammate,
+  GOAL_CONTEST_RADIUS,
   isCarrierAtOpponentGoal,
   moveControlled,
   PASS_PICKUP_IMMUNITY_TICKS,
   quickSwitch,
   releasePass,
+  SQUAD_SIZE,
   startMatch,
   stepWorld,
   switchControl,
+  threatenedGoalTeam,
   type Input,
   type World,
 } from '../sim/index.js';
@@ -59,11 +62,38 @@ function teleportId(world: World, id: string, x: number, y: number): void {
   }
 }
 
-test('smoke: town map — runs 1000 ticks with 14 NPCs, no errors, no NaN', () => {
+/** Park the player on open ground and shove nearby NPCs out so 17v17 density cannot shove feel tests. */
+function parkIsolated(world: World, x: number, y: number, clearRadius = 220): void {
+  teleportPlayer(world, x, y);
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+  let i = 0;
+  for (const npc of world.npcs) {
+    const d = Math.hypot(npc.position.x - x, npc.position.y - y);
+    if (d >= clearRadius) continue;
+    const angle = (i / 10) * Math.PI * 2;
+    teleportId(
+      world,
+      npc.id,
+      x + Math.cos(angle) * (clearRadius + 100),
+      y + Math.sin(angle) * (clearRadius + 100),
+    );
+    i += 1;
+  }
+}
+
+test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN', () => {
   const world = createWorld();
-  // TICKET 002 verify-before-closing: world is 7v7 = 14 characters total
-  // (1 controlled player + 6 teammates + 7 opponents).
-  assert.equal(world.npcs.length, 13, '13 NPCs in world.npcs (14 total minus the controlled player)');
+  assert.equal(SQUAD_SIZE, 17, 'squad size is 17 per side');
+  assert.equal(
+    world.npcs.length,
+    SQUAD_SIZE * 2 - 1,
+    '33 NPCs in world.npcs (34 total minus the controlled player)',
+  );
+  const home = 1 + world.npcs.filter((n) => n.team === world.player.team).length;
+  const away = world.npcs.filter((n) => n.team !== world.player.team).length;
+  assert.equal(home, SQUAD_SIZE, 'home roster is 17');
+  assert.equal(away, SQUAD_SIZE, 'away roster is 17');
   assert.equal(world.player.radius, 16, 'controlled player has expected radius');
   // Map should be the Ashbourne town map, 2400×1600.
   assert.equal(world.map.width, ASHBOURNE_TOWN.width);
@@ -87,7 +117,7 @@ test('smoke: town map — runs 1000 ticks with 14 NPCs, no errors, no NaN', () =
   // Ball position
   assert.ok(Number.isFinite(world.ball.position.x), 'ball x finite');
   assert.ok(Number.isFinite(world.ball.position.y), 'ball y finite');
-  // All 13 NPC positions
+  // All NPC positions
   for (const npc of world.npcs) {
     assert.ok(Number.isFinite(npc.position.x), `${npc.id} x finite`);
     assert.ok(Number.isFinite(npc.position.y), `${npc.id} y finite`);
@@ -156,7 +186,7 @@ test('feel: zero input in open ground produces zero drift', () => {
   startMatch(world);
   // Park the player in open ground well away from the ball and the hug —
   // south-east quadrant, clear of obstacles, river, and both OOB zones.
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   const startX = world.player.position.x;
   const startY = world.player.position.y;
 
@@ -175,7 +205,7 @@ test('feel: zero input in open ground produces zero drift', () => {
 test('feel: acceleration ramps rather than snapping to full speed', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
 
@@ -200,7 +230,7 @@ test('feel: acceleration ramps rather than snapping to full speed', () => {
 test('feel: releasing input brings the character to a dead stop', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 30);
@@ -252,14 +282,14 @@ test('feel: TAB cycles through every teammate rather than repeating one', () => 
   startMatch(world);
 
   const seen: string[] = [world.player.id];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < SQUAD_SIZE - 1; i++) {
     const next = cycleTeammate(world);
     assert.ok(next !== null, `cycle ${i} returned a teammate`);
     seen.push(next!);
   }
 
   const unique = new Set(seen);
-  assert.equal(unique.size, 7, `expected 7 distinct controlled characters, saw ${[...unique].join(', ')}`);
+  assert.equal(unique.size, SQUAD_SIZE, `expected ${SQUAD_SIZE} distinct controlled characters, saw ${[...unique].join(', ')}`);
 
   // One more cycle should wrap back to where we started.
   const wrapped = cycleTeammate(world);
@@ -345,7 +375,7 @@ test('feel: holding one direction stays on the pitch', () => {
 test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   const x0 = world.player.position.x;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 60);
@@ -357,16 +387,16 @@ test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () 
 test('feel: carrying the ball does not rocket-launch the player', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   const x0 = world.player.position.x;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 60);
   const dx = world.player.position.x - x0;
-  // Carrier is slower (carrierSpeedMult 0.78) — still px/s, not px/tick.
-  assert.ok(dx > 100, `carrier should still run, got ${dx}`);
-  assert.ok(dx < 180, `carrier must not be collision-launched, got ${dx}`);
+  // Carrier is slower (carrierSpeedMult 0.62) — still px/s, not px/tick.
+  assert.ok(dx > 80, `carrier should still run, got ${dx}`);
+  assert.ok(dx < 140, `carrier must not be collision-launched, got ${dx}`);
 });
 
 test('feel: millstones are reachable from walkable bank ground', () => {
@@ -390,7 +420,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
   const world = createWorld();
   startMatch(world);
   assert.equal(isCarrierAtOpponentGoal(world), false);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(isCarrierAtOpponentGoal(world), false, 'carrying mid-field is not a goal');
@@ -399,7 +429,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
 test('pass: kicker cannot instantly re-grab the ball', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
@@ -413,7 +443,7 @@ test('pass: kicker cannot instantly re-grab the ball', () => {
 test('pass: a second kick works after picking the ball up again', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.5), true);
@@ -437,8 +467,8 @@ test('feel: sprint is faster than a walk and drains Breath without the ball', ()
   const burst = createWorld({ seed: 7 });
   startMatch(walk);
   startMatch(burst);
-  teleportPlayer(walk, 1700, 1300);
-  teleportPlayer(burst, 1700, 1300);
+  parkIsolated(walk, 1700, 1300);
+  parkIsolated(burst, 1700, 1300);
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   const eastSprint: Input = { ...east, sprint: true };
   runTicks(walk, east, 60);
@@ -447,7 +477,11 @@ test('feel: sprint is faster than a walk and drains Breath without the ball', ()
   const dxBurst = burst.player.position.x - 1700;
   assert.ok(dxBurst > dxWalk + 20, `sprint should outrun a walk (${dxBurst} vs ${dxWalk})`);
   assert.ok(burst.player.stamina < burst.player.maxStamina - 10, 'Breath should drop while sprinting');
-  assert.equal(walk.player.stamina, walk.player.maxStamina, 'a walk does not drain Breath');
+  assert.ok(walk.player.stamina < walk.player.maxStamina, 'a walk now drains Breath');
+  assert.ok(
+    burst.player.stamina < walk.player.stamina - 5,
+    `sprint should spend more Breath than a walk (${burst.player.stamina} vs ${walk.player.stamina})`,
+  );
 });
 
 test('feel: chase NPCs close on a loose ball within a few seconds', () => {
@@ -482,6 +516,113 @@ test('feel: kickoff packs bodies around the turn-up', () => {
     const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
     return d < 300;
   }).length;
-  assert.ok(near >= 3, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
+  assert.ok(near >= 6, `expected a thick scrum at the turn-up, got ${near} NPCs within 300px`);
+});
+
+test('squad: each side has 10 more bodies than the old 7v7', () => {
+  const world = createWorld();
+  const homeIds = new Set<string>([world.player.id]);
+  const awayIds = new Set<string>();
+  for (const npc of world.npcs) {
+    if (npc.team === world.player.team) homeIds.add(npc.id);
+    else awayIds.add(npc.id);
+  }
+  assert.equal(homeIds.size, 17);
+  assert.equal(awayIds.size, 17);
+  assert.equal(world.physics.bodies.size, 34);
+});
+
+test('feel: walking drains Breath; idle regenerates it', () => {
+  const world = createWorld({ seed: 11 });
+  startMatch(world);
+  parkIsolated(world, 1700, 1300);
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(world, east, 120);
+  const afterWalk = world.player.stamina;
+  assert.ok(
+    afterWalk < world.player.maxStamina - 15,
+    `2s of walking should move the Breath bar, got ${afterWalk}`,
+  );
+  runTicks(world, IDLE, 120);
+  assert.ok(
+    world.player.stamina > afterWalk + 10,
+    `idle should regenerate Breath (${afterWalk} → ${world.player.stamina})`,
+  );
+});
+
+test('feel: carrying drains Breath faster than an empty-handed walk', () => {
+  const empty = createWorld({ seed: 11 });
+  const laden = createWorld({ seed: 11 });
+  startMatch(empty);
+  startMatch(laden);
+  parkIsolated(empty, 1700, 1300);
+  parkIsolated(laden, 1700, 1300);
+  laden.player.hasBall = true;
+  laden.ball.ownerId = laden.player.id;
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(empty, east, 90);
+  runTicks(laden, east, 90);
+  assert.ok(
+    laden.player.stamina < empty.player.stamina - 8,
+    `carry should cost extra Breath (${laden.player.stamina} vs ${empty.player.stamina})`,
+  );
+});
+
+test('feel: carrying toward the millstone is slower than running empty', () => {
+  const empty = createWorld({ seed: 11 });
+  const laden = createWorld({ seed: 11 });
+  startMatch(empty);
+  startMatch(laden);
+  parkIsolated(empty, 1700, 1300);
+  parkIsolated(laden, 1700, 1300);
+  laden.player.hasBall = true;
+  laden.ball.ownerId = laden.player.id;
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(empty, east, 60);
+  runTicks(laden, east, 60);
+  const dxEmpty = empty.player.position.x - 1700;
+  const dxCarry = laden.player.position.x - 1700;
+  assert.ok(dxCarry > 80, `carrier should still cover ground, got ${dxCarry}`);
+  assert.ok(
+    dxCarry < dxEmpty * 0.78,
+    `carry should be noticeably slower than empty (${dxCarry} vs ${dxEmpty})`,
+  );
+});
+
+test('feel: a carrier near the opponent millstone threatens that goal', () => {
+  const world = createWorld();
+  startMatch(world);
+  const goal = world.map.goals.find((g) => g.team !== world.player.team)!;
+  teleportPlayer(world, goal.position.x - 200, goal.position.y);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  const dist = Math.hypot(
+    world.player.position.x - goal.position.x,
+    world.player.position.y - goal.position.y,
+  );
+  assert.ok(dist < GOAL_CONTEST_RADIUS, `setup should be inside contest radius (${dist})`);
+  assert.equal(threatenedGoalTeam(world), goal.team);
+});
+
+test('feel: hold defenders collapse when their millstone is threatened', () => {
+  const world = createWorld({ seed: 5 });
+  startMatch(world);
+  const goal = world.map.goals.find((g) => g.team !== world.player.team)!;
+  const holder = world.npcs.find((n) => n.team === goal.team && n.role === 'hold');
+  assert.ok(holder, 'away squad should include hold players');
+  teleportPlayer(world, goal.position.x - 180, goal.position.y);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  teleportId(world, holder!.id, goal.position.x + 40, goal.position.y - 220);
+  const d0 = Math.hypot(
+    holder!.position.x - world.player.position.x,
+    holder!.position.y - world.player.position.y,
+  );
+  runTicks(world, IDLE, 120);
+  const d1 = Math.hypot(
+    holder!.position.x - world.player.position.x,
+    holder!.position.y - world.player.position.y,
+  );
+  assert.ok(d1 < d0 - 40, `hold line should collapse on the carrier (${d0.toFixed(0)} → ${d1.toFixed(0)})`);
 });
 
