@@ -208,6 +208,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setZoom(this.currentZoom);
 
     this.bindCameras();
+    this.setMatchHud(false);
   }
 
   private adoptWorld(obj: Phaser.GameObjects.GameObject): void {
@@ -789,10 +790,32 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.renderHud();
-    this.renderMinimap(chars);
+    if (this.flow === 'playing') this.renderMinimap(chars);
+    else this.minimapGfx.clear();
+  }
+
+  private setMatchHud(on: boolean): void {
+    this.staminaBg.setVisible(on);
+    this.staminaFill.setVisible(on);
+    this.staminaLabel.setVisible(on);
+    this.timerText.setVisible(on);
+    this.scoreText.setVisible(on);
+    this.minimapBg.setVisible(on);
   }
 
   private renderHud(): void {
+    const live = this.flow === 'playing';
+    this.setMatchHud(live);
+    this.titleCard.setVisible(this.flow === 'title');
+
+    if (!live) {
+      this.pipGfx.clear();
+      this.overlayText.setVisible(false);
+      this.againBtn.setVisible(false);
+      this.drawPrompts();
+      return;
+    }
+
     const p = this.world.player;
     const ratio = p.stamina / p.maxStamina;
     const exhausted = p.stamina <= 0;
@@ -809,17 +832,11 @@ export class GameScene extends Phaser.Scene {
       this.staminaLabel.setText('Breath');
     }
 
-    if (this.flow === 'title' || this.flow === 'placing') {
-      this.timerText.setText(this.flow === 'placing' ? this.placeCountdown() : '');
-    } else {
-      const t = Math.max(0, this.world.matchTimeRemaining);
-      const mm = Math.floor(t / 60);
-      const ss = Math.floor(t % 60).toString().padStart(2, '0');
-      this.timerText.setText(`${mm}:${ss}`);
-    }
-
+    const remain = Math.max(0, this.world.matchTimeRemaining);
+    const mm = Math.floor(remain / 60);
+    const ss = Math.floor(remain % 60).toString().padStart(2, '0');
+    this.timerText.setText(`${mm}:${ss}`);
     this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
-    this.titleCard.setVisible(this.flow === 'title');
 
     this.pipGfx.clear();
     const over = this.world.matchState === 'over' && this.world.winState;
@@ -856,7 +873,7 @@ export class GameScene extends Phaser.Scene {
     if (this.time.now < this.feedbackUntil) return;
 
     if (this.flow === 'placing') {
-      this.promptText.setText('Place your people · WASD you · click a body · Space whistle');
+      this.promptText.setText(`Place your people · ${this.placeCountdown()} · WASD you · click a body · Space whistle`);
       return;
     }
     if (this.flow !== 'playing') {
