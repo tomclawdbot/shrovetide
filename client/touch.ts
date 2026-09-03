@@ -1,6 +1,7 @@
-// client/touch.ts — on-screen stick + kick/switch/ready/goal. Input only; sim still
-// consumes the same Input.move 0..1 vector desktop WASD produces (damping lives
-// in /sim integrateControlVelocity). Goal is the touch stand-in for desktop E.
+// client/touch.ts — on-screen stick + kick/sprint/switch/ready/goal. Input only; sim
+// still consumes the same Input.move 0..1 vector desktop WASD produces (damping lives
+// in /sim integrateControlVelocity). Goal is the touch stand-in for desktop E;
+// Sprint is the stand-in for Shift.
 
 export type TouchFlow = 'title' | 'placing' | 'playing' | 'over';
 
@@ -46,12 +47,15 @@ export interface TouchHandlers {
  */
 export class TouchControls {
   readonly move: StickVec = { x: 0, y: 0 };
+  sprint = false;
   private abort: AbortController | null = null;
   private stickId: number | null = null;
   private kickId: number | null = null;
+  private sprintId: number | null = null;
   private origin = { x: 0, y: 0 };
   private flow: TouchFlow = 'title';
   private enabled = false;
+  private atStone = false;
 
   constructor(private readonly handlers: TouchHandlers) {
     this.enabled = isTouchPlay();
@@ -75,12 +79,16 @@ export class TouchControls {
     this.syncCaption();
   }
 
-  /** Light up the Goal pad when the carrier is on the millstone. */
+  /** Goal pad exists only while the carrier is in millstone reach. */
   setAtStone(on: boolean): void {
+    this.atStone = on;
     const btn = this.el('goal-btn');
     if (!btn) return;
-    btn.classList.toggle('at-stone', on);
-    btn.textContent = on ? 'TAP' : 'Goal';
+    const show = this.enabled && this.flow === 'playing' && on;
+    btn.hidden = !show;
+    btn.classList.toggle('at-stone', show);
+    btn.textContent = show ? 'TAP' : 'Goal';
+    if (!show) btn.classList.remove('held');
   }
 
   /** Goal pips under the caption. Pass null to hide. */
@@ -104,6 +112,8 @@ export class TouchControls {
     this.abort = null;
     this.stickId = null;
     this.kickId = null;
+    this.sprintId = null;
+    this.sprint = false;
     this.move.x = 0;
     this.move.y = 0;
     this.nudgeKnob(0, 0);
@@ -120,19 +130,31 @@ export class TouchControls {
     const layer = this.el('touch-layer');
     const well = this.el('stick-well');
     const kick = this.el('kick-btn');
+    const sprint = this.el('sprint-btn');
     const sw = this.el('switch-btn');
     const ready = this.el('ready-btn');
     const goal = this.el('goal-btn');
-    if (!layer || !well || !kick || !sw || !ready || !goal) return;
+    if (!layer || !well || !kick || !sprint || !sw || !ready || !goal) return;
 
     well.addEventListener('pointerdown', this.onStickDown, { signal });
     window.addEventListener('pointermove', this.onStickMove, { signal });
     window.addEventListener('pointerup', this.onStickUp, { signal });
     window.addEventListener('pointercancel', this.onStickUp, { signal });
 
-    kick.addEventListener('pointerdown', this.onKickDown, { signal });
+    this.bindHold(kick, {
+      onDown: this.onKickDown,
+      onUp: this.onKickUp,
+      signal,
+    });
+    this.bindHold(sprint, {
+      onDown: this.onSprintDown,
+      onUp: this.onSprintUp,
+      signal,
+    });
     window.addEventListener('pointerup', this.onKickUp, { signal });
     window.addEventListener('pointercancel', this.onKickUp, { signal });
+    window.addEventListener('pointerup', this.onSprintUp, { signal });
+    window.addEventListener('pointercancel', this.onSprintUp, { signal });
 
     sw.addEventListener('pointerdown', this.onSwitch, { signal });
     ready.addEventListener('pointerdown', this.onReady, { signal });
@@ -148,6 +170,39 @@ export class TouchControls {
     );
   }
 
+  /**
+   * Hold pads (Kick / Sprint) must capture the pointer. Chrome iOS often
+   * drops the window pointerup after the first tap, which left Kick stuck
+   * charging and blocked every later kick.
+   */
+  private bindHold(
+    el: HTMLElement,
+    opts: {
+      onDown: (ev: PointerEvent) => void;
+      onUp: (ev: Event) => void;
+      signal: AbortSignal;
+    },
+  ): void {
+    const { onDown, onUp, signal } = opts;
+    el.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+          el.setPointerCapture(ev.pointerId);
+        } catch {
+          /* iOS may throw if the pointer already released */
+        }
+        onDown(ev);
+      },
+      { signal },
+    );
+    el.addEventListener('pointerup', onUp, { signal });
+    el.addEventListener('pointercancel', onUp, { signal });
+    el.addEventListener('lostpointercapture', onUp, { signal });
+  }
+
   private sync(): void {
     const layer = this.el('touch-layer');
     if (!layer) return;
@@ -155,14 +210,19 @@ export class TouchControls {
     layer.hidden = !show;
     layer.setAttribute('data-flow', this.flow);
     const kick = this.el('kick-btn');
+    const sprint = this.el('sprint-btn');
     const ready = this.el('ready-btn');
     const sw = this.el('switch-btn');
-    const goal = this.el('goal-btn');
     if (kick) kick.hidden = this.flow !== 'playing';
+    if (sprint) sprint.hidden = this.flow !== 'playing';
     if (ready) ready.hidden = this.flow !== 'placing';
-    if (goal) goal.hidden = this.flow !== 'playing';
     if (sw) sw.hidden = this.flow === 'title' || this.flow === 'over';
-    if (this.flow !== 'playing') this.setAtStone(false);
+    this.setAtStone(this.flow === 'playing' && this.atStone);
+    if (this.flow !== 'playing') {
+      this.sprint = false;
+      this.sprintId = null;
+      this.el('sprint-btn')?.classList.remove('held');
+    }
     if (!show) {
       this.move.x = 0;
       this.move.y = 0;
@@ -227,18 +287,36 @@ export class TouchControls {
 
   private onKickDown = (ev: PointerEvent): void => {
     if (this.flow !== 'playing') return;
-    ev.preventDefault();
-    ev.stopPropagation();
     this.kickId = ev.pointerId;
     this.el('kick-btn')?.classList.add('held');
     this.handlers.onKickDown();
   };
 
-  private onKickUp = (ev: PointerEvent): void => {
-    if (ev.pointerId !== this.kickId) return;
+  private onKickUp = (ev: Event): void => {
+    if (this.kickId === null) return;
+    if (ev instanceof PointerEvent && ev.type !== 'lostpointercapture') {
+      if (ev.pointerId !== this.kickId) return;
+    }
     this.kickId = null;
     this.el('kick-btn')?.classList.remove('held');
     this.handlers.onKickUp();
+  };
+
+  private onSprintDown = (ev: PointerEvent): void => {
+    if (this.flow !== 'playing') return;
+    this.sprintId = ev.pointerId;
+    this.sprint = true;
+    this.el('sprint-btn')?.classList.add('held');
+  };
+
+  private onSprintUp = (ev: Event): void => {
+    if (this.sprintId === null) return;
+    if (ev instanceof PointerEvent && ev.type !== 'lostpointercapture') {
+      if (ev.pointerId !== this.sprintId) return;
+    }
+    this.sprintId = null;
+    this.sprint = false;
+    this.el('sprint-btn')?.classList.remove('held');
   };
 
   private onSwitch = (ev: PointerEvent): void => {
@@ -254,7 +332,7 @@ export class TouchControls {
   };
 
   private onGoal = (ev: PointerEvent): void => {
-    if (this.flow !== 'playing') return;
+    if (this.flow !== 'playing' || !this.atStone) return;
     ev.preventDefault();
     ev.stopPropagation();
     this.handlers.onGoal();

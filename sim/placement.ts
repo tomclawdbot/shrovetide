@@ -76,13 +76,13 @@ export function autoPlaceOpponents(world: World): void {
   const w = world.map.width;
   const h = world.map.height;
   const slots: { xRatio: number; y: number; role: Role }[] = [
-    { xRatio: 0.66, y: 0.30, role: 'hold' },
-    { xRatio: 0.66, y: 0.70, role: 'hold' },
-    { xRatio: 0.78, y: 0.50, role: 'hold' },
-    { xRatio: 0.84, y: 0.38, role: 'hold' },
-    { xRatio: 0.84, y: 0.62, role: 'hold' },
-    { xRatio: 0.90, y: 0.50, role: 'hold' },
-    { xRatio: 0.72, y: 0.50, role: 'chase' },
+    { xRatio: 0.54, y: 0.38, role: 'chase' },
+    { xRatio: 0.54, y: 0.62, role: 'chase' },
+    { xRatio: 0.58, y: 0.50, role: 'chase' },
+    { xRatio: 0.70, y: 0.32, role: 'hold' },
+    { xRatio: 0.70, y: 0.68, role: 'hold' },
+    { xRatio: 0.82, y: 0.42, role: 'hold' },
+    { xRatio: 0.82, y: 0.58, role: 'hold' },
   ];
   for (let i = 0; i < opponents.length; i++) {
     const npc = opponents[i]!;

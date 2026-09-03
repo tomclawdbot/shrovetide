@@ -55,8 +55,13 @@ export {
   type World,
 } from './world.js';
 
-export { releasePass } from './pass.js';
-export { STAMINA_REGEN_RATE, STAMINA_SPRINT_DRAIN, EXHAUSTED_SPEED_MULT } from './stamina.js';
+export { releasePass, PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
+export {
+  STAMINA_REGEN_RATE,
+  STAMINA_SPRINT_DRAIN,
+  EXHAUSTED_SPEED_MULT,
+  SPRINT_SPEED_MULT,
+} from './stamina.js';
 
 // Match state machine + scoring
 export {
@@ -68,7 +73,7 @@ export {
   GOAL_TAP_MAX_CHAIN_TICKS,
 } from './match.js';
 
-export { tapGoal, GOAL_REACH_DISTANCE } from './goaling.js';
+export { tapGoal, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
 
 // Squad placement (strategy phase)
 export {

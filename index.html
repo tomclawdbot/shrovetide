@@ -198,6 +198,17 @@
         border-radius: 50%;
         font-size: 20px;
       }
+      #sprint-btn {
+        grid-column: 1;
+        grid-row: 2;
+        justify-self: start;
+        align-self: end;
+        min-width: 92px;
+        height: 44px;
+        border-radius: 22px;
+        font-size: 16px;
+        padding: 0 16px;
+      }
       #switch-btn {
         grid-column: 3;
         grid-row: 2;
@@ -241,6 +252,11 @@
           width: 88px;
           height: 88px;
           font-size: 18px;
+        }
+        #sprint-btn {
+          min-width: 76px;
+          height: 36px;
+          font-size: 14px;
         }
         #ready-btn,
         #goal-btn {
@@ -316,6 +332,7 @@
           <div class="stick-base"></div>
           <div id="stick-knob" class="stick-knob"></div>
         </div>
+        <button id="sprint-btn" class="pad-btn" type="button" hidden>Sprint</button>
         <button id="kick-btn" class="pad-btn" type="button">Kick</button>
         <button id="switch-btn" class="pad-btn" type="button">Switch</button>
         <button id="ready-btn" class="pad-btn" type="button">Whistle</button>

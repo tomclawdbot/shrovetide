@@ -9,7 +9,7 @@ import Phaser from 'phaser';
 import {
   createWorld,
   cycleTeammate,
-  GOAL_REACH_DISTANCE,
+  isCarrierAtOpponentGoal,
   moveControlled,
   opponentGoalFor,
   placeTeammate,
@@ -215,7 +215,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.touch = new TouchControls({
-      onKickDown: () => this.handleSpace(),
+      onKickDown: () => this.beginTouchKick(),
       onKickUp: () => this.handlePassRelease(),
       onSwitch: () => this.handleTab(),
       onReady: () => this.whistle(),
@@ -649,29 +649,48 @@ export class GameScene extends Phaser.Scene {
   // Input
   // -------------------------------------------------------------------------
 
+  private clearPassCharge(): void {
+    this.isPassing = false;
+    this.inputState.charging = false;
+  }
+
+  /** Touch Kick: a new press must start a charge even if the last pointerup was dropped. */
+  private beginTouchKick = (): void => {
+    if (this.flow !== 'playing') return;
+    this.clearPassCharge();
+    this.beginPassCharge();
+  };
+
+  private beginPassCharge(): void {
+    if (this.flow !== 'playing') return;
+    if (this.isPassing) return;
+    if (!this.world.player.hasBall) return;
+    this.isPassing = true;
+    this.passChargeStartedAt = this.now();
+    this.inputState.charging = true;
+    if (this.teach === 'kick') this.teach = 'sprint';
+  }
+
   private handleSpace = (): void => {
     if (this.flow === 'title') {
       this.beginPlacement();
       return;
     }
     if (this.flow === 'placing') return;
-    if (this.isPassing) return;
-    if (!this.world.player.hasBall) return;
-    this.isPassing = true;
-    this.passChargeStartedAt = this.now();
-    this.inputState.charging = true;
-    if (this.teach === 'kick') this.teach = this.touch?.active ? 'goal' : 'sprint';
+    this.beginPassCharge();
   };
 
   private handlePassRelease = (): void => {
     this.spaceReady = true;
-    if (this.flow !== 'playing' || !this.isPassing) return;
+    if (this.flow !== 'playing' || !this.isPassing) {
+      this.clearPassCharge();
+      return;
+    }
     const chargeSeconds = (this.now() - this.passChargeStartedAt) / 1000;
     const moving = this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
     const aim = moving ? { ...this.inputState.move } : { ...this.lastAim };
     releasePass(this.world, aim, chargeSeconds);
-    this.isPassing = false;
-    this.inputState.charging = false;
+    this.clearPassCharge();
     this.trackPlayer(true);
   };
 
@@ -686,6 +705,7 @@ export class GameScene extends Phaser.Scene {
     if (this.flow !== 'placing' && this.flow !== 'playing') return;
     const newId = cycleTeammate(this.world);
     if (!newId) return;
+    this.clearPassCharge();
     this.retargetPlace();
     this.punchCamera();
   };
@@ -693,7 +713,10 @@ export class GameScene extends Phaser.Scene {
   private handleQuickSwitch = (): void => {
     if (this.flow !== 'playing') return;
     const newId = quickSwitch(this.world);
-    if (newId) this.punchCamera();
+    if (newId) {
+      this.clearPassCharge();
+      this.punchCamera();
+    }
     else this.flash('Already nearest the stone');
   };
 
@@ -717,6 +740,7 @@ export class GameScene extends Phaser.Scene {
     if (tappedMate) {
       if (this.flow === 'placing' || this.flow === 'playing') {
         if (switchControl(this.world, tappedMate)) {
+          this.clearPassCharge();
           this.retargetPlace();
           this.punchCamera();
         }
@@ -877,7 +901,8 @@ export class GameScene extends Phaser.Scene {
       if (this.teach === 'move' && this.flow === 'playing') this.teach = 'ball';
     }
     this.inputState.move = { x: mx, y: my };
-    this.inputState.sprint = !!k?.SHIFT.isDown;
+    this.inputState.sprint = !!k?.SHIFT.isDown || !!this.touch?.sprint;
+    if (this.isPassing && !this.world.player.hasBall) this.clearPassCharge();
     if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'goal';
     if (this.inputState.charging) {
       this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
@@ -890,12 +915,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private atStone(): boolean {
-    if (!this.world.player.hasBall) return false;
-    const g = opponentGoalFor(this.world.player.team, this.world.map);
-    const dx = this.world.player.position.x - g.x;
-    const dy = this.world.player.position.y - g.y;
-    // Same radius as tapGoal — no HUD slop that shows HOLD then eats taps.
-    return Math.hypot(dx, dy) <= GOAL_REACH_DISTANCE;
+    return this.world.player.hasBall && isCarrierAtOpponentGoal(this.world);
   }
 
   // -------------------------------------------------------------------------
@@ -1151,7 +1171,7 @@ export class GameScene extends Phaser.Scene {
       move: touch ? 'Stick — run' : 'WASD — run',
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
-      sprint: 'Shift — burst',
+      sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
       goal: touch ? 'At their millstone, tap Goal' : 'At their millstone, tap E',
       done: '',
     };

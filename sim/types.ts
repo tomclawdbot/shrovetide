@@ -77,7 +77,7 @@ export interface Ball extends Body {
 export interface Input {
   /** Normalized movement direction. Magnitude 0..1. */
   move: Vec2;
-  /** Sprint key held. Drains stamina only when player has the ball. */
+  /** Sprint input held. Drains Breath and raises speed while Breath remains. */
   sprint: boolean;
   /** Pass key currently held (charging). */
   charging: boolean;
