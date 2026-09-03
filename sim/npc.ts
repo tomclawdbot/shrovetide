@@ -11,9 +11,9 @@ import { speedMultiplierAt } from './maps.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
-const NPC_STEER_FORCE = 0.00045;
+const NPC_STEER_FORCE = 0.00022;
 /** Distance (px) at which a HOLD-roled NPC engages the ball over its hold point. */
-const HOLD_BALL_ENGAGE_DISTANCE = 220;
+const HOLD_BALL_ENGAGE_DISTANCE = 140;
 
 export function steerNPCs(world: World): void {
   for (let i = 0; i < world.npcs.length; i++) {
@@ -55,7 +55,12 @@ export function steerNPCs(world: World): void {
 /** Pick the target position for an NPC based on its role + ball/player state. */
 function pickTarget(npc: World['npcs'][number], world: World): Vec2 | null {
   if (npc.role === 'chase') {
-    // CHASE — go to ball, or to whoever has the ball.
+    // First-run: opponents hesitate so a human can actually carry.
+    if (npc.team !== world.player.team) {
+      const bx = world.ball.position.x - npc.position.x;
+      const by = world.ball.position.y - npc.position.y;
+      if (Math.hypot(bx, by) > 420) return npc.holdPosition ?? npc.position;
+    }
     if (world.ball.ownerId !== null) {
       const carrier = findCharacter(world, world.ball.ownerId);
       if (carrier) return carrier.position;

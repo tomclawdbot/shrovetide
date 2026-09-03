@@ -34,8 +34,8 @@ import type { Ball, Input, NPC, Player, SimState, Team, Vec2 } from './types.js'
 export const PLAYER_RADIUS = 16;
 export const NPC_RADIUS = 14;
 export const BALL_RADIUS = 10;
-export const PLAYER_MAX_SPEED = 240; // pixels/sec
-export const NPC_MAX_SPEED = 180;
+export const PLAYER_MAX_SPEED = 190; // pixels/sec
+export const NPC_MAX_SPEED = 110;
 export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). */
 export const SQUAD_SIZE = 7;
@@ -66,12 +66,12 @@ export interface MovementTuning {
 }
 
 export const MOVEMENT: MovementTuning = {
-  timeToMaxSpeed: 0.15,
-  timeToStop: 0.1,
-  maxTurnRateRad: Math.PI * 3.2,
+  timeToMaxSpeed: 0.28,
+  timeToStop: 0.18,
+  maxTurnRateRad: Math.PI * 1.7,
   inputDeadzone: 0.15,
-  carrierSpeedMult: 0.88,
-  carrierTurnMult: 0.6,
+  carrierSpeedMult: 0.78,
+  carrierTurnMult: 0.45,
   restSpeedEpsilon: 0.5,
 };
 

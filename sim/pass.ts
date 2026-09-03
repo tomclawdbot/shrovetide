@@ -11,11 +11,11 @@ import Matter from 'matter-js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
-const PICKUP_PADDING = 2;
+const PICKUP_PADDING = 10;
 const MIN_CHARGE_SECONDS = 0.2;
 const MAX_CHARGE_SECONDS = 1.5;
-const MIN_PASS_SPEED = 200;
-const MAX_PASS_SPEED = 620;
+const MIN_PASS_SPEED = 120;
+const MAX_PASS_SPEED = 340;
 
 /**
  * If the ball is loose and the controlled character is close enough, pick it up.
@@ -73,7 +73,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   const chargeRatio = (clampedCharge - MIN_CHARGE_SECONDS) / (MAX_CHARGE_SECONDS - MIN_CHARGE_SECONDS);
   const speed = MIN_PASS_SPEED + chargeRatio * (MAX_PASS_SPEED - MIN_PASS_SPEED);
 
-  const inaccuracyRad = (0.21 * (1 - chargeRatio) + 0.035) * (_rng() - 0.5) * 2;
+  const inaccuracyRad = (0.10 * (1 - chargeRatio) + 0.02) * (_rng() - 0.5) * 2;
   const angle = Math.atan2(dirY, dirX) + inaccuracyRad;
 
   const offset = player.radius + ball.radius + 2;
