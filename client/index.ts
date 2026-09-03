@@ -39,4 +39,7 @@ installGameShell({
       /* Phaser sound may not be ready yet */
     }
   },
+  onViewport: () => {
+    game.scale.refresh();
+  },
 });

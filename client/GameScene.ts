@@ -3,7 +3,7 @@
 // First-run: HUD lives on a zoom-1 camera (main zoom was swallowing scrollFactor(0)
 // overlays). Kickoff is title → ~20s place-your-people → whistle. Who-am-I follows
 // control. Scoring has HOLD THE STONE + pips + hit-stop.
-// Phone: DOM stick + kick/switch (see touch.ts); keyboard still drives Input.move.
+// Phone (Chrome iOS / WebKit): DOM stick + kick/switch (see touch.ts); keyboard still drives Input.move.
 
 import Phaser from 'phaser';
 import {
