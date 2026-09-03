@@ -1,7 +1,7 @@
-// client/touch.ts — on-screen stick + kick/sprint/switch/ready/goal. Input only; sim
-// still consumes the same Input.move 0..1 vector desktop WASD produces (damping lives
-// in /sim integrateControlVelocity). Goal is the touch stand-in for desktop E;
-// Sprint is the stand-in for Shift.
+// client/touch.ts — on-screen stick + kick/sprint/wrestle/switch/ready/goal.
+// Input only; sim still consumes the same Input.move 0..1 vector desktop WASD
+// produces (damping lives in /sim integrateControlVelocity). Goal is the touch
+// stand-in for desktop E; Sprint is Shift; Wriggle/Rip is F.
 
 export type TouchFlow = 'title' | 'placing' | 'playing' | 'over';
 
@@ -48,14 +48,17 @@ export interface TouchHandlers {
 export class TouchControls {
   readonly move: StickVec = { x: 0, y: 0 };
   sprint = false;
+  wrestle = false;
   private abort: AbortController | null = null;
   private stickId: number | null = null;
   private kickId: number | null = null;
   private sprintId: number | null = null;
+  private wrestleId: number | null = null;
   private origin = { x: 0, y: 0 };
   private flow: TouchFlow = 'title';
   private enabled = false;
   private atStone = false;
+  private wrestleLabel: 'rip' | 'wriggle' | 'none' = 'none';
 
   constructor(private readonly handlers: TouchHandlers) {
     this.enabled = isTouchPlay();
@@ -91,6 +94,24 @@ export class TouchControls {
     if (!show) btn.classList.remove('held');
   }
 
+  /**
+   * Shared Wriggle / Rip pad. Hidden while carrying or when the hug is not
+   * live; label follows sim wrestleMode so one hold can wriggle in then rip.
+   */
+  setWrestle(mode: 'rip' | 'wriggle' | 'none'): void {
+    this.wrestleLabel = mode;
+    const btn = this.el('wrestle-btn');
+    if (!btn) return;
+    const show = this.enabled && this.flow === 'playing' && mode !== 'none';
+    btn.hidden = !show;
+    btn.textContent = mode === 'wriggle' ? 'Wriggle' : 'Rip';
+    if (!show) {
+      btn.classList.remove('held');
+      this.wrestle = false;
+      this.wrestleId = null;
+    }
+  }
+
   /** Goal pips under the caption. Pass null to hide. */
   setPips(taps: number | null): void {
     const pips = this.el('caption-pips');
@@ -113,7 +134,9 @@ export class TouchControls {
     this.stickId = null;
     this.kickId = null;
     this.sprintId = null;
+    this.wrestleId = null;
     this.sprint = false;
+    this.wrestle = false;
     this.move.x = 0;
     this.move.y = 0;
     this.nudgeKnob(0, 0);
@@ -131,10 +154,11 @@ export class TouchControls {
     const well = this.el('stick-well');
     const kick = this.el('kick-btn');
     const sprint = this.el('sprint-btn');
+    const wrestle = this.el('wrestle-btn');
     const sw = this.el('switch-btn');
     const ready = this.el('ready-btn');
     const goal = this.el('goal-btn');
-    if (!layer || !well || !kick || !sprint || !sw || !ready || !goal) return;
+    if (!layer || !well || !kick || !sprint || !wrestle || !sw || !ready || !goal) return;
 
     well.addEventListener('pointerdown', this.onStickDown, { signal });
     window.addEventListener('pointermove', this.onStickMove, { signal });
@@ -151,10 +175,17 @@ export class TouchControls {
       onUp: this.onSprintUp,
       signal,
     });
+    this.bindHold(wrestle, {
+      onDown: this.onWrestleDown,
+      onUp: this.onWrestleUp,
+      signal,
+    });
     window.addEventListener('pointerup', this.onKickUp, { signal });
     window.addEventListener('pointercancel', this.onKickUp, { signal });
     window.addEventListener('pointerup', this.onSprintUp, { signal });
     window.addEventListener('pointercancel', this.onSprintUp, { signal });
+    window.addEventListener('pointerup', this.onWrestleUp, { signal });
+    window.addEventListener('pointercancel', this.onWrestleUp, { signal });
 
     sw.addEventListener('pointerdown', this.onSwitch, { signal });
     ready.addEventListener('pointerdown', this.onReady, { signal });
@@ -218,10 +249,14 @@ export class TouchControls {
     if (ready) ready.hidden = this.flow !== 'placing';
     if (sw) sw.hidden = this.flow === 'title' || this.flow === 'over';
     this.setAtStone(this.flow === 'playing' && this.atStone);
+    this.setWrestle(this.flow === 'playing' ? this.wrestleLabel : 'none');
     if (this.flow !== 'playing') {
       this.sprint = false;
       this.sprintId = null;
+      this.wrestle = false;
+      this.wrestleId = null;
       this.el('sprint-btn')?.classList.remove('held');
+      this.el('wrestle-btn')?.classList.remove('held');
     }
     if (!show) {
       this.move.x = 0;
@@ -317,6 +352,23 @@ export class TouchControls {
     this.sprintId = null;
     this.sprint = false;
     this.el('sprint-btn')?.classList.remove('held');
+  };
+
+  private onWrestleDown = (ev: PointerEvent): void => {
+    if (this.flow !== 'playing' || this.wrestleLabel === 'none') return;
+    this.wrestleId = ev.pointerId;
+    this.wrestle = true;
+    this.el('wrestle-btn')?.classList.add('held');
+  };
+
+  private onWrestleUp = (ev: Event): void => {
+    if (this.wrestleId === null) return;
+    if (ev instanceof PointerEvent && ev.type !== 'lostpointercapture') {
+      if (ev.pointerId !== this.wrestleId) return;
+    }
+    this.wrestleId = null;
+    this.wrestle = false;
+    this.el('wrestle-btn')?.classList.remove('held');
   };
 
   private onSwitch = (ev: PointerEvent): void => {

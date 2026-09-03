@@ -18,6 +18,8 @@ import {
   startMatch,
   stepWorld,
   switchControl,
+  teammateAtPoint,
+  wrestleMode,
   type Input,
   type Team,
   type World,
@@ -94,6 +96,7 @@ interface KeyState {
   E: Phaser.Input.Keyboard.Key;
   TAB: Phaser.Input.Keyboard.Key;
   Q: Phaser.Input.Keyboard.Key;
+  F: Phaser.Input.Keyboard.Key;
 }
 
 interface RenderChar {
@@ -176,6 +179,8 @@ export class GameScene extends Phaser.Scene {
       charging: false,
       passAim: { x: 1, y: 0 },
       goalTap: false,
+      rip: false,
+      wriggle: false,
     };
     this.flow = 'title';
     this.teach = 'move';
@@ -189,7 +194,7 @@ export class GameScene extends Phaser.Scene {
 
     const kb = this.input.keyboard;
     if (kb) {
-      kb.addCapture('TAB,SPACE,E,Q,W,A,S,D,SHIFT');
+      kb.addCapture('TAB,SPACE,E,Q,F,W,A,S,D,SHIFT');
       this.keys = {
         W: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
@@ -204,6 +209,7 @@ export class GameScene extends Phaser.Scene {
         E: kb.addKey(Phaser.Input.Keyboard.KeyCodes.E),
         TAB: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
         Q: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
+        F: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F),
       };
       kb.on('keydown-SPACE', this.handleSpace);
       kb.on('keyup-SPACE', this.handlePassRelease);
@@ -220,7 +226,7 @@ export class GameScene extends Phaser.Scene {
     this.touch = new TouchControls({
       onKickDown: () => this.beginTouchKick(),
       onKickUp: () => this.handlePassRelease(),
-      onSwitch: () => this.handleTab(),
+      onSwitch: () => this.handleQuickSwitch(),
       onReady: () => this.whistle(),
       onGoal: () => this.handleGoalTap(),
     });
@@ -733,13 +739,12 @@ export class GameScene extends Phaser.Scene {
   };
 
   private handleQuickSwitch = (): void => {
-    if (this.flow !== 'playing') return;
+    if (this.flow !== 'placing' && this.flow !== 'playing') return;
     const newId = quickSwitch(this.world);
-    if (newId) {
-      this.clearPassCharge();
-      this.punchCamera();
-    }
-    else this.flash('Already nearest the stone');
+    if (!newId) return;
+    this.clearPassCharge();
+    this.retargetPlace();
+    this.punchCamera();
   };
 
   private handlePointer = (pointer: Phaser.Input.Pointer): void => {
@@ -752,13 +757,19 @@ export class GameScene extends Phaser.Scene {
       this.beginPlacement();
       return;
     }
+    // DOM pads (Goal / Rip / Wriggle / Kick / Sprint / Switch) sit above the
+    // canvas — never treat those presses as a pitch tap-to-select.
+    const evTarget = pointer.event?.target;
+    if (evTarget instanceof Element && evTarget.closest('#touch-layer .pad-btn')) {
+      return;
+    }
     const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    // Goal first: teammates pile on the millstone, so a stone tap must not Switch.
-    if (this.flow === 'playing' && this.millstoneHit(worldPt.x, worldPt.y)) {
+    // Goal first only while actually goaling: teammates pile on the millstone.
+    if (this.flow === 'playing' && this.atStone() && this.millstoneHit(worldPt.x, worldPt.y)) {
       this.handleGoalTap();
       return;
     }
-    const tappedMate = this.teammateAt(worldPt.x, worldPt.y);
+    const tappedMate = teammateAtPoint(this.world, worldPt.x, worldPt.y);
     if (tappedMate) {
       if (this.flow === 'placing' || this.flow === 'playing') {
         if (switchControl(this.world, tappedMate)) {
@@ -785,22 +796,6 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.placeTargetId && mates.some((n) => n.id === this.placeTargetId)) return;
     this.placeTargetId = mates[0]!.id;
-  }
-
-  private teammateAt(x: number, y: number): string | null {
-    const team = this.world.player.team;
-    let bestId: string | null = null;
-    let best = 48;
-    for (const n of this.world.npcs) {
-      if (n.team !== team) continue;
-      const d = Math.hypot(n.position.x - x, n.position.y - y);
-      const reach = n.radius * 2.4;
-      if (d <= reach && d < best) {
-        best = d;
-        bestId = n.id;
-      }
-    }
-    return bestId;
   }
 
   private millstoneHit(x: number, y: number): boolean {
@@ -924,6 +919,9 @@ export class GameScene extends Phaser.Scene {
     }
     this.inputState.move = { x: mx, y: my };
     this.inputState.sprint = !!k?.SHIFT.isDown || !!this.touch?.sprint;
+    const wrestle = !!k?.F.isDown || !!this.touch?.wrestle;
+    this.inputState.rip = wrestle;
+    this.inputState.wriggle = wrestle;
     if (this.isPassing && !this.world.player.hasBall) this.clearPassCharge();
     if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'goal';
     if (this.inputState.charging) {
@@ -1084,6 +1082,9 @@ export class GameScene extends Phaser.Scene {
     this.setMatchHud(live);
     this.titleCard.setVisible(this.flow === 'title');
     this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
+    this.touch?.setWrestle(
+      live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none',
+    );
 
     if (!live) {
       this.pipGfx.clear();

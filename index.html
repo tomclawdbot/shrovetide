@@ -188,26 +188,50 @@
       .pad-btn.held {
         background: #c4a35a;
       }
-      #kick-btn {
+      /* Right action cluster: Sprint sits above Kick. Wriggle/Rip appears
+         to the left of Kick only when the sim says the hold is live. */
+      #right-pads {
         grid-column: 3;
         grid-row: 3;
         justify-self: end;
         align-self: end;
+        display: grid;
+        grid-template-columns: auto auto;
+        grid-template-rows: auto auto;
+        gap: 8px;
+        align-items: end;
+        justify-items: end;
+        pointer-events: none;
+      }
+      #right-pads .pad-btn {
+        pointer-events: auto;
+      }
+      #kick-btn {
+        grid-column: 2;
+        grid-row: 2;
         width: 108px;
         height: 108px;
         border-radius: 50%;
         font-size: 20px;
       }
       #sprint-btn {
-        grid-column: 1;
-        grid-row: 2;
-        justify-self: start;
-        align-self: end;
+        grid-column: 2;
+        grid-row: 1;
         min-width: 92px;
         height: 44px;
         border-radius: 22px;
         font-size: 16px;
         padding: 0 16px;
+      }
+      #wrestle-btn {
+        grid-column: 1;
+        grid-row: 2;
+        min-width: 88px;
+        height: 52px;
+        border-radius: 26px;
+        font-size: 16px;
+        padding: 0 14px;
+        align-self: center;
       }
       #switch-btn {
         grid-column: 3;
@@ -256,6 +280,11 @@
         #sprint-btn {
           min-width: 76px;
           height: 36px;
+          font-size: 14px;
+        }
+        #wrestle-btn {
+          min-width: 72px;
+          height: 40px;
           font-size: 14px;
         }
         #ready-btn,
@@ -332,8 +361,11 @@
           <div class="stick-base"></div>
           <div id="stick-knob" class="stick-knob"></div>
         </div>
-        <button id="sprint-btn" class="pad-btn" type="button" hidden>Sprint</button>
-        <button id="kick-btn" class="pad-btn" type="button">Kick</button>
+        <div id="right-pads">
+          <button id="sprint-btn" class="pad-btn" type="button" hidden>Sprint</button>
+          <button id="wrestle-btn" class="pad-btn" type="button" hidden>Rip</button>
+          <button id="kick-btn" class="pad-btn" type="button">Kick</button>
+        </div>
         <button id="switch-btn" class="pad-btn" type="button">Switch</button>
         <button id="ready-btn" class="pad-btn" type="button">Whistle</button>
         <button id="goal-btn" class="pad-btn" type="button" hidden>Goal</button>

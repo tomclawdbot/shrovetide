@@ -13,7 +13,8 @@
 // preserved. The Map-keyed physics handle means no body shuffle.
 //
 // Allowed in 'placement' (walk a different teammate out) and 'playing'.
-// quickSwitch stays playing-only — it keys off the live ball.
+// quickSwitch (Switch pad / Q) is the ball-proximity jump — closest teammate
+// to the stone, or the next-closest if you already are that body.
 //
 // TICKET 003a fixes:
 //   - cycleTeammate actually cycles. It previously sorted the teammate ids
@@ -76,6 +77,7 @@ export function switchControl(world: World, targetId: string): boolean {
   // Fresh legs: the new character shouldn't inherit the old one's momentum.
   world._controlVel.x = 0;
   world._controlVel.y = 0;
+  world._ripPressure = 0;
 
   // Re-tag the physics body label so debug overlays stay readable.
   const demotedBody = world.physics.bodies.get(prev.id);
@@ -90,29 +92,59 @@ export function switchControl(world: World, targetId: string): boolean {
 }
 
 /**
- * Quick-switch: switch to the teammate nearest the ball. Returns the
- * switched-to character's id, or null if already nearest / no teammates.
+ * Teammates (not self) ranked by distance to the ball. Stable id tie-break.
+ * Switch / Q walks this list: always the closest other body, which is the
+ * next-closest when you already are the nearest.
  */
-export function quickSwitch(world: World): string | null {
-  if (world.matchState !== 'playing') return null;
-  let bestId: string | null = null;
-  let bestDist = Infinity;
+export function teammatesByBallDistance(world: World): { id: string; dist2: number }[] {
+  const bx = world.ball.position.x;
+  const by = world.ball.position.y;
+  const out: { id: string; dist2: number }[] = [];
   for (const npc of world.npcs) {
     if (npc.team !== world.player.team) continue;
-    const dx = npc.position.x - world.ball.position.x;
-    const dy = npc.position.y - world.ball.position.y;
-    const d = dx * dx + dy * dy;
-    if (d < bestDist) {
-      bestDist = d;
-      bestId = npc.id;
+    const dx = npc.position.x - bx;
+    const dy = npc.position.y - by;
+    out.push({ id: npc.id, dist2: dx * dx + dy * dy });
+  }
+  out.sort((a, b) => a.dist2 - b.dist2 || a.id.localeCompare(b.id));
+  return out;
+}
+
+/**
+ * Switch / Q: jump to the teammate closest to the ball. If you already are
+ * that player, jump to the next-closest (self is never a candidate).
+ * Works in placement (ball sits at the turn-up) and play.
+ */
+export function quickSwitch(world: World): string | null {
+  if (world.matchState !== 'playing' && world.matchState !== 'placement') return null;
+  const ranked = teammatesByBallDistance(world);
+  if (ranked.length === 0) return null;
+  const target = ranked[0]!.id;
+  return switchControl(world, target) ? target : null;
+}
+
+/**
+ * Pitch tap/click: nearest teammate NPC inside `slop` (or their reach).
+ * Used by the client; Goal / wrestle pads must win before this is asked.
+ */
+export function teammateAtPoint(
+  world: World,
+  x: number,
+  y: number,
+  slop = 56,
+): string | null {
+  let bestId: string | null = null;
+  let best = Infinity;
+  for (const n of world.npcs) {
+    if (n.team !== world.player.team) continue;
+    const d = Math.hypot(n.position.x - x, n.position.y - y);
+    const reach = Math.max(slop, n.radius * 3);
+    if (d <= reach && d < best) {
+      best = d;
+      bestId = n.id;
     }
   }
-  if (bestId === null) return null;
-  // Don't bother switching if we're already closest teammate.
-  const myDx = world.player.position.x - world.ball.position.x;
-  const myDy = world.player.position.y - world.ball.position.y;
-  if (myDx * myDx + myDy * myDy <= bestDist) return null;
-  return switchControl(world, bestId) ? bestId : null;
+  return bestId;
 }
 
 /**

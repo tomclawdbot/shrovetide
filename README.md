@@ -56,7 +56,9 @@ The contract between the two:
   `world.matchState`, `world.winState` for rendering and writes
   `world.player.hasBall` only via the sim's `releasePass` API.
 - The **`Input` struct** is pure state (`move`, `sprint`, `charging`,
-  `passAim`, `goalTap`). The client maintains it; the sim consumes it.
+  `passAim`, `goalTap`, `rip`, `wriggle`). The client maintains it; the sim
+  consumes it. Desktop **F** (and the touch Wriggle/Rip pad) sets both
+  `rip` and `wriggle`; the sim picks the mode from hug density.
 
 ### Multiplayer path (later ticket)
 
@@ -250,11 +252,13 @@ npm run typecheck    # tsc --noEmit
 | Key | Action |
 |---|---|
 | WASD / Arrows | Move controlled character |
-| Shift | Sprint (drains stamina when carrying ball) |
-| Space (hold+release) | Pass |
+| Shift | Sprint (drains Breath) |
+| Space (hold+release) | Pass / kick (only while carrying) |
+| F (hold) | Wriggle into a packed hug, or Rip the stone free when already deep. Same pad on touch; Kick stays pass-only. |
 | E | Goal-tap press |
-| Tab | Cycle to next teammate |
-| Q | Quick-switch to teammate nearest ball |
+| Tab | Cycle the full teammate ring |
+| Q / Switch | Jump to the teammate closest to the ball (next-closest if that is you) |
+| Click / tap a teammate | Select that player (placement and play) |
 
 ---
 

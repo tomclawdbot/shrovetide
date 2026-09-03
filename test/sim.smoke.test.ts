@@ -48,6 +48,8 @@ const IDLE: Input = {
   charging: false,
   passAim: { x: 0, y: 0 },
   goalTap: false,
+  rip: false,
+  wriggle: false,
 };
 
 /** Move a character in both the sim record and its physics body. */
@@ -190,6 +192,8 @@ test('smoke: runs 1000 ticks moving + sprinting with ball', () => {
     charging: false,
     passAim: { x: 0.7, y: 0.3 },
     goalTap: false,
+    rip: false,
+    wriggle: false,
   };
   runTicks(world, input, 1000);
 
@@ -208,6 +212,8 @@ test('smoke: deterministic for same seed + same inputs', () => {
     charging: false,
     passAim: { x: 1, y: 0 },
     goalTap: false,
+    rip: false,
+    wriggle: false,
   };
   runTicks(w1, input, 200);
   runTicks(w2, input, 200);
@@ -315,13 +321,28 @@ test('switch: tap-id switchControl works before whistle', () => {
   assert.ok(world.npcs.some((n) => n.id === from));
 });
 
-test('switch: Q / quickSwitch stays playing-only', () => {
+test('switch: Q / Switch jumps to the teammate nearest the ball', () => {
   const world = createWorld();
   assert.equal(world.matchState, 'placement');
-  assert.equal(quickSwitch(world), null, 'no quick-switch before whistle');
+  const first = quickSwitch(world);
+  assert.ok(first, 'Switch works during placement');
+  assert.equal(world.player.id, first);
+
   startMatch(world);
-  // May no-op if already nearest the stone; must not throw.
-  quickSwitch(world);
+  const field = { x: world.map.width * 0.70, y: world.map.height * 0.82 };
+  const mates = world.npcs.filter((n) => n.team === world.player.team);
+  const near = mates[0]!;
+  const nearer = mates[1]!;
+  const far = mates[2]!;
+  // Park current player on the ball (already closest), two others at mid/far.
+  world.player.position = { x: field.x, y: field.y };
+  world.ball.position = { x: field.x, y: field.y };
+  near.position = { x: field.x + 80, y: field.y };
+  nearer.position = { x: field.x + 40, y: field.y };
+  far.position = { x: field.x + 400, y: field.y };
+  const jumped = quickSwitch(world);
+  assert.equal(jumped, nearer.id, 'already nearest → next-closest teammate');
+  assert.equal(world.player.id, nearer.id);
 });
 
 test('feel: TAB cycles through every teammate rather than repeating one', () => {
@@ -364,6 +385,8 @@ test('smoke: stamina drains to zero under sustained sprint-with-ball', () => {
     charging: false,
     passAim: { x: 1, y: 0 },
     goalTap: false,
+    rip: false,
+    wriggle: false,
   };
   // Force-pickup the ball (proximity pickup works fine too but this is faster).
   world.ball.ownerId = world.player.id;

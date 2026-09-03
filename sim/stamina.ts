@@ -8,6 +8,10 @@ export const STAMINA_MOVE_DRAIN = 10;
 export const STAMINA_SPRINT_DRAIN = 28;
 /** Extra stamina per second drained while carrying the stone. */
 export const STAMINA_CARRY_DRAIN = 8;
+/** Stamina per second drained while Ripping the stone in a hug. */
+export const STAMINA_RIP_DRAIN = 30;
+/** Stamina per second drained while Wriggling into a packed hug. */
+export const STAMINA_WRIGGLE_DRAIN = 34;
 /** Stamina per second regenerated when idle (not moving, not sprinting). */
 export const STAMINA_REGEN_RATE = 18;
 /** Speed multiplier when stamina hits zero. */
@@ -20,6 +24,8 @@ export interface StaminaTick {
   /** True when movement input is past the deadzone. */
   moving: boolean;
   carrying: boolean;
+  ripping?: boolean;
+  wriggling?: boolean;
 }
 
 /**
@@ -33,7 +39,11 @@ export interface StaminaTick {
 export function updateStamina(player: Player, tick: StaminaTick, dt: number): void {
   const extra = tick.carrying ? STAMINA_CARRY_DRAIN : 0;
   let delta = 0;
-  if (tick.sprinting) {
+  if (tick.ripping) {
+    delta = player.stamina > 0 ? -(STAMINA_RIP_DRAIN + extra) * dt : 0;
+  } else if (tick.wriggling) {
+    delta = player.stamina > 0 ? -(STAMINA_WRIGGLE_DRAIN + extra) * dt : 0;
+  } else if (tick.sprinting) {
     delta = player.stamina > 0 ? -(STAMINA_SPRINT_DRAIN + extra) * dt : 0;
   } else if (tick.moving) {
     delta = player.stamina > 0 ? -(STAMINA_MOVE_DRAIN + extra) * dt : 0;
