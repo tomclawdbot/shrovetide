@@ -25,6 +25,8 @@ export function stickVector(dx: number, dy: number, radius = STICK_RADIUS): Stic
 
 export function isTouchPlay(): boolean {
   if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('touch') || params.get('controls') === 'touch') return true;
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   const noHover = window.matchMedia('(hover: none)').matches;
   return coarse || (navigator.maxTouchPoints > 0 && noHover);

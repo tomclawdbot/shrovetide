@@ -96,6 +96,13 @@ function preventZoomAndOverscroll(): void {
     { passive: false },
   );
   document.addEventListener('dblclick', eat, { passive: false });
+  document.addEventListener(
+    'contextmenu',
+    (ev) => {
+      if (ev.cancelable) ev.preventDefault();
+    },
+    { passive: false },
+  );
 }
 
 export function installGameShell(opts?: { onUnlock?: () => void }): void {

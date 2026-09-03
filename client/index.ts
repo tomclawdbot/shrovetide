@@ -30,6 +30,7 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+(window as unknown as { game: Phaser.Game }).game = game;
 installGameShell({
   onUnlock: () => {
     try {

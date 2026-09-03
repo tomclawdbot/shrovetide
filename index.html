@@ -80,8 +80,12 @@
       }
       .stick-well {
         position: absolute;
-        left: calc(var(--pad-l) + 18px);
-        bottom: calc(var(--pad-b) + 18px);
+        top: auto;
+        right: auto;
+        left: 18px;
+        bottom: 18px;
+        left: calc(18px + env(safe-area-inset-left, 0px));
+        bottom: calc(18px + env(safe-area-inset-bottom, 0px));
         width: 132px;
         height: 132px;
         pointer-events: auto;
@@ -130,16 +134,26 @@
         background: #c4a35a;
       }
       #kick-btn {
-        right: calc(var(--pad-r) + 22px);
-        bottom: calc(var(--pad-b) + 22px);
+        position: absolute;
+        top: auto;
+        left: auto;
+        right: 22px;
+        bottom: 22px;
+        right: calc(22px + env(safe-area-inset-right, 0px));
+        bottom: calc(22px + env(safe-area-inset-bottom, 0px));
         width: 108px;
         height: 108px;
         border-radius: 50%;
         font-size: 20px;
       }
       #switch-btn {
-        right: calc(var(--pad-r) + 34px);
-        bottom: calc(var(--pad-b) + 142px);
+        position: absolute;
+        top: auto;
+        left: auto;
+        right: 34px;
+        bottom: 142px;
+        right: calc(34px + env(safe-area-inset-right, 0px));
+        bottom: calc(142px + env(safe-area-inset-bottom, 0px));
         min-width: 84px;
         height: 40px;
         border-radius: 20px;
@@ -150,8 +164,12 @@
         border-color: rgba(243, 234, 212, 0.55);
       }
       #ready-btn {
+        position: absolute;
+        top: auto;
         left: 50%;
-        bottom: calc(var(--pad-b) + 22px);
+        right: auto;
+        bottom: 22px;
+        bottom: calc(22px + env(safe-area-inset-bottom, 0px));
         transform: translateX(-50%);
         min-width: 168px;
         height: 48px;
@@ -161,7 +179,8 @@
       }
       #unmute-btn {
         position: absolute;
-        top: calc(var(--pad-t) + 10px);
+        top: 10px;
+        top: calc(10px + env(safe-area-inset-top, 0px));
         left: 50%;
         transform: translateX(-50%);
         pointer-events: auto;
@@ -214,9 +233,9 @@
           <div class="stick-base"></div>
           <div id="stick-knob" class="stick-knob"></div>
         </div>
-        <button id="kick-btn" type="button">Kick</button>
-        <button id="switch-btn" type="button">Switch</button>
-        <button id="ready-btn" type="button">Whistle</button>
+        <button id="kick-btn" class="pad-btn" type="button">Kick</button>
+        <button id="switch-btn" class="pad-btn" type="button">Switch</button>
+        <button id="ready-btn" class="pad-btn" type="button">Whistle</button>
       </div>
     </div>
     <script type="module" src="/client/index.ts"></script>
