@@ -62,6 +62,26 @@ function teleportId(world: World, id: string, x: number, y: number): void {
   }
 }
 
+/** Park the player on open ground and shove nearby NPCs out so 17v17 density cannot shove feel tests. */
+function parkIsolated(world: World, x: number, y: number, clearRadius = 220): void {
+  teleportPlayer(world, x, y);
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+  let i = 0;
+  for (const npc of world.npcs) {
+    const d = Math.hypot(npc.position.x - x, npc.position.y - y);
+    if (d >= clearRadius) continue;
+    const angle = (i / 10) * Math.PI * 2;
+    teleportId(
+      world,
+      npc.id,
+      x + Math.cos(angle) * (clearRadius + 100),
+      y + Math.sin(angle) * (clearRadius + 100),
+    );
+    i += 1;
+  }
+}
+
 test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN', () => {
   const world = createWorld();
   assert.equal(SQUAD_SIZE, 17, 'squad size is 17 per side');
@@ -166,7 +186,7 @@ test('feel: zero input in open ground produces zero drift', () => {
   startMatch(world);
   // Park the player in open ground well away from the ball and the hug —
   // south-east quadrant, clear of obstacles, river, and both OOB zones.
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   const startX = world.player.position.x;
   const startY = world.player.position.y;
 
@@ -185,7 +205,7 @@ test('feel: zero input in open ground produces zero drift', () => {
 test('feel: acceleration ramps rather than snapping to full speed', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
 
@@ -210,7 +230,7 @@ test('feel: acceleration ramps rather than snapping to full speed', () => {
 test('feel: releasing input brings the character to a dead stop', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 30);
@@ -355,7 +375,7 @@ test('feel: holding one direction stays on the pitch', () => {
 test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   const x0 = world.player.position.x;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 60);
@@ -367,7 +387,7 @@ test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () 
 test('feel: carrying the ball does not rocket-launch the player', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   const x0 = world.player.position.x;
@@ -400,7 +420,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
   const world = createWorld();
   startMatch(world);
   assert.equal(isCarrierAtOpponentGoal(world), false);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(isCarrierAtOpponentGoal(world), false, 'carrying mid-field is not a goal');
@@ -409,7 +429,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
 test('pass: kicker cannot instantly re-grab the ball', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
@@ -423,7 +443,7 @@ test('pass: kicker cannot instantly re-grab the ball', () => {
 test('pass: a second kick works after picking the ball up again', () => {
   const world = createWorld();
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.5), true);
@@ -447,8 +467,8 @@ test('feel: sprint is faster than a walk and drains Breath without the ball', ()
   const burst = createWorld({ seed: 7 });
   startMatch(walk);
   startMatch(burst);
-  teleportPlayer(walk, 1700, 1300);
-  teleportPlayer(burst, 1700, 1300);
+  parkIsolated(walk, 1700, 1300);
+  parkIsolated(burst, 1700, 1300);
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   const eastSprint: Input = { ...east, sprint: true };
   runTicks(walk, east, 60);
@@ -515,7 +535,7 @@ test('squad: each side has 10 more bodies than the old 7v7', () => {
 test('feel: walking drains Breath; idle regenerates it', () => {
   const world = createWorld({ seed: 11 });
   startMatch(world);
-  teleportPlayer(world, 1700, 1300);
+  parkIsolated(world, 1700, 1300);
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 120);
   const afterWalk = world.player.stamina;
@@ -535,8 +555,8 @@ test('feel: carrying drains Breath faster than an empty-handed walk', () => {
   const laden = createWorld({ seed: 11 });
   startMatch(empty);
   startMatch(laden);
-  teleportPlayer(empty, 1700, 1300);
-  teleportPlayer(laden, 1700, 1300);
+  parkIsolated(empty, 1700, 1300);
+  parkIsolated(laden, 1700, 1300);
   laden.player.hasBall = true;
   laden.ball.ownerId = laden.player.id;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
@@ -553,8 +573,8 @@ test('feel: carrying toward the millstone is slower than running empty', () => {
   const laden = createWorld({ seed: 11 });
   startMatch(empty);
   startMatch(laden);
-  teleportPlayer(empty, 1700, 1300);
-  teleportPlayer(laden, 1700, 1300);
+  parkIsolated(empty, 1700, 1300);
+  parkIsolated(laden, 1700, 1300);
   laden.player.hasBall = true;
   laden.ball.ownerId = laden.player.id;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
