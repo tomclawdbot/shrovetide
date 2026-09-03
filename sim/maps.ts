@@ -127,11 +127,11 @@ export const ASHBOURNE_TOWN: TownMap = {
     { position: { x: 2000, y: 880 }, width: 110, height: 120 },
   ],
 
-  // Millstones sit on the north bank (river spans y 820–940). Walkable ground
-  // within GOAL_REACH_DISTANCE — not mid-river, not past the sideline pad.
+  // Millstones sit on the north bank (river spans y 820–940), inland of the
+  // sideline pad so a body can stand inside GOAL_REACH without wall-clamping.
   goals: [
-    { team: 0, position: { x: 72, y: 790 } },
-    { team: 1, position: { x: 2328, y: 790 } },
+    { team: 0, position: { x: 140, y: 790 } },
+    { team: 1, position: { x: 2260, y: 790 } },
   ],
 
   turnUp: { x: 1200, y: 880 },
