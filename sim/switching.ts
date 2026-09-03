@@ -12,6 +12,9 @@
 // previously-controlled character is just relabelled — positions are
 // preserved. The Map-keyed physics handle means no body shuffle.
 //
+// Allowed in 'placement' (walk a different teammate out) and 'playing'.
+// quickSwitch stays playing-only — it keys off the live ball.
+//
 // TICKET 003a fixes:
 //   - cycleTeammate actually cycles. It previously sorted the teammate ids
 //     and always returned the first one, so TAB jumped to the same character
@@ -28,7 +31,8 @@ import type { World } from './world.js';
  */
 export function switchControl(world: World, targetId: string): boolean {
   if (targetId === world.player.id) return false;
-  if (world.matchState !== 'playing') return false;
+  // Placement: walk a different teammate out. Playing: Tab / Switch / tap.
+  if (world.matchState !== 'playing' && world.matchState !== 'placement') return false;
   const targetIdx = world.npcs.findIndex((n) => n.id === targetId);
   if (targetIdx < 0) return false;
   const target = world.npcs[targetIdx]!;
@@ -129,7 +133,7 @@ export function controlRing(world: World): string[] {
  * Returns the new controlled id, or null if the switch didn't happen.
  */
 export function cycleTeammate(world: World): string | null {
-  if (world.matchState !== 'playing') return null;
+  if (world.matchState !== 'playing' && world.matchState !== 'placement') return null;
   const ring = controlRing(world);
   if (ring.length < 2) return null;
 

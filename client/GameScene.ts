@@ -219,6 +219,7 @@ export class GameScene extends Phaser.Scene {
       onKickUp: () => this.handlePassRelease(),
       onSwitch: () => this.handleTab(),
       onReady: () => this.whistle(),
+      onGoal: () => this.handleGoalTap(),
     });
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.layoutHud, this);
@@ -257,7 +258,6 @@ export class GameScene extends Phaser.Scene {
   private layoutHud = (): void => {
     this.hudPad = canvasSafePad(VIEW_W, VIEW_H);
     const { l, r, t, b } = this.hudPad;
-    const touch = !!this.touch?.active && this.flow !== 'title';
     this.staminaBg?.setPosition(l, t);
     this.staminaFill?.setPosition(l + 2, t + 2);
     this.staminaLabel?.setPosition(l, t + 26);
@@ -267,7 +267,7 @@ export class GameScene extends Phaser.Scene {
       VIEW_W - MINIMAP_W / 2 - Math.max(MINIMAP_PAD, r),
       MINIMAP_H / 2 + Math.max(MINIMAP_PAD, t),
     );
-    const promptY = touch ? VIEW_H - Math.max(176, b + 148) : VIEW_H - Math.max(56, b + 36);
+    const promptY = VIEW_H - Math.max(56, b + 36);
     this.promptText?.setPosition(VIEW_W / 2, promptY);
   };
 
@@ -683,17 +683,11 @@ export class GameScene extends Phaser.Scene {
 
   private handleTab = (): void => {
     if (this.flow === 'title') return;
-    if (this.flow === 'placing') {
-      const mates = this.world.npcs.filter((n) => n.team === this.world.player.team);
-      if (mates.length === 0) return;
-      const idx = mates.findIndex((n) => n.id === this.placeTargetId);
-      this.placeTargetId = mates[(idx + 1) % mates.length]!.id;
-      this.flash('Place this one');
-      return;
-    }
-    if (this.flow !== 'playing') return;
+    if (this.flow !== 'placing' && this.flow !== 'playing') return;
     const newId = cycleTeammate(this.world);
-    if (newId) this.punchCamera();
+    if (!newId) return;
+    this.retargetPlace();
+    this.punchCamera();
   };
 
   private handleQuickSwitch = (): void => {
@@ -714,26 +708,38 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    // Goal first: teammates pile on the millstone, so a stone tap must not Switch.
+    if (this.flow === 'playing' && this.millstoneHit(worldPt.x, worldPt.y)) {
+      this.handleGoalTap();
+      return;
+    }
     const tappedMate = this.teammateAt(worldPt.x, worldPt.y);
-    if (this.flow === 'placing') {
-      if (tappedMate) {
-        this.placeTargetId = tappedMate;
-        this.flash('Place this one');
-        return;
+    if (tappedMate) {
+      if (this.flow === 'placing' || this.flow === 'playing') {
+        if (switchControl(this.world, tappedMate)) {
+          this.retargetPlace();
+          this.punchCamera();
+        }
       }
+      return;
+    }
+    if (this.flow === 'placing') {
       if (!this.placeTargetId) return;
       placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
-      return;
-    }
-    if (this.flow !== 'playing') return;
-    if (tappedMate) {
-      if (switchControl(this.world, tappedMate)) this.punchCamera();
-      return;
-    }
-    if (this.atStone() && this.millstoneHit(worldPt.x, worldPt.y)) {
-      this.handleGoalTap();
     }
   };
+
+  /** After a control switch, map-tap placement must target an NPC, not the player. */
+  private retargetPlace(): void {
+    if (this.flow !== 'placing') return;
+    const mates = this.world.npcs.filter((n) => n.team === this.world.player.team);
+    if (mates.length === 0) {
+      this.placeTargetId = null;
+      return;
+    }
+    if (this.placeTargetId && mates.some((n) => n.id === this.placeTargetId)) return;
+    this.placeTargetId = mates[0]!.id;
+  }
 
   private teammateAt(x: number, y: number): string | null {
     const team = this.world.player.team;
@@ -753,7 +759,7 @@ export class GameScene extends Phaser.Scene {
 
   private millstoneHit(x: number, y: number): boolean {
     const g = opponentGoalFor(this.world.player.team, this.world.map);
-    return Math.hypot(x - g.x, y - g.y) <= 48;
+    return Math.hypot(x - g.x, y - g.y) <= 80;
   }
 
   private beginPlacement(): void {
@@ -781,8 +787,23 @@ export class GameScene extends Phaser.Scene {
   }
 
   private flash(msg: string): void {
-    this.promptText.setText(msg);
+    this.setCaption(msg);
     this.feedbackUntil = this.now() + 900;
+  }
+
+  private setCaption(text: string, pips: number | null = null): void {
+    const touch = !!this.touch?.active;
+    if (touch) {
+      this.promptText.setText('');
+      this.promptText.setVisible(false);
+      this.touch?.setCaption(text);
+      this.touch?.setPips(pips);
+    } else {
+      this.promptText.setVisible(true);
+      this.promptText.setText(text);
+      this.touch?.setCaption('');
+      this.touch?.setPips(null);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1020,6 +1041,7 @@ export class GameScene extends Phaser.Scene {
     const live = this.flow === 'playing';
     this.setMatchHud(live);
     this.titleCard.setVisible(this.flow === 'title');
+    this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
 
     if (!live) {
       this.pipGfx.clear();
@@ -1066,7 +1088,7 @@ export class GameScene extends Phaser.Scene {
       this.overlayText.setVisible(true);
       this.againBtn.setVisible(true);
       this.againBtn.setInteractive({ useHandCursor: true });
-      this.promptText.setText('');
+      this.setCaption('');
       if (ws.reason === 'goal' && !this.scoredJuice) {
         this.scoredJuice = true;
         this.hitStopLeft = 0.24;
@@ -1087,40 +1109,41 @@ export class GameScene extends Phaser.Scene {
 
     if (this.flow === 'placing') {
       const ready = this.touch?.active ? 'Whistle when ready' : 'Space when ready';
-      this.promptText.setText(`Walk them out · ${this.placeCountdown()} · ${ready}`);
+      this.setCaption(`Walk them out · ${this.placeCountdown()} · ${ready}`);
       return;
     }
     if (this.flow !== 'playing') {
-      this.promptText.setText('');
+      this.setCaption('');
       return;
     }
     if (this.kickoffLeft > 0) {
       const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
-      this.promptText.setText(`${label} — that way`);
+      this.setCaption(`${label} — that way`);
       return;
     }
 
     if (this.atStone()) {
       const taps = this.world.goaling.taps;
-      if (taps > this.lastGoalingTaps) {
-      }
       this.lastGoalingTaps = taps;
-      this.promptText.setText(this.touch?.active ? 'HOLD THE STONE — tap the millstone' : 'HOLD THE STONE');
-      const cx = VIEW_W / 2;
-      const cy = (this.promptText.y ?? VIEW_H - 56) - 40;
-      for (let i = 0; i < 3; i++) {
-        const filled = i < taps;
-        this.pipGfx.lineStyle(3, 0xf3ead4, 1);
-        if (filled) this.pipGfx.fillStyle(0xe4d4a8, 1);
-        else this.pipGfx.fillStyle(0x140e0a, 0.4);
-        this.pipGfx.fillCircle(cx + (i - 1) * 28, cy, 8);
-        this.pipGfx.strokeCircle(cx + (i - 1) * 28, cy, 8);
+      const copy = this.touch?.active ? 'HOLD THE STONE — tap Goal' : 'HOLD THE STONE';
+      this.setCaption(copy, this.touch?.active ? taps : null);
+      if (!this.touch?.active) {
+        const cx = VIEW_W / 2;
+        const cy = (this.promptText.y ?? VIEW_H - 56) - 40;
+        for (let i = 0; i < 3; i++) {
+          const filled = i < taps;
+          this.pipGfx.lineStyle(3, 0xf3ead4, 1);
+          if (filled) this.pipGfx.fillStyle(0xe4d4a8, 1);
+          else this.pipGfx.fillStyle(0x140e0a, 0.4);
+          this.pipGfx.fillCircle(cx + (i - 1) * 28, cy, 8);
+          this.pipGfx.strokeCircle(cx + (i - 1) * 28, cy, 8);
+        }
       }
       return;
     }
 
     if (this.teach === 'done' || this.now() - this.playStartedAt > TEACH_WINDOW_MS) {
-      this.promptText.setText('');
+      this.setCaption('');
       return;
     }
     const touch = !!this.touch?.active;
@@ -1129,10 +1152,10 @@ export class GameScene extends Phaser.Scene {
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: 'Shift — burst',
-      goal: touch ? 'At their millstone, tap it' : 'At their millstone, tap E',
+      goal: touch ? 'At their millstone, tap Goal' : 'At their millstone, tap E',
       done: '',
     };
-    this.promptText.setText(copy[this.teach]);
+    this.setCaption(copy[this.teach]);
   }
 
   private renderMinimap(chars: RenderChar[]): void {

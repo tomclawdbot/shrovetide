@@ -75,18 +75,72 @@
       #touch-layer {
         position: absolute;
         inset: 0;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        padding: 8px calc(12px + env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) calc(12px + env(safe-area-inset-left, 0px));
+        column-gap: 8px;
+        row-gap: 6px;
+        box-sizing: border-box;
+        pointer-events: none;
       }
       #touch-layer[hidden] {
         display: none !important;
       }
+      /* Shares the visualViewport shell with stick/Whistle/Kick. Grid row 1
+         cannot paint over the control row, so Chrome iOS captions never cover Whistle. */
+      #caption-rail {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        justify-self: center;
+        align-self: start;
+        max-width: min(560px, 72vw);
+        pointer-events: auto;
+        color: var(--ink);
+        background: rgba(20, 14, 10, 0.82);
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-size: 16px;
+        line-height: 1.25;
+        text-align: center;
+        z-index: 2;
+      }
+      #touch-layer[data-flow="playing"] #caption-rail {
+        margin-top: 48px;
+      }
+      #caption-rail[hidden] {
+        display: none !important;
+      }
+      #caption-pips {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 6px;
+      }
+      #caption-pips[hidden] {
+        display: none !important;
+      }
+      #caption-pips i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid #f3ead4;
+        background: rgba(20, 14, 10, 0.4);
+        box-sizing: border-box;
+      }
+      #caption-pips i.filled {
+        background: #e4d4a8;
+      }
       .stick-well {
-        position: absolute;
-        top: auto;
+        grid-column: 1;
+        grid-row: 3;
+        position: relative;
+        left: auto;
         right: auto;
-        left: 18px;
-        bottom: 18px;
-        left: calc(18px + env(safe-area-inset-left, 0px));
-        bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+        top: auto;
+        bottom: auto;
+        justify-self: start;
+        align-self: end;
         width: 132px;
         height: 132px;
         pointer-events: auto;
@@ -114,7 +168,7 @@
         will-change: transform;
       }
       .pad-btn {
-        position: absolute;
+        position: relative;
         pointer-events: auto;
         touch-action: none;
         color: var(--dusk);
@@ -135,26 +189,20 @@
         background: #c4a35a;
       }
       #kick-btn {
-        position: absolute;
-        top: auto;
-        left: auto;
-        right: 22px;
-        bottom: 22px;
-        right: calc(22px + env(safe-area-inset-right, 0px));
-        bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+        grid-column: 3;
+        grid-row: 3;
+        justify-self: end;
+        align-self: end;
         width: 108px;
         height: 108px;
         border-radius: 50%;
         font-size: 20px;
       }
       #switch-btn {
-        position: absolute;
-        top: auto;
-        left: auto;
-        right: 34px;
-        bottom: 142px;
-        right: calc(34px + env(safe-area-inset-right, 0px));
-        bottom: calc(142px + env(safe-area-inset-bottom, 0px));
+        grid-column: 3;
+        grid-row: 2;
+        justify-self: end;
+        align-self: end;
         min-width: 84px;
         height: 40px;
         border-radius: 20px;
@@ -164,19 +212,49 @@
         color: var(--ink);
         border-color: rgba(243, 234, 212, 0.55);
       }
-      #ready-btn {
-        position: absolute;
-        top: auto;
-        left: 50%;
-        right: auto;
-        bottom: 22px;
-        bottom: calc(22px + env(safe-area-inset-bottom, 0px));
-        transform: translateX(-50%);
+      #ready-btn,
+      #goal-btn {
+        grid-column: 2;
+        grid-row: 3;
+        justify-self: center;
+        align-self: end;
+        transform: none;
         min-width: 168px;
         height: 48px;
         border-radius: 24px;
         font-size: 20px;
         padding: 0 22px;
+      }
+      #goal-btn.at-stone {
+        min-width: 176px;
+        height: 56px;
+        font-size: 22px;
+        background: #e4d4a8;
+        box-shadow: 0 0 0 3px rgba(243, 234, 212, 0.55);
+      }
+      @media (max-height: 320px) {
+        .stick-well {
+          width: 104px;
+          height: 104px;
+        }
+        #kick-btn {
+          width: 88px;
+          height: 88px;
+          font-size: 18px;
+        }
+        #ready-btn,
+        #goal-btn {
+          min-width: 140px;
+          height: 40px;
+          font-size: 18px;
+        }
+        #goal-btn.at-stone {
+          min-width: 148px;
+          height: 44px;
+        }
+        #touch-layer[data-flow="playing"] #caption-rail {
+          margin-top: 36px;
+        }
       }
       #unmute-btn {
         position: absolute;
@@ -230,6 +308,10 @@
       <div id="rotate-hint">Turn the phone sideways<br />to run</div>
       <button id="unmute-btn" type="button" hidden>Tap for sound</button>
       <div id="touch-layer" hidden data-flow="title">
+        <div id="caption-rail" hidden>
+          <div id="caption-text"></div>
+          <div id="caption-pips" hidden><i></i><i></i><i></i></div>
+        </div>
         <div id="stick-well" class="stick-well">
           <div class="stick-base"></div>
           <div id="stick-knob" class="stick-knob"></div>
@@ -237,6 +319,7 @@
         <button id="kick-btn" class="pad-btn" type="button">Kick</button>
         <button id="switch-btn" class="pad-btn" type="button">Switch</button>
         <button id="ready-btn" class="pad-btn" type="button">Whistle</button>
+        <button id="goal-btn" class="pad-btn" type="button" hidden>Goal</button>
       </div>
     </div>
     <script type="module" src="/client/index.ts"></script>

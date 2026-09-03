@@ -9,8 +9,11 @@ import {
   ASHBOURNE_TOWN,
   createWorld,
   cycleTeammate,
+  moveControlled,
+  quickSwitch,
   startMatch,
   stepWorld,
+  switchControl,
   type Input,
   type World,
 } from '../sim/index.js';
@@ -190,6 +193,41 @@ test('feel: releasing input brings the character to a dead stop', () => {
   runTicks(world, IDLE, 12);
   assert.equal(world._controlVel.x, 0, 'control velocity x fully stopped');
   assert.equal(world._controlVel.y, 0, 'control velocity y fully stopped');
+});
+
+test('switch: TAB cycles the controlled player during placement', () => {
+  const world = createWorld();
+  assert.equal(world.matchState, 'placement');
+  const startId = world.player.id;
+  const next = cycleTeammate(world);
+  assert.ok(next, 'cycle during placement returned a teammate');
+  assert.notEqual(next, startId);
+  assert.equal(world.player.id, next);
+
+  const x0 = world.player.position.x;
+  const y0 = world.player.position.y;
+  moveControlled(world, 48, 0);
+  const moved = Math.hypot(world.player.position.x - x0, world.player.position.y - y0);
+  assert.ok(moved > 1, 'stick/WASD walk the newly controlled teammate');
+});
+
+test('switch: tap-id switchControl works before whistle', () => {
+  const world = createWorld();
+  const mate = world.npcs.find((n) => n.team === world.player.team);
+  assert.ok(mate);
+  const from = world.player.id;
+  assert.equal(switchControl(world, mate!.id), true);
+  assert.equal(world.player.id, mate!.id);
+  assert.ok(world.npcs.some((n) => n.id === from));
+});
+
+test('switch: Q / quickSwitch stays playing-only', () => {
+  const world = createWorld();
+  assert.equal(world.matchState, 'placement');
+  assert.equal(quickSwitch(world), null, 'no quick-switch before whistle');
+  startMatch(world);
+  // May no-op if already nearest the stone; must not throw.
+  quickSwitch(world);
 });
 
 test('feel: TAB cycles through every teammate rather than repeating one', () => {
