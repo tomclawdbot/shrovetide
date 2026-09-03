@@ -22,7 +22,7 @@ import {
 } from '../sim/index.js';
 
 const FIXED_DT = 1 / 60;
-const MAX_STEPS_PER_FRAME = 4;
+const MAX_STEPS_PER_FRAME = 2;
 
 const VIEW_W = 1200;
 const VIEW_H = 800;
@@ -36,7 +36,7 @@ const CROWD_RADIUS = 260;
 const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
 const PLACE_SECONDS = 20;
-const KICKOFF_MS = 3000;
+const KICKOFF_SECONDS = 3;
 const PLACE_SPEED = 220;
 const TEACH_WINDOW_MS = 30_000;
 
@@ -136,17 +136,17 @@ export class GameScene extends Phaser.Scene {
   private vignetteGfx!: Phaser.GameObjects.Graphics;
 
   private flow: Flow = 'title';
-  private placeEndsAt = 0;
+  private placeLeft = 0;
   private placeTargetId: string | null = null;
   private spaceReady = false;
   private eatPointer = false;
   private teach: Teach = 'move';
   private playStartedAt = 0;
-  private hitStopUntil = 0;
+  private hitStopLeft = 0;
   private lastGoalingTaps = 0;
   private scoredJuice = false;
   private feedbackUntil = 0;
-  private identityUntil = 0;
+  private kickoffLeft = 0;
   private lastThumpAt = 0;
   private lastWall = 0;
 
@@ -282,7 +282,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyCamera(): void {
-    if (this.flow === 'playing' && this.now() < this.identityUntil) {
+    if (this.flow === 'playing' && this.kickoffLeft > 0) {
       this.frameKickoff();
       return;
     }
@@ -665,7 +665,8 @@ export class GameScene extends Phaser.Scene {
   private beginPlacement(): void {
     if (this.flow !== 'title') return;
     this.flow = 'placing';
-    this.placeEndsAt = this.now() + PLACE_SECONDS * 1000;
+    this.placeLeft = PLACE_SECONDS;
+    this.lastWall = this.now();
     this.spaceReady = false;
     this.eatPointer = true;
     this.titleCard.setVisible(false);
@@ -678,7 +679,7 @@ export class GameScene extends Phaser.Scene {
     this.playStartedAt = this.now();
     this.teach = 'move';
     this.lastWall = this.now();
-    this.identityUntil = this.now() + KICKOFF_MS;
+    this.kickoffLeft = KICKOFF_SECONDS;
   }
 
   private flash(msg: string): void {
@@ -694,7 +695,8 @@ export class GameScene extends Phaser.Scene {
     this.readInput();
     const now = this.now();
     if (this.lastWall === 0) this.lastWall = now;
-    const dt = Math.min(0.05, Math.max(0, (now - this.lastWall) / 1000));
+    // Cap per frame so a jumped performance.now() cannot skip 16s of countdown.
+    const dt = Math.min(1 / 30, Math.max(0, (now - this.lastWall) / 1000));
     this.lastWall = now;
 
     if (this.flow === 'placing') {
@@ -703,11 +705,17 @@ export class GameScene extends Phaser.Scene {
         this.inputState.move.x * PLACE_SPEED * dt,
         this.inputState.move.y * PLACE_SPEED * dt,
       );
+      this.placeLeft = Math.max(0, this.placeLeft - dt);
       if (this.spaceReady && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
-      else if (now >= this.placeEndsAt) this.whistle();
+      else if (this.placeLeft <= 0) this.whistle();
     }
 
-    if (this.flow === 'playing' && now >= this.hitStopUntil && now >= this.identityUntil) {
+    if (this.flow === 'playing') {
+      if (this.kickoffLeft > 0) this.kickoffLeft = Math.max(0, this.kickoffLeft - dt);
+      if (this.hitStopLeft > 0) this.hitStopLeft = Math.max(0, this.hitStopLeft - dt);
+    }
+
+    if (this.flow === 'playing' && this.hitStopLeft <= 0 && this.kickoffLeft <= 0) {
       this.accumulator += dt;
       let steps = 0;
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
@@ -844,7 +852,7 @@ export class GameScene extends Phaser.Scene {
       this.markerGfx.strokeCircle(p.position.x, p.position.y, p.radius * 1.4 + charge * 28);
     }
 
-    if (this.flow === 'playing' && this.now() < this.identityUntil) {
+    if (this.flow === 'playing' && this.kickoffLeft > 0) {
       const goal = opponentGoalFor(p.team, this.world.map);
       const dx = goal.x - p.position.x;
       const dy = goal.y - p.position.y;
@@ -882,7 +890,7 @@ export class GameScene extends Phaser.Scene {
       }
       if (thump && this.now() - this.lastThumpAt > 180) {
         this.lastThumpAt = this.now();
-        this.hitStopUntil = Math.max(this.hitStopUntil, this.now() + 45);
+        this.hitStopLeft = Math.max(this.hitStopLeft, 0.045);
       }
     }
 
@@ -953,7 +961,7 @@ export class GameScene extends Phaser.Scene {
       this.promptText.setText('');
       if (ws.reason === 'goal' && !this.scoredJuice) {
         this.scoredJuice = true;
-        this.hitStopUntil = this.now() + 240;
+        this.hitStopLeft = 0.24;
       }
     } else {
       this.overlayText.setVisible(false);
@@ -963,8 +971,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private placeCountdown(): string {
-    const left = Math.max(0, Math.ceil((this.placeEndsAt - this.now()) / 1000));
-    return `${left}s`;
+    return `${Math.max(0, Math.ceil(this.placeLeft))}s`;
   }
 
   private drawPrompts(): void {
@@ -978,7 +985,7 @@ export class GameScene extends Phaser.Scene {
       this.promptText.setText('');
       return;
     }
-    if (this.now() < this.identityUntil) {
+    if (this.kickoffLeft > 0) {
       const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
       this.promptText.setText(`${label} — that way`);
       return;
