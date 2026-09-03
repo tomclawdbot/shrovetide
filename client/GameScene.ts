@@ -115,7 +115,6 @@ export class GameScene extends Phaser.Scene {
   private ballShadow!: Phaser.GameObjects.Ellipse;
   private mapGfx!: Phaser.GameObjects.Graphics;
   private markerGfx!: Phaser.GameObjects.Graphics;
-  private followTarget!: Phaser.GameObjects.Arc;
   private currentZoom = CAMERA_BASE_ZOOM;
 
   private hudCam!: Phaser.Cameras.Scene2D.Camera;
@@ -199,13 +198,8 @@ export class GameScene extends Phaser.Scene {
     this.createHUD();
 
     const p = this.world.player;
-    this.followTarget = this.add
-      .circle(p.position.x, p.position.y, 1, 0xffffff, 0)
-      .setVisible(false);
-    this.adoptWorld(this.followTarget);
-    this.cameras.main.centerOn(p.position.x, p.position.y);
-    this.cameras.main.startFollow(this.followTarget, true, CAMERA_LERP, CAMERA_LERP);
     this.cameras.main.setZoom(this.currentZoom);
+    this.cameras.main.centerOn(p.position.x, p.position.y);
 
     this.bindCameras();
     this.setMatchHud(false);
@@ -231,11 +225,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   private punchCamera(): void {
-    const p = this.world.player;
-    this.followTarget.setPosition(p.position.x, p.position.y);
-    this.cameras.main.centerOn(p.position.x, p.position.y);
-    this.cameras.main.shake(140, 0.005);
     this.currentZoom = CAMERA_BASE_ZOOM + 0.22;
+    this.cameras.main.setZoom(this.currentZoom);
+    this.trackPlayer(true);
+    this.cameras.main.shake(140, 0.005);
+  }
+
+  /** Pin the world camera on the controlled player. startFollow + zoom drifted off them. */
+  private trackPlayer(snap: boolean): void {
+    const p = this.world.player;
+    const tx = p.position.x + p.velocity.x * CAMERA_LEAD;
+    const ty = p.position.y + p.velocity.y * CAMERA_LEAD;
+    const cam = this.cameras.main;
+    if (snap) {
+      cam.centerOn(tx, ty);
+      return;
+    }
+    const cx = cam.worldView.centerX;
+    const cy = cam.worldView.centerY;
+    cam.centerOn(cx + (tx - cx) * CAMERA_LERP, cy + (ty - cy) * CAMERA_LERP);
   }
 
   // -------------------------------------------------------------------------
@@ -710,11 +718,6 @@ export class GameScene extends Phaser.Scene {
     const p = this.world.player;
     const carrierId = this.world.ball.ownerId;
 
-    this.followTarget.setPosition(
-      p.position.x + p.velocity.x * CAMERA_LEAD,
-      p.position.y + p.velocity.y * CAMERA_LEAD,
-    );
-
     let nearby = 0;
     for (const c of chars) {
       if (c.controlled) continue;
@@ -726,6 +729,8 @@ export class GameScene extends Phaser.Scene {
     const targetZoom = CAMERA_BASE_ZOOM - CAMERA_CROWD_ZOOM_OUT * crowdFactor;
     this.currentZoom += (targetZoom - this.currentZoom) * ZOOM_LERP;
     this.cameras.main.setZoom(this.currentZoom);
+    this.trackPlayer(false);
+    this.hudCam.setScroll(0, 0);
 
     this.markerGfx.clear();
 
