@@ -219,6 +219,7 @@ export class GameScene extends Phaser.Scene {
       onKickUp: () => this.handlePassRelease(),
       onSwitch: () => this.handleTab(),
       onReady: () => this.whistle(),
+      onGoal: () => this.handleGoalTap(),
     });
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.layoutHud, this);
@@ -707,6 +708,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    // Goal first: teammates pile on the millstone, so a stone tap must not Switch.
+    if (this.flow === 'playing' && this.millstoneHit(worldPt.x, worldPt.y)) {
+      this.handleGoalTap();
+      return;
+    }
     const tappedMate = this.teammateAt(worldPt.x, worldPt.y);
     if (tappedMate) {
       if (this.flow === 'placing' || this.flow === 'playing') {
@@ -720,11 +726,6 @@ export class GameScene extends Phaser.Scene {
     if (this.flow === 'placing') {
       if (!this.placeTargetId) return;
       placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
-      return;
-    }
-    if (this.flow !== 'playing') return;
-    if (this.atStone() && this.millstoneHit(worldPt.x, worldPt.y)) {
-      this.handleGoalTap();
     }
   };
 
@@ -758,7 +759,7 @@ export class GameScene extends Phaser.Scene {
 
   private millstoneHit(x: number, y: number): boolean {
     const g = opponentGoalFor(this.world.player.team, this.world.map);
-    return Math.hypot(x - g.x, y - g.y) <= 48;
+    return Math.hypot(x - g.x, y - g.y) <= 80;
   }
 
   private beginPlacement(): void {
@@ -1040,6 +1041,7 @@ export class GameScene extends Phaser.Scene {
     const live = this.flow === 'playing';
     this.setMatchHud(live);
     this.titleCard.setVisible(this.flow === 'title');
+    this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
 
     if (!live) {
       this.pipGfx.clear();
@@ -1123,7 +1125,7 @@ export class GameScene extends Phaser.Scene {
     if (this.atStone()) {
       const taps = this.world.goaling.taps;
       this.lastGoalingTaps = taps;
-      const copy = this.touch?.active ? 'HOLD THE STONE — tap the millstone' : 'HOLD THE STONE';
+      const copy = this.touch?.active ? 'HOLD THE STONE — tap Goal' : 'HOLD THE STONE';
       this.setCaption(copy, this.touch?.active ? taps : null);
       if (!this.touch?.active) {
         const cx = VIEW_W / 2;
@@ -1150,7 +1152,7 @@ export class GameScene extends Phaser.Scene {
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: 'Shift — burst',
-      goal: touch ? 'At their millstone, tap it' : 'At their millstone, tap E',
+      goal: touch ? 'At their millstone, tap Goal' : 'At their millstone, tap E',
       done: '',
     };
     this.setCaption(copy[this.teach]);

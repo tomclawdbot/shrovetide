@@ -212,7 +212,8 @@
         color: var(--ink);
         border-color: rgba(243, 234, 212, 0.55);
       }
-      #ready-btn {
+      #ready-btn,
+      #goal-btn {
         grid-column: 2;
         grid-row: 3;
         justify-self: center;
@@ -224,6 +225,13 @@
         font-size: 20px;
         padding: 0 22px;
       }
+      #goal-btn.at-stone {
+        min-width: 176px;
+        height: 56px;
+        font-size: 22px;
+        background: #e4d4a8;
+        box-shadow: 0 0 0 3px rgba(243, 234, 212, 0.55);
+      }
       @media (max-height: 320px) {
         .stick-well {
           width: 104px;
@@ -234,10 +242,15 @@
           height: 88px;
           font-size: 18px;
         }
-        #ready-btn {
+        #ready-btn,
+        #goal-btn {
           min-width: 140px;
           height: 40px;
           font-size: 18px;
+        }
+        #goal-btn.at-stone {
+          min-width: 148px;
+          height: 44px;
         }
         #touch-layer[data-flow="playing"] #caption-rail {
           margin-top: 36px;
@@ -306,6 +319,7 @@
         <button id="kick-btn" class="pad-btn" type="button">Kick</button>
         <button id="switch-btn" class="pad-btn" type="button">Switch</button>
         <button id="ready-btn" class="pad-btn" type="button">Whistle</button>
+        <button id="goal-btn" class="pad-btn" type="button" hidden>Goal</button>
       </div>
     </div>
     <script type="module" src="/client/index.ts"></script>

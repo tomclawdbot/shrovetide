@@ -1,6 +1,6 @@
-// client/touch.ts — on-screen stick + kick/switch/ready. Input only; sim still
+// client/touch.ts — on-screen stick + kick/switch/ready/goal. Input only; sim still
 // consumes the same Input.move 0..1 vector desktop WASD produces (damping lives
-// in /sim integrateControlVelocity).
+// in /sim integrateControlVelocity). Goal is the touch stand-in for desktop E.
 
 export type TouchFlow = 'title' | 'placing' | 'playing' | 'over';
 
@@ -37,6 +37,7 @@ export interface TouchHandlers {
   onKickUp: () => void;
   onSwitch: () => void;
   onReady: () => void;
+  onGoal: () => void;
 }
 
 /**
@@ -72,6 +73,14 @@ export class TouchControls {
     const node = this.el('caption-text');
     if (node) node.textContent = text;
     this.syncCaption();
+  }
+
+  /** Light up the Goal pad when the carrier is on the millstone. */
+  setAtStone(on: boolean): void {
+    const btn = this.el('goal-btn');
+    if (!btn) return;
+    btn.classList.toggle('at-stone', on);
+    btn.textContent = on ? 'TAP' : 'Goal';
   }
 
   /** Goal pips under the caption. Pass null to hide. */
@@ -113,7 +122,8 @@ export class TouchControls {
     const kick = this.el('kick-btn');
     const sw = this.el('switch-btn');
     const ready = this.el('ready-btn');
-    if (!layer || !well || !kick || !sw || !ready) return;
+    const goal = this.el('goal-btn');
+    if (!layer || !well || !kick || !sw || !ready || !goal) return;
 
     well.addEventListener('pointerdown', this.onStickDown, { signal });
     window.addEventListener('pointermove', this.onStickMove, { signal });
@@ -126,6 +136,7 @@ export class TouchControls {
 
     sw.addEventListener('pointerdown', this.onSwitch, { signal });
     ready.addEventListener('pointerdown', this.onReady, { signal });
+    goal.addEventListener('pointerdown', this.onGoal, { signal });
     const rail = this.el('caption-rail');
     rail?.addEventListener(
       'pointerdown',
@@ -146,9 +157,12 @@ export class TouchControls {
     const kick = this.el('kick-btn');
     const ready = this.el('ready-btn');
     const sw = this.el('switch-btn');
+    const goal = this.el('goal-btn');
     if (kick) kick.hidden = this.flow !== 'playing';
     if (ready) ready.hidden = this.flow !== 'placing';
+    if (goal) goal.hidden = this.flow !== 'playing';
     if (sw) sw.hidden = this.flow === 'title' || this.flow === 'over';
+    if (this.flow !== 'playing') this.setAtStone(false);
     if (!show) {
       this.move.x = 0;
       this.move.y = 0;
@@ -237,5 +251,12 @@ export class TouchControls {
     ev.preventDefault();
     ev.stopPropagation();
     this.handlers.onReady();
+  };
+
+  private onGoal = (ev: PointerEvent): void => {
+    if (this.flow !== 'playing') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    this.handlers.onGoal();
   };
 }
