@@ -36,6 +36,7 @@ const CROWD_RADIUS = 260;
 const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
 const PLACE_SECONDS = 20;
+const KICKOFF_MS = 3000;
 const PLACE_SPEED = 220;
 const TEACH_WINDOW_MS = 30_000;
 
@@ -147,9 +148,15 @@ export class GameScene extends Phaser.Scene {
   private feedbackUntil = 0;
   private identityUntil = 0;
   private lastThumpAt = 0;
+  private lastWall = 0;
 
   constructor() {
     super('GameScene');
+  }
+
+  /** Wall clock. Phaser game time can race and skip the kickoff beat. */
+  private now(): number {
+    return performance.now();
   }
 
   create(): void {
@@ -168,7 +175,7 @@ export class GameScene extends Phaser.Scene {
     this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
 
     this.cameras.main.setBackgroundColor(PALETTE.bg);
-    this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
+    this.cameras.main.setSize(VIEW_W, VIEW_H);
 
     const kb = this.input.keyboard!;
     kb.addCapture('TAB,SPACE,E,Q,W,A,S,D,SHIFT');
@@ -203,11 +210,9 @@ export class GameScene extends Phaser.Scene {
     this.createSprites();
     this.createHUD();
 
-    const p = this.world.player;
-    this.cameras.main.setZoom(this.currentZoom);
-    this.cameras.main.centerOn(p.position.x, p.position.y);
-
     this.bindCameras();
+    this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
+
     this.setMatchHud(false);
   }
 
@@ -232,60 +237,55 @@ export class GameScene extends Phaser.Scene {
 
   private punchCamera(): void {
     this.currentZoom = CAMERA_BASE_ZOOM + 0.22;
-    this.cameras.main.setZoom(this.currentZoom);
-    this.trackPlayer(true);
-    this.cameras.main.shake(140, 0.005);
-  }
-
-  /** Pin the world camera on the controlled body. Never read worldView after a zoom change. */
-  private trackPlayer(_snap: boolean): void {
-    const p = this.world.player;
-    this.cameras.main.centerOn(
-      p.position.x + p.velocity.x * CAMERA_LEAD,
-      p.position.y + p.velocity.y * CAMERA_LEAD,
+    this.pinCam(
+      this.world.player.position.x,
+      this.world.player.position.y,
+      this.currentZoom,
     );
   }
 
-  private kickoffZoom(): number {
+  /**
+   * Put world point (x,y) in the middle of the screen.
+   * Raw scroll — centerOn + setBounds + shake left the body off-screen.
+   */
+  private pinCam(x: number, y: number, zoom: number): void {
+    const cam = this.cameras.main;
+    const z = Math.max(0.25, zoom);
+    cam.setZoom(z);
+    cam.scrollX = x - VIEW_W / (2 * z);
+    cam.scrollY = y - VIEW_H / (2 * z);
+  }
+
+  private trackPlayer(_snap: boolean): void {
     const p = this.world.player;
-    const g = opponentGoalFor(p.team, this.world.map);
-    const dist = Math.hypot(g.x - p.position.x, g.y - p.position.y);
-    const need = Math.max(dist * 1.2, 1000);
-    return Math.max(0.42, Math.min(1.05, VIEW_W / need));
+    this.pinCam(
+      p.position.x + p.velocity.x * CAMERA_LEAD,
+      p.position.y + p.velocity.y * CAMERA_LEAD,
+      this.currentZoom,
+    );
   }
 
   /** Freeze-frame beat: you + their millstone in the same shot. */
   private frameKickoff(): void {
     const p = this.world.player;
     const g = opponentGoalFor(p.team, this.world.map);
-    const cam = this.cameras.main;
-    cam.setZoom(this.kickoffZoom());
-    cam.centerOn((p.position.x + g.x) / 2, (p.position.y + g.y) / 2);
+    const pad = 180;
+    const minX = Math.min(p.position.x, g.x) - pad;
+    const maxX = Math.max(p.position.x, g.x) + pad;
+    const minY = Math.min(p.position.y, g.y) - pad;
+    const maxY = Math.max(p.position.y, g.y) + pad;
+    const z = Math.max(
+      0.28,
+      Math.min(0.8, VIEW_W / Math.max(80, maxX - minX), VIEW_H / Math.max(80, maxY - minY)),
+    );
+    this.pinCam((minX + maxX) / 2, (minY + maxY) / 2, z);
   }
 
-  /** Kickoff holds the tableau, then pulls onto you. After that, lock to the body every frame. */
   private applyCamera(): void {
-    const cam = this.cameras.main;
-    const now = this.time.now;
-    if (this.flow === 'playing' && now < this.identityUntil) {
-      const remain = this.identityUntil - now;
-      const pullIn = 450;
-      if (remain > pullIn) {
-        this.frameKickoff();
-        return;
-      }
-      const t = 1 - remain / pullIn;
-      const ease = t * t * (3 - 2 * t);
-      const p = this.world.player;
-      const g = opponentGoalFor(p.team, this.world.map);
-      const kx = (p.position.x + g.x) / 2;
-      const ky = (p.position.y + g.y) / 2;
-      const kz = this.kickoffZoom();
-      cam.setZoom(kz + (this.currentZoom - kz) * ease);
-      cam.centerOn(kx + (p.position.x - kx) * ease, ky + (p.position.y - ky) * ease);
+    if (this.flow === 'playing' && this.now() < this.identityUntil) {
+      this.frameKickoff();
       return;
     }
-    cam.setZoom(this.currentZoom);
     this.trackPlayer(true);
   }
 
@@ -603,7 +603,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isPassing) return;
     if (!this.world.player.hasBall) return;
     this.isPassing = true;
-    this.passChargeStartedAt = this.time.now;
+    this.passChargeStartedAt = this.now();
     this.inputState.charging = true;
     if (this.teach === 'kick') this.teach = 'sprint';
   };
@@ -611,7 +611,7 @@ export class GameScene extends Phaser.Scene {
   private handlePassRelease = (): void => {
     this.spaceReady = true;
     if (this.flow !== 'playing' || !this.isPassing) return;
-    const chargeSeconds = (this.time.now - this.passChargeStartedAt) / 1000;
+    const chargeSeconds = (this.now() - this.passChargeStartedAt) / 1000;
     const moving = this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
     const aim = moving ? { ...this.inputState.move } : { ...this.lastAim };
     releasePass(this.world, aim, chargeSeconds);
@@ -665,7 +665,7 @@ export class GameScene extends Phaser.Scene {
   private beginPlacement(): void {
     if (this.flow !== 'title') return;
     this.flow = 'placing';
-    this.placeEndsAt = this.time.now + PLACE_SECONDS * 1000;
+    this.placeEndsAt = this.now() + PLACE_SECONDS * 1000;
     this.spaceReady = false;
     this.eatPointer = true;
     this.titleCard.setVisible(false);
@@ -675,37 +675,40 @@ export class GameScene extends Phaser.Scene {
     if (this.flow !== 'placing') return;
     startMatch(this.world);
     this.flow = 'playing';
-    this.playStartedAt = this.time.now;
+    this.playStartedAt = this.now();
     this.teach = 'move';
-    this.cameras.main.shake(200, 0.008);
-    this.identityUntil = this.time.now + 2200;
+    this.lastWall = this.now();
+    this.identityUntil = this.now() + KICKOFF_MS;
   }
 
   private flash(msg: string): void {
     this.promptText.setText(msg);
-    this.feedbackUntil = this.time.now + 900;
+    this.feedbackUntil = this.now() + 900;
   }
 
   // -------------------------------------------------------------------------
   // Loop
   // -------------------------------------------------------------------------
 
-  override update(_time: number, deltaMs: number): void {
+  override update(_time: number, _deltaMs: number): void {
     this.readInput();
+    const now = this.now();
+    if (this.lastWall === 0) this.lastWall = now;
+    const dt = Math.min(0.05, Math.max(0, (now - this.lastWall) / 1000));
+    this.lastWall = now;
 
     if (this.flow === 'placing') {
-      const dt = Math.min(0.05, deltaMs / 1000);
       moveControlled(
         this.world,
         this.inputState.move.x * PLACE_SPEED * dt,
         this.inputState.move.y * PLACE_SPEED * dt,
       );
       if (this.spaceReady && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
-      else if (this.time.now >= this.placeEndsAt) this.whistle();
+      else if (now >= this.placeEndsAt) this.whistle();
     }
 
-    if (this.flow === 'playing' && this.time.now >= this.hitStopUntil && this.time.now >= this.identityUntil) {
-      this.accumulator += deltaMs / 1000;
+    if (this.flow === 'playing' && now >= this.hitStopUntil && now >= this.identityUntil) {
+      this.accumulator += dt;
       let steps = 0;
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
         stepWorld(this.world, this.inputState, FIXED_DT);
@@ -747,7 +750,7 @@ export class GameScene extends Phaser.Scene {
 
   private advanceTeach(): void {
     if (this.world.player.hasBall && this.teach === 'ball') this.teach = 'kick';
-    if (this.time.now - this.playStartedAt > TEACH_WINDOW_MS) this.teach = 'done';
+    if (this.now() - this.playStartedAt > TEACH_WINDOW_MS) this.teach = 'done';
   }
 
   private atStone(): boolean {
@@ -820,7 +823,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (carrierId !== null && carrierId === c.id) {
-        const pulse = 3 + Math.sin(this.time.now / 130) * 2;
+        const pulse = 3 + Math.sin(this.now() / 130) * 2;
         this.markerGfx.lineStyle(3, PALETTE.ball, 0.95);
         this.markerGfx.strokeCircle(c.x, c.y, c.radius + 8 + pulse);
       }
@@ -830,18 +833,18 @@ export class GameScene extends Phaser.Scene {
     this.ballSprite.setPosition(b.position.x, b.position.y);
     this.ballShadow.setPosition(b.position.x, b.position.y + 6);
     if (carrierId === null) {
-      const pulse = 2 + Math.sin(this.time.now / 90) * 2;
+      const pulse = 2 + Math.sin(this.now() / 90) * 2;
       this.markerGfx.lineStyle(2, PALETTE.ball, 0.6);
       this.markerGfx.strokeCircle(b.position.x, b.position.y, b.radius + 6 + pulse);
     }
 
     if (this.isPassing && p.hasBall) {
-      const charge = Math.min(1, (this.time.now - this.passChargeStartedAt) / 900);
+      const charge = Math.min(1, (this.now() - this.passChargeStartedAt) / 900);
       this.markerGfx.lineStyle(4, PALETTE.youRing, 0.9);
       this.markerGfx.strokeCircle(p.position.x, p.position.y, p.radius * 1.4 + charge * 28);
     }
 
-    if (this.flow === 'playing' && this.time.now < this.identityUntil) {
+    if (this.flow === 'playing' && this.now() < this.identityUntil) {
       const goal = opponentGoalFor(p.team, this.world.map);
       const dx = goal.x - p.position.x;
       const dy = goal.y - p.position.y;
@@ -877,10 +880,9 @@ export class GameScene extends Phaser.Scene {
           break;
         }
       }
-      if (thump && this.time.now - this.lastThumpAt > 180) {
-        this.lastThumpAt = this.time.now;
-        this.hitStopUntil = Math.max(this.hitStopUntil, this.time.now + 45);
-        this.cameras.main.shake(70, 0.006);
+      if (thump && this.now() - this.lastThumpAt > 180) {
+        this.lastThumpAt = this.now();
+        this.hitStopUntil = Math.max(this.hitStopUntil, this.now() + 45);
       }
     }
 
@@ -918,7 +920,7 @@ export class GameScene extends Phaser.Scene {
     this.staminaFill.setSize(236 * ratio, 18);
     this.staminaFill.setFillStyle(exhausted || ratio < 0.3 ? PALETTE.staminaLow : PALETTE.staminaGood);
     if (exhausted) {
-      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(this.time.now / 120));
+      const pulse = 0.55 + 0.45 * Math.abs(Math.sin(this.now() / 120));
       this.staminaLabel.setAlpha(pulse);
       this.staminaLabel.setColor('#ff6a4a');
       this.staminaLabel.setText('SPENT');
@@ -951,8 +953,7 @@ export class GameScene extends Phaser.Scene {
       this.promptText.setText('');
       if (ws.reason === 'goal' && !this.scoredJuice) {
         this.scoredJuice = true;
-        this.hitStopUntil = this.time.now + 240;
-        this.cameras.main.shake(280, 0.014);
+        this.hitStopUntil = this.now() + 240;
       }
     } else {
       this.overlayText.setVisible(false);
@@ -962,12 +963,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private placeCountdown(): string {
-    const left = Math.max(0, Math.ceil((this.placeEndsAt - this.time.now) / 1000));
+    const left = Math.max(0, Math.ceil((this.placeEndsAt - this.now()) / 1000));
     return `${left}s`;
   }
 
   private drawPrompts(): void {
-    if (this.time.now < this.feedbackUntil) return;
+    if (this.now() < this.feedbackUntil) return;
 
     if (this.flow === 'placing') {
       this.promptText.setText(`Walk them out · ${this.placeCountdown()} · Space when ready`);
@@ -977,7 +978,7 @@ export class GameScene extends Phaser.Scene {
       this.promptText.setText('');
       return;
     }
-    if (this.time.now < this.identityUntil) {
+    if (this.now() < this.identityUntil) {
       const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
       this.promptText.setText(`${label} — that way`);
       return;
@@ -986,7 +987,6 @@ export class GameScene extends Phaser.Scene {
     if (this.atStone()) {
       const taps = this.world.goaling.taps;
       if (taps > this.lastGoalingTaps) {
-        this.cameras.main.shake(70, 0.004);
       }
       this.lastGoalingTaps = taps;
       this.promptText.setText('HOLD THE STONE');
@@ -1003,7 +1003,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.teach === 'done' || this.time.now - this.playStartedAt > TEACH_WINDOW_MS) {
+    if (this.teach === 'done' || this.now() - this.playStartedAt > TEACH_WINDOW_MS) {
       this.promptText.setText('');
       return;
     }
