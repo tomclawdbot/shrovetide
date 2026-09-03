@@ -91,6 +91,12 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
   return { position: sxy(x, y), width: sx(w), height: sx(h) };
 }
 
+/** Buildings move with the parish but do not become fortresses. */
+const BUILDING_SIZE = 1.25;
+function sbuilding(x: number, y: number, w: number, h: number): RectZone {
+  return { position: sxy(x, y), width: w * BUILDING_SIZE, height: h * BUILDING_SIZE };
+}
+
 /**
  * Split a horizontal hedge into segments, leaving gaps at `gapXs`
  * (design-space centres) so bridges / lanes can pierce the row.
@@ -181,17 +187,17 @@ export const ASHBOURNE_TOWN: TownMap = {
   // Positions are center-of-rect, in the original 2400×1600 design space.
   obstacles: [
     // Cluster north of river, around town center
-    srect(1080, 600, 90, 90),
-    srect(1220, 560, 110, 70),
-    srect(1340, 620, 80, 80),
-    srect(1160, 720, 100, 60),
+    sbuilding(1080, 600, 90, 90),
+    sbuilding(1220, 560, 110, 70),
+    sbuilding(1340, 620, 80, 80),
+    sbuilding(1160, 720, 100, 60),
     // Cluster south of river (between turn-up bridge and Down'Ards half)
-    srect(1080, 1080, 100, 80),
-    srect(1260, 1140, 90, 90),
-    srect(1380, 1080, 70, 110),
+    sbuilding(1080, 1080, 100, 80),
+    sbuilding(1260, 1140, 90, 90),
+    sbuilding(1380, 1080, 70, 110),
     // A couple out on the open flanks
-    srect(600, 1280, 90, 70),
-    srect(1820, 320, 110, 80),
+    sbuilding(600, 1280, 90, 70),
+    sbuilding(1820, 320, 110, 80),
   ],
 
   // OOB — players & ball physically can't enter (well, ball gets bounced back).
@@ -213,17 +219,18 @@ export const ASHBOURNE_TOWN: TownMap = {
   ],
 
   // Hedgerows — thicker crawl than water. Gaps line up with the three bridges
-  // so play is channelled, not sealed. Verticals stop at the river.
+  // so play is channelled, not sealed. Rows sit outside the 0.18–0.46 /
+  // 0.62–0.84 placement bands so 17v17 does not spawn inside a crawl.
   hedges: [
-    ...hedgeRow(360, 36, 80, 2320, BRIDGE_XS, LANE_GAP_HALF),
-    ...hedgeRow(1240, 36, 80, 2320, BRIDGE_XS, LANE_GAP_HALF),
-    ...hedgeCol(480, 28, 80, 1520, [880], RIVER_GAP_HALF),
-    ...hedgeCol(1920, 28, 80, 1520, [880], RIVER_GAP_HALF),
-    // Short closes around the town core — break the open diagonals.
-    srect(860, 500, 260, 28),
-    srect(1540, 500, 260, 28),
-    srect(860, 1180, 200, 28),
-    srect(1580, 1180, 220, 28),
+    ...hedgeRow(200, 36, 80, 2320, BRIDGE_XS, LANE_GAP_HALF),
+    ...hedgeRow(1480, 36, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
+    ...hedgeCol(360, 28, 320, 1460, [880], RIVER_GAP_HALF),
+    ...hedgeCol(2080, 28, 320, 1280, [880], RIVER_GAP_HALF),
+    // Flank closes — keep the centre turn-up corridor open for kickoff.
+    srect(300, 780, 220, 28),
+    srect(2100, 780, 220, 28),
+    srect(300, 980, 200, 28),
+    srect(2100, 980, 200, 28),
   ],
 
   // Millstones sit on the north bank (river spans design y 820–940), inland

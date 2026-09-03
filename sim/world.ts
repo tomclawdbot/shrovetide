@@ -70,7 +70,9 @@ export function countHugNeighbors(world: World, id: string, pos: Vec2): number {
 
 /** 1.0 in open grass; HUG_MIN_SHOVE when HUG_PACK_COUNT+ bodies are on you. */
 export function hugShoveAuthority(neighbors: number): number {
-  const packed = Math.min(1, Math.max(0, neighbors) / HUG_PACK_COUNT);
+  if (neighbors <= 0) return 1;
+  if (neighbors >= HUG_PACK_COUNT) return HUG_MIN_SHOVE;
+  const packed = neighbors / HUG_PACK_COUNT;
   return 1 - packed * (1 - HUG_MIN_SHOVE);
 }
 

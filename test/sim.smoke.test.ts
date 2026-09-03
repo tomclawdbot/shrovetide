@@ -564,7 +564,13 @@ test('feel: kickoff packs bodies around the turn-up', () => {
     const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
     return d < 300;
   }).length;
-  assert.ok(near >= 6, `expected a thick scrum at the turn-up, got ${near} NPCs within 300px`);
+  const wave = world.npcs.filter((n) => {
+    const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
+    return d < 500;
+  }).length;
+  // Same-size bodies on a 2× parish: the kernel still packs; the next rank is a longer run.
+  assert.ok(near >= 5, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
+  assert.ok(wave >= 6, `expected a second wave in range, got ${wave} NPCs within 500px`);
 });
 
 test('squad: each side has 10 more bodies than the old 7v7', () => {
