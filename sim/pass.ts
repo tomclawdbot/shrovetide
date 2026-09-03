@@ -40,15 +40,24 @@ export function tryPickupBall(world: World): void {
  * Lock the ball to its current carrier every tick. Looks up the carrier's
  * physics body by id (so switching the controlled character preserves the
  * lock if the carrier is unchanged).
+ *
+ * While carried the ball is a sensor — otherwise Matter resolves the
+ * overlapping solid bodies and rocket-launches the carrier (~10× speed).
  */
 export function syncCarriedBall(world: World): void {
   const { ball, physics } = world;
   const ownerId = ball.ownerId;
-  if (ownerId === null) return;
+  if (ownerId === null) {
+    if (physics.ballBody.isSensor) {
+      physics.ballBody.isSensor = false;
+    }
+    return;
+  }
   const body = physics.bodies.get(ownerId);
   if (!body) return;
+  physics.ballBody.isSensor = true;
   Matter.Body.setPosition(physics.ballBody, { x: body.position.x, y: body.position.y });
-  Matter.Body.setVelocity(physics.ballBody, { x: body.velocity.x, y: body.velocity.y });
+  Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
 }
 
 /**
@@ -84,6 +93,8 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   player.hasBall = false;
   ball.ownerId = null;
 
+  // Solid again before the kick impulse so the ball interacts with the pitch.
+  physics.ballBody.isSensor = false;
   Matter.Body.setPosition(physics.ballBody, { x: releaseX, y: releaseY });
   // Pass speeds are authored in px/s; Matter wants px per baseDelta.
   Matter.Body.setVelocity(

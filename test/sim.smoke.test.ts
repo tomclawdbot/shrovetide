@@ -299,6 +299,21 @@ test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () 
   assert.ok(dx < 210, `should not rocket across the map, got ${dx}`);
 });
 
+test('feel: carrying the ball does not rocket-launch the player', () => {
+  const world = createWorld();
+  startMatch(world);
+  teleportPlayer(world, 1700, 1300);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  const x0 = world.player.position.x;
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(world, east, 60);
+  const dx = world.player.position.x - x0;
+  // Carrier is slower (carrierSpeedMult 0.78) — still px/s, not px/tick.
+  assert.ok(dx > 100, `carrier should still run, got ${dx}`);
+  assert.ok(dx < 180, `carrier must not be collision-launched, got ${dx}`);
+});
+
 test('feel: millstones are reachable from walkable bank ground', () => {
   const world = createWorld();
   startMatch(world);
