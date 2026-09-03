@@ -8,6 +8,7 @@
 
 import Matter from 'matter-js';
 import { speedMultiplierAt } from './maps.js';
+import { MATTER_VELOCITY_SCALE } from './physics.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
@@ -39,14 +40,14 @@ export function steerNPCs(world: World): void {
       { x: dirX * NPC_STEER_FORCE, y: dirY * NPC_STEER_FORCE },
     );
 
-    // Clamp velocity to (maxSpeed × water mult).
+    // Clamp Matter velocity (px/baseDelta) to maxSpeed px/s × water mult.
     const waterMult = speedMultiplierAt(npc.position, world.map);
-    const maxSpeed = npc.maxSpeed * waterMult;
+    const maxMatter = npc.maxSpeed * waterMult * MATTER_VELOCITY_SCALE;
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.hypot(vx, vy);
-    if (speed > maxSpeed) {
-      const k = maxSpeed / speed;
+    if (speed > maxMatter) {
+      const k = maxMatter / speed;
       Matter.Body.setVelocity(body, { x: vx * k, y: vy * k });
     }
   }

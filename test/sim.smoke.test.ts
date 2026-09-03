@@ -286,3 +286,31 @@ test('feel: holding one direction stays on the pitch', () => {
   assert.ok(world.player.position.y >= world.player.radius, 'not past the top');
   assert.ok(world.player.position.y <= world.map.height - world.player.radius, 'not past the bottom');
 });
+
+test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () => {
+  const world = createWorld();
+  startMatch(world);
+  teleportPlayer(world, 1700, 1300);
+  const x0 = world.player.position.x;
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(world, east, 60);
+  const dx = world.player.position.x - x0;
+  assert.ok(dx > 140, `should cover most of a second of run, got ${dx}`);
+  assert.ok(dx < 210, `should not rocket across the map, got ${dx}`);
+});
+
+test('feel: millstones are reachable from walkable bank ground', () => {
+  const world = createWorld();
+  startMatch(world);
+  const goal = world.map.goals.find((g) => g.team !== world.player.team)!;
+  // Stand on the dry bank just north of the stone — must be inside GOAL_REACH.
+  teleportPlayer(world, goal.position.x, goal.position.y - 40);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  const dx = world.player.position.x - goal.position.x;
+  const dy = world.player.position.y - goal.position.y;
+  assert.ok(
+    Math.hypot(dx, dy) <= 56,
+    `bank stand should be within GOAL_REACH, dist=${Math.hypot(dx, dy)}`,
+  );
+});

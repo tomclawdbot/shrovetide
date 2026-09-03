@@ -52,9 +52,7 @@ export function tapGoal(world: World): void {
   if (world.matchState !== 'playing') return;
   const at = carrierAtOpponentGoal(world);
   if (!at) {
-    // Not adjacent — reset any in-flight chain so the player has to restart.
-    world.goaling.carrierId = null;
-    world.goaling.taps = 0;
+    // Missed the stone — do not wipe the chain; only GOAL_TAP_MAX_CHAIN_TICKS does.
     return;
   }
   const g = world.goaling;

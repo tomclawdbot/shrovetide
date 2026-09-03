@@ -8,6 +8,7 @@
 //   - carried-ball lock uses the carrier's current physics body.
 
 import Matter from 'matter-js';
+import { toMatterVelocity } from './physics.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
@@ -84,10 +85,14 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   ball.ownerId = null;
 
   Matter.Body.setPosition(physics.ballBody, { x: releaseX, y: releaseY });
-  Matter.Body.setVelocity(physics.ballBody, {
-    x: Math.cos(angle) * speed,
-    y: Math.sin(angle) * speed,
-  });
+  // Pass speeds are authored in px/s; Matter wants px per baseDelta.
+  Matter.Body.setVelocity(
+    physics.ballBody,
+    toMatterVelocity({
+      x: Math.cos(angle) * speed,
+      y: Math.sin(angle) * speed,
+    }),
+  );
 
   return true;
 }

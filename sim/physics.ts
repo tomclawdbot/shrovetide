@@ -27,6 +27,21 @@ export interface CharacterBodySpec {
   label: string;
 }
 
+/**
+ * Matter.js normalises Body.velocity to px per Body._baseDelta (16.67ms).
+ * Our sim thinks in px/s — multiply by this when calling setVelocity.
+ * (Body._baseDelta / 1000 === 1/60 at the engine default.)
+ */
+export const MATTER_VELOCITY_SCALE = 1 / 60;
+
+/** Convert a px/s vector into Matter setVelocity units. */
+export function toMatterVelocity(pxPerSec: Vec2): Vec2 {
+  return {
+    x: pxPerSec.x * MATTER_VELOCITY_SCALE,
+    y: pxPerSec.y * MATTER_VELOCITY_SCALE,
+  };
+}
+
 export function createPhysicsWorld(
   map: TownMap,
   characters: CharacterBodySpec[],
@@ -46,7 +61,8 @@ export function createPhysicsWorld(
   for (const ch of characters) {
     const body = Matter.Bodies.circle(ch.position.x, ch.position.y, ch.radius, {
       label: ch.label,
-      frictionAir: 0.25,
+      // Controlled movement rewrites velocity each tick; air drag only fought that model.
+      frictionAir: 0.02,
       restitution: 0.05,
       density: 0.002,
       inertia: Infinity,
