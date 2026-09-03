@@ -40,6 +40,42 @@ export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). 17v17 scrum. */
 export const SQUAD_SIZE = 17;
 
+/**
+ * Bodies inside this radius count toward hug density. ~2 overlapping
+ * character radii — close enough to be in the scrum, not just nearby.
+ */
+export const HUG_NEIGHBOR_RADIUS = 54;
+/** Neighbor count that is treated as a fully packed hug. */
+export const HUG_PACK_COUNT = 6;
+/** Residual shove when the hug is fully packed (attritional crawl). */
+export const HUG_MIN_SHOVE = 0.18;
+
+/** How many other characters sit inside the hug radius around `pos`. */
+export function countHugNeighbors(world: World, id: string, pos: Vec2): number {
+  const r2 = HUG_NEIGHBOR_RADIUS * HUG_NEIGHBOR_RADIUS;
+  let n = 0;
+  if (id !== world.player.id) {
+    const dx = world.player.position.x - pos.x;
+    const dy = world.player.position.y - pos.y;
+    if (dx * dx + dy * dy < r2) n += 1;
+  }
+  for (const npc of world.npcs) {
+    if (npc.id === id) continue;
+    const dx = npc.position.x - pos.x;
+    const dy = npc.position.y - pos.y;
+    if (dx * dx + dy * dy < r2) n += 1;
+  }
+  return n;
+}
+
+/** 1.0 in open grass; HUG_MIN_SHOVE when HUG_PACK_COUNT+ bodies are on you. */
+export function hugShoveAuthority(neighbors: number): number {
+  if (neighbors <= 0) return 1;
+  if (neighbors >= HUG_PACK_COUNT) return HUG_MIN_SHOVE;
+  const packed = neighbors / HUG_PACK_COUNT;
+  return 1 - packed * (1 - HUG_MIN_SHOVE);
+}
+
 // ---------------------------------------------------------------------------
 // Movement tuning (TICKET 003a)
 //
@@ -367,7 +403,7 @@ function pinOnPitch(
   let x = Math.min(map.width - pad, Math.max(pad, pos.x));
   let y = Math.min(map.height - pad, Math.max(pad, pos.y));
   let stopped = x !== pos.x || y !== pos.y;
-  // Water is legal (slow). Only bounce OOB/buildings, never the millstone in the river.
+  // Water and hedges are legal (slow). Only bounce OOB/buildings, never the millstone in the river.
   if (isOutOfBounds({ x, y }, map) || isInObstacle({ x, y }, map)) {
     const legal = nearestLegalPoint({ x, y }, map);
     x = legal.x;
@@ -432,12 +468,13 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // 4. Controlled character movement.
   //
   // The acceleration model runs on world._controlVel, then environmental
-  // multipliers (exhaustion, water) scale the result. Multiplying *after*
-  // integration means wading into the river slows you immediately rather
-  // than bleeding speed over timeToStop seconds.
+  // multipliers (exhaustion, water, hedge) scale the result. Multiplying
+  // *after* integration means wading into the river or a hedge slows you
+  // immediately rather than bleeding speed over timeToStop seconds.
+  // A packed hug further cuts shove authority so the scrum crawls.
   const staminaMult = getSpeedMultiplier(player);
   const sprintMult = getSprintMultiplier(player, input.sprint);
-  const waterMult = speedMultiplierAt(player.position, map);
+  const terrainMult = speedMultiplierAt(player.position, map);
   integrateControlVelocity(
     world._controlVel,
     input,
@@ -445,7 +482,8 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     player.hasBall,
     dt,
   );
-  const envMult = staminaMult * waterMult;
+  const shove = hugShoveAuthority(countHugNeighbors(world, player.id, player.position));
+  const envMult = staminaMult * terrainMult * shove;
   const controlledBody = physics.bodies.get(player.id);
   if (controlledBody) {
     // _controlVel is px/s; Matter setVelocity expects px per baseDelta.

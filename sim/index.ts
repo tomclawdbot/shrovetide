@@ -18,7 +18,12 @@ export type {
 
 export {
   ASHBOURNE_TOWN,
+  HEDGE_SPEED_MULT,
+  RIVER_SPEED_MULT,
+  TOWN_SCALE,
   goalFor,
+  isInHedge,
+  isInHedgeSlow,
   isInObstacle,
   isInRiver,
   isInWater,
@@ -40,8 +45,13 @@ export {
 
 export {
   createWorld,
+  countHugNeighbors,
+  hugShoveAuthority,
   integrateControlVelocity,
   stepWorld,
+  HUG_MIN_SHOVE,
+  HUG_NEIGHBOR_RADIUS,
+  HUG_PACK_COUNT,
   MOVEMENT,
   PLAYER_RADIUS,
   NPC_RADIUS,

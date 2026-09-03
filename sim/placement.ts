@@ -106,11 +106,11 @@ export function autoPlaceOpponents(world: World): void {
   const southHold = holdCount - northHold;
 
   const slots: { x: number; y: number; role: Role }[] = [
-    ...spreadRanks(northChase, [w * flip(0.52), w * flip(0.58)], h * 0.18, h * 0.46).map((s) => ({
+    ...spreadRanks(northChase, [w * flip(0.52), w * flip(0.58)], h * 0.36, h * 0.48).map((s) => ({
       ...s,
       role: 'chase' as const,
     })),
-    ...spreadRanks(southChase, [w * flip(0.53), w * flip(0.59)], h * 0.62, h * 0.84).map((s) => ({
+    ...spreadRanks(southChase, [w * flip(0.53), w * flip(0.59)], h * 0.60, h * 0.72).map((s) => ({
       ...s,
       role: 'chase' as const,
     })),

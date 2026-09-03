@@ -116,14 +116,16 @@ export interface TownMap {
   outOfBounds: RectZone[]; // player can't enter; ball teleports back
   river: RectZone;          // water — 50% speed
   bridges: RectZone[];      // walkable crossings over the river
+  hedges: RectZone[];       // crawl — slower than river (~0.22×)
   goals: { team: 0 | 1; position: Vec2 }[]; // millstones
   turnUp: Vec2;             // ball spawn point (centre of map)
 }
 ```
 
-`ASHBOURNE_TOWN` is the v1 default: 2400×1600, two millstones (one per
-team), horizontal river through the middle with three bridges, nine
-town-core building obstacles, two OOB zones (churchyard + memorial).
+`ASHBOURNE_TOWN` is the default: 4800×3200 (2× the TICKET 002 town), two
+millstones (one per team), horizontal river through the middle with
+three bridges, hedgerows that crawl slower than water, nine town-core
+building obstacles, two OOB zones (churchyard + memorial).
 
 ### Zone helpers (pure functions in `sim/maps.ts`)
 
@@ -134,7 +136,7 @@ town-core building obstacles, two OOB zones (churchyard + memorial).
 | `isInWater(p, map)`             | in river but NOT on bridge → 50% speed |
 | `isOutOfBounds(p, map)`         | churchyard / memorial — no entry |
 | `isWalkable(p, map)`            | walkable for players/NPCs |
-| `speedMultiplierAt(p, map)`     | 0.5 in water, 1.0 elsewhere |
+| `speedMultiplierAt(p, map)`     | 0.22 in hedge, 0.5 in water, 1.0 elsewhere |
 | `goalFor(team, map)`            | millstone position |
 | `opponentGoalFor(team, map)`    | the millstone a carrier can score on |
 | `nearestLegalPoint(p, map)`     | snap-to-legal (used for ball OOB teleport) |
@@ -229,7 +231,7 @@ npm run typecheck    # tsc --noEmit
 
 ## v1 scope (this ticket)
 
-- **Town map**: Ashbourne — 2400×1600, river + 3 bridges, 9 obstacles
+- **Town map**: Ashbourne — 4800×3200, river + 3 bridges, hedges, 9 obstacles
 ,
   2 OOB zones, 2 millstones. Camera follows the controlled player.
 - **Match loop**: 8-minute timer, ball spawns at turn-up, goaling = 3

@@ -5,8 +5,9 @@
 // in physics.ts, npc.ts, or anywhere else.
 //
 // All positions are in sim-space pixels. TICKET 001 used 1200×800 for the v0
-// field slice. TICKET 002 scales up to 2400×1600 (~2× viewport) so the camera
-// has room to follow the controlled player around a real town.
+// field slice. TICKET 002 used 2400×1600 (~2× viewport). This pass scales
+// that town by TOWN_SCALE so millstones sit farther apart (Ashbourne-scale)
+// without rewriting the match loop.
 
 // ---------------------------------------------------------------------------
 // Shape primitives
@@ -51,90 +52,195 @@ export interface TownMap {
   obstacles: Obstacle[];
   /** Players can't enter with or without ball. Ball entering → teleport to nearest legal point. */
   outOfBounds: RectZone[];
-  /** Water zone. Slow movement (50%) unless on a bridge. */
+  /** Water zone. Slow movement (RIVER_SPEED_MULT) unless on a bridge. */
   river: RectZone;
   /** Walkable segments crossing the river. Fast movement. */
   bridges: Bridge[];
+  /**
+   * Hedgerows. Walkable at a crawl (HEDGE_SPEED_MULT) — slower than river.
+   * Bridges (and any gap left between hedge rects) pierce them for routing.
+   */
+  hedges: RectZone[];
   /** Two millstones, one per team. */
   goals: GoalMarker[];
   /** "Turn-up" point — where the ball spawns at match start. */
   turnUp: Vec2Like;
 }
 
+/** Speed in the river (not on a bridge). */
+export const RIVER_SPEED_MULT = 0.5;
+/** Speed inside a hedge (not on a bridge). Harder than water. */
+export const HEDGE_SPEED_MULT = 0.22;
+
+/**
+ * Linear scale vs the TICKET 002 2400×1600 town. Positions, river, bridges,
+ * buildings, OOB, and millstones all go through this so the pitch grows
+ * without a layout rewrite.
+ */
+export const TOWN_SCALE = 2;
+
+function sx(n: number): number {
+  return n * TOWN_SCALE;
+}
+
+function sxy(x: number, y: number): Vec2Like {
+  return { x: sx(x), y: sx(y) };
+}
+
+function srect(x: number, y: number, w: number, h: number): RectZone {
+  return { position: sxy(x, y), width: sx(w), height: sx(h) };
+}
+
+/** Buildings move with the parish but do not become fortresses. */
+const BUILDING_SIZE = 1.25;
+function sbuilding(x: number, y: number, w: number, h: number): RectZone {
+  return { position: sxy(x, y), width: w * BUILDING_SIZE, height: h * BUILDING_SIZE };
+}
+
+/**
+ * Split a horizontal hedge into segments, leaving gaps at `gapXs`
+ * (design-space centres) so bridges / lanes can pierce the row.
+ */
+function hedgeRow(
+  y: number,
+  height: number,
+  x0: number,
+  x1: number,
+  gapXs: number[],
+  gapHalf: number,
+): RectZone[] {
+  const cuts = [x0];
+  for (const gx of gapXs) {
+    cuts.push(gx - gapHalf, gx + gapHalf);
+  }
+  cuts.push(x1);
+  const out: RectZone[] = [];
+  for (let i = 0; i + 1 < cuts.length; i += 2) {
+    const left = cuts[i]!;
+    const right = cuts[i + 1]!;
+    const w = right - left;
+    if (w < 24) continue;
+    out.push(srect((left + right) / 2, y, w, height));
+  }
+  return out;
+}
+
+/** Vertical hedge with gaps (design-space), used to clear the river. */
+function hedgeCol(
+  x: number,
+  width: number,
+  y0: number,
+  y1: number,
+  gapYs: number[],
+  gapHalf: number,
+): RectZone[] {
+  const cuts = [y0];
+  for (const gy of gapYs) {
+    cuts.push(gy - gapHalf, gy + gapHalf);
+  }
+  cuts.push(y1);
+  const out: RectZone[] = [];
+  for (let i = 0; i + 1 < cuts.length; i += 2) {
+    const top = cuts[i]!;
+    const bot = cuts[i + 1]!;
+    const h = bot - top;
+    if (h < 24) continue;
+    out.push(srect(x, (top + bot) / 2, width, h));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
-// ASHBOURNE TOWN (abstracted, not to scale)
+// ASHBOURNE TOWN (abstracted, 2× the TICKET 002 layout)
 //
-// Layout (looking down):
+// Layout is the same as 2400×1600, just farther millstones and more grass
+// between turn-up and the stones. Hedges channel north/south through the
+// three bridge lanes and east/west along the banks — slower than the river.
 //
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │ [churchyard]                                  [open field]  │
-//   │   OOB                                          ▒▒▒▒▒▒▒       │
-//   │                                                             │
-//   │      ▲ bridge 1                  ▲ bridge 3                  │
+//   │ [churchyard]          ══ hedge ══             [open field]  │
+//   │   OOB                                                       │
+//   │      ▲ lane 1                  ▲ lane 3                      │
 //   │   ▒▒▒▒┼▒▒▒▒▒▒▒▒▒▒RIVER▒▒▒▒▒▒▒▒▒▒┼▒▒▒▒                       │
-//   │      │             ▲ bridge 2 (turn-up)        │              │
-//   │                                                             │
-//   │   ▒▒▒▒ open field ▒▒▒                                          │
+//   │      │             ▲ lane 2 (turn-up)          │              │
+//   │   ══ hedge ══                                      ══ hedge ═│
 //   │              ┌──┐                                             │
 //   │              │T │ town core                                   │
-//   │              │C │ (buildings as obstacles)                     │
 //   │              └──┘                                             │
-//   │                                                             │
 //   │                              [open field]              [memorial]│
-//   │                                          ▒▒▒▒▒▒▒        OOB  │
 //   └─────────────────────────────────────────────────────────────┘
 //
 //   Up'Ards millstone ◄────────  center  ────────► Down'Ards millstone
 //   (team 0, left)                                  (team 1, right)
 // ---------------------------------------------------------------------------
 
+const BRIDGE_XS = [400, 1200, 2000];
+/** Shoulder past each bridge so a body can run the lane without hedge-crawl. */
+const LANE_GAP_HALF = 80;
+const RIVER_GAP_HALF = 140;
+
 export const ASHBOURNE_TOWN: TownMap = {
-  width: 2400,
-  height: 1600,
+  width: sx(2400),
+  height: sx(1600),
 
   // Town core buildings — rectangles the NPCs / player / ball cannot pass.
-  // Positions are center-of-rect.
+  // Positions are center-of-rect, in the original 2400×1600 design space.
   obstacles: [
     // Cluster north of river, around town center
-    { position: { x: 1080, y: 600 }, width: 90, height: 90 },
-    { position: { x: 1220, y: 560 }, width: 110, height: 70 },
-    { position: { x: 1340, y: 620 }, width: 80, height: 80 },
-    { position: { x: 1160, y: 720 }, width: 100, height: 60 },
+    sbuilding(1080, 600, 90, 90),
+    sbuilding(1220, 560, 110, 70),
+    sbuilding(1340, 620, 80, 80),
+    sbuilding(1160, 720, 100, 60),
     // Cluster south of river (between turn-up bridge and Down'Ards half)
-    { position: { x: 1080, y: 1080 }, width: 100, height: 80 },
-    { position: { x: 1260, y: 1140 }, width: 90, height: 90 },
-    { position: { x: 1380, y: 1080 }, width: 70, height: 110 },
+    sbuilding(1080, 1080, 100, 80),
+    sbuilding(1260, 1140, 90, 90),
+    sbuilding(1380, 1080, 70, 110),
     // A couple out on the open flanks
-    { position: { x: 600, y: 1280 }, width: 90, height: 70 },
-    { position: { x: 1820, y: 320 }, width: 110, height: 80 },
+    sbuilding(600, 1280, 90, 70),
+    sbuilding(1820, 320, 110, 80),
   ],
 
   // OOB — players & ball physically can't enter (well, ball gets bounced back).
   outOfBounds: [
     // Churchyard (top-left)
-    { position: { x: 180, y: 180 }, width: 220, height: 220 },
+    srect(180, 180, 220, 220),
     // Memorial garden (bottom-right)
-    { position: { x: 2220, y: 1420 }, width: 220, height: 220 },
+    srect(2220, 1420, 220, 220),
   ],
 
   // River — runs roughly horizontal through the middle.
-  river: { position: { x: 1200, y: 880 }, width: 2400, height: 120 },
+  river: srect(1200, 880, 2400, 120),
 
   // Bridges — walkable cuts across the river. Fast movement (not slowed).
   bridges: [
-    { position: { x: 400, y: 880 }, width: 110, height: 120 },
-    { position: { x: 1200, y: 880 }, width: 110, height: 120 },
-    { position: { x: 2000, y: 880 }, width: 110, height: 120 },
+    srect(400, 880, 110, 120),
+    srect(1200, 880, 110, 120),
+    srect(2000, 880, 110, 120),
   ],
 
-  // Millstones sit on the north bank (river spans y 820–940), inland of the
-  // sideline pad so a body can stand inside GOAL_REACH without wall-clamping.
+  // Hedgerows — thicker crawl than water. Gaps line up with the three bridges
+  // so play is channelled, not sealed. Rows sit outside the 0.18–0.46 /
+  // 0.62–0.84 placement bands so 17v17 does not spawn inside a crawl.
+  hedges: [
+    ...hedgeRow(200, 36, 80, 2320, BRIDGE_XS, LANE_GAP_HALF),
+    ...hedgeRow(1480, 36, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
+    ...hedgeCol(360, 28, 320, 1460, [880], RIVER_GAP_HALF),
+    ...hedgeCol(2080, 28, 320, 1280, [880], RIVER_GAP_HALF),
+    // Flank closes — keep the centre turn-up corridor open for kickoff.
+    srect(300, 780, 220, 28),
+    srect(2100, 780, 220, 28),
+    srect(300, 980, 200, 28),
+    srect(2100, 980, 200, 28),
+  ],
+
+  // Millstones sit on the north bank (river spans design y 820–940), inland
+  // of the sideline pad so a body can stand inside GOAL_REACH without wall-clamping.
   goals: [
-    { team: 0, position: { x: 140, y: 790 } },
-    { team: 1, position: { x: 2260, y: 790 } },
+    { team: 0, position: sxy(140, 790) },
+    { team: 1, position: sxy(2260, 790) },
   ],
 
-  turnUp: { x: 1200, y: 880 },
+  turnUp: sxy(1200, 880),
 };
 
 // ---------------------------------------------------------------------------
@@ -185,6 +291,19 @@ export function isInWater(p: Vec2Like, map: TownMap): boolean {
   return isInRiver(p, map) && !isOnBridge(p, map);
 }
 
+/** True iff the point lies inside any hedge rect. */
+export function isInHedge(p: Vec2Like, map: TownMap): boolean {
+  return map.hedges.some((h) => pointInRect(p, h));
+}
+
+/**
+ * True iff the point is crawling a hedge (inside a hedge, not on a bridge).
+ * Gaps between hedge rects are ordinary grass.
+ */
+export function isInHedgeSlow(p: Vec2Like, map: TownMap): boolean {
+  return isInHedge(p, map) && !isOnBridge(p, map);
+}
+
 /** True iff the point lies in any out-of-bounds zone. */
 export function isOutOfBounds(p: Vec2Like, map: TownMap): boolean {
   return map.outOfBounds.some((z) => pointInRect(p, z));
@@ -197,19 +316,27 @@ export function isInMapBounds(p: Vec2Like, map: TownMap): boolean {
 
 /**
  * True iff the point is walkable for a player/NPC body.
- * Water, obstacles, and out-of-bounds are not walkable. Bridges over water are.
+ * Water, hedges, obstacles, and out-of-bounds are not walkable.
+ * Bridges over water (and gaps through hedges) are.
  */
 export function isWalkable(p: Vec2Like, map: TownMap): boolean {
   if (!isInMapBounds(p, map)) return false;
   if (isInObstacle(p, map)) return false;
   if (isOutOfBounds(p, map)) return false;
   if (isInWater(p, map)) return false;
+  if (isInHedgeSlow(p, map)) return false;
   return true;
 }
 
-/** Speed multiplier for a point — 0.5 in water, 1.0 elsewhere. */
+/**
+ * Speed multiplier for a point — hedge crawl, then river, else open.
+ * Hedge is strictly slower than water. Bridges cancel both.
+ */
 export function speedMultiplierAt(p: Vec2Like, map: TownMap): number {
-  return isInWater(p, map) ? 0.5 : 1.0;
+  let mult = 1;
+  if (isInWater(p, map)) mult = Math.min(mult, RIVER_SPEED_MULT);
+  if (isInHedgeSlow(p, map)) mult = Math.min(mult, HEDGE_SPEED_MULT);
+  return mult;
 }
 
 /** Goal position for a given team. */

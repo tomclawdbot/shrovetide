@@ -8,19 +8,30 @@ import assert from 'node:assert/strict';
 import Matter from 'matter-js';
 import {
   ASHBOURNE_TOWN,
+  countHugNeighbors,
   createWorld,
   cycleTeammate,
   GOAL_CONTEST_RADIUS,
+  HEDGE_SPEED_MULT,
+  HUG_MIN_SHOVE,
+  hugShoveAuthority,
   isCarrierAtOpponentGoal,
+  isInHedgeSlow,
+  isInWater,
+  isOnBridge,
+  isWalkable,
   moveControlled,
   PASS_PICKUP_IMMUNITY_TICKS,
   quickSwitch,
   releasePass,
+  RIVER_SPEED_MULT,
   SQUAD_SIZE,
+  speedMultiplierAt,
   startMatch,
   stepWorld,
   switchControl,
   threatenedGoalTeam,
+  TOWN_SCALE,
   type Input,
   type World,
 } from '../sim/index.js';
@@ -82,6 +93,37 @@ function parkIsolated(world: World, x: number, y: number, clearRadius = 220): vo
   }
 }
 
+/** Dry SE field on the scaled town — open grass, clear of river / hedge / OOB. */
+function openField(world: World): { x: number; y: number } {
+  return { x: world.map.width * 0.70, y: world.map.height * 0.82 };
+}
+
+function parkOpen(world: World): { x: number; y: number } {
+  const field = openField(world);
+  parkIsolated(world, field.x, field.y);
+  return field;
+}
+
+function packHugAround(world: World, x: number, y: number, count: number, radius = 34): string[] {
+  teleportPlayer(world, x, y);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+  const packedIds: string[] = [];
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i]!;
+    if (packedIds.length < count) {
+      const angle = (packedIds.length / count) * Math.PI * 2;
+      teleportId(world, npc.id, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+      packedIds.push(npc.id);
+    } else {
+      teleportId(world, npc.id, 80 + ((i * 47) % 400), 80 + ((i * 31) % 300));
+    }
+  }
+  return packedIds;
+}
+
 test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN', () => {
   const world = createWorld();
   assert.equal(SQUAD_SIZE, 17, 'squad size is 17 per side');
@@ -95,13 +137,18 @@ test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN
   assert.equal(home, SQUAD_SIZE, 'home roster is 17');
   assert.equal(away, SQUAD_SIZE, 'away roster is 17');
   assert.equal(world.player.radius, 16, 'controlled player has expected radius');
-  // Map should be the Ashbourne town map, 2400×1600.
+  // Map is a clear scale-up of the TICKET 002 2400×1600 town.
   assert.equal(world.map.width, ASHBOURNE_TOWN.width);
   assert.equal(world.map.height, ASHBOURNE_TOWN.height);
-  // Must have obstacles, OOB zones, river, bridges, goals.
+  assert.equal(world.map.width, 2400 * TOWN_SCALE);
+  assert.equal(world.map.height, 1600 * TOWN_SCALE);
+  assert.ok(world.map.width > 2400, 'pitch is wider than the old town');
+  assert.ok(world.map.height > 1600, 'pitch is deeper than the old town');
+  // Must have obstacles, OOB zones, river, bridges, hedges, goals.
   assert.ok(world.map.obstacles.length > 0, 'town map has obstacles');
   assert.ok(world.map.outOfBounds.length > 0, 'town map has OOB zones');
   assert.ok(world.map.bridges.length >= 2, 'town map has at least 2 bridges');
+  assert.ok(world.map.hedges.length >= 4, 'town map has hedges');
   assert.equal(world.map.goals.length, 2, 'two millstone goals');
 
   // Start the match so stepWorld ticks.
@@ -186,7 +233,7 @@ test('feel: zero input in open ground produces zero drift', () => {
   startMatch(world);
   // Park the player in open ground well away from the ball and the hug —
   // south-east quadrant, clear of obstacles, river, and both OOB zones.
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   const startX = world.player.position.x;
   const startY = world.player.position.y;
 
@@ -205,7 +252,7 @@ test('feel: zero input in open ground produces zero drift', () => {
 test('feel: acceleration ramps rather than snapping to full speed', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
 
@@ -230,7 +277,7 @@ test('feel: acceleration ramps rather than snapping to full speed', () => {
 test('feel: releasing input brings the character to a dead stop', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
 
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 30);
@@ -375,7 +422,7 @@ test('feel: holding one direction stays on the pitch', () => {
 test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   const x0 = world.player.position.x;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 60);
@@ -387,7 +434,7 @@ test('feel: 1s of east input displaces about maxSpeed, not the whole pitch', () 
 test('feel: carrying the ball does not rocket-launch the player', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   const x0 = world.player.position.x;
@@ -420,7 +467,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
   const world = createWorld();
   startMatch(world);
   assert.equal(isCarrierAtOpponentGoal(world), false);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(isCarrierAtOpponentGoal(world), false, 'carrying mid-field is not a goal');
@@ -429,7 +476,7 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
 test('pass: kicker cannot instantly re-grab the ball', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
@@ -443,7 +490,7 @@ test('pass: kicker cannot instantly re-grab the ball', () => {
 test('pass: a second kick works after picking the ball up again', () => {
   const world = createWorld();
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.5), true);
@@ -467,14 +514,14 @@ test('feel: sprint is faster than a walk and drains Breath without the ball', ()
   const burst = createWorld({ seed: 7 });
   startMatch(walk);
   startMatch(burst);
-  parkIsolated(walk, 1700, 1300);
-  parkIsolated(burst, 1700, 1300);
+  const field = parkOpen(walk);
+  parkOpen(burst);
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   const eastSprint: Input = { ...east, sprint: true };
   runTicks(walk, east, 60);
   runTicks(burst, eastSprint, 60);
-  const dxWalk = walk.player.position.x - 1700;
-  const dxBurst = burst.player.position.x - 1700;
+  const dxWalk = walk.player.position.x - field.x;
+  const dxBurst = burst.player.position.x - field.x;
   assert.ok(dxBurst > dxWalk + 20, `sprint should outrun a walk (${dxBurst} vs ${dxWalk})`);
   assert.ok(burst.player.stamina < burst.player.maxStamina - 10, 'Breath should drop while sprinting');
   assert.ok(walk.player.stamina < walk.player.maxStamina, 'a walk now drains Breath');
@@ -487,14 +534,15 @@ test('feel: sprint is faster than a walk and drains Breath without the ball', ()
 test('feel: chase NPCs close on a loose ball within a few seconds', () => {
   const world = createWorld({ seed: 3 });
   startMatch(world);
-  teleportPlayer(world, 400, 1300);
+  const field = openField(world);
+  teleportPlayer(world, field.x - 1300, field.y);
   const hunter = world.npcs.find((n) => n.team !== world.player.team && n.role === 'chase');
   assert.ok(hunter);
-  Matter.Body.setPosition(world.physics.ballBody, { x: 1700, y: 1300 });
-  world.ball.position = { x: 1700, y: 1300 };
+  Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
+  world.ball.position = { x: field.x, y: field.y };
   world.ball.velocity = { x: 0, y: 0 };
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
-  teleportId(world, hunter!.id, 1200, 1300);
+  teleportId(world, hunter!.id, field.x - 500, field.y);
   const d0 = Math.hypot(
     hunter!.position.x - world.ball.position.x,
     hunter!.position.y - world.ball.position.y,
@@ -516,7 +564,13 @@ test('feel: kickoff packs bodies around the turn-up', () => {
     const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
     return d < 300;
   }).length;
-  assert.ok(near >= 6, `expected a thick scrum at the turn-up, got ${near} NPCs within 300px`);
+  const wave = world.npcs.filter((n) => {
+    const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
+    return d < 500;
+  }).length;
+  // Same-size bodies on a 2× parish: the kernel still packs; the next rank is a longer run.
+  assert.ok(near >= 5, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
+  assert.ok(wave >= 6, `expected a second wave in range, got ${wave} NPCs within 500px`);
 });
 
 test('squad: each side has 10 more bodies than the old 7v7', () => {
@@ -535,7 +589,7 @@ test('squad: each side has 10 more bodies than the old 7v7', () => {
 test('feel: walking drains Breath; idle regenerates it', () => {
   const world = createWorld({ seed: 11 });
   startMatch(world);
-  parkIsolated(world, 1700, 1300);
+  parkOpen(world);
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(world, east, 120);
   const afterWalk = world.player.stamina;
@@ -555,8 +609,8 @@ test('feel: carrying drains Breath faster than an empty-handed walk', () => {
   const laden = createWorld({ seed: 11 });
   startMatch(empty);
   startMatch(laden);
-  parkIsolated(empty, 1700, 1300);
-  parkIsolated(laden, 1700, 1300);
+  parkOpen(empty);
+  parkOpen(laden);
   laden.player.hasBall = true;
   laden.ball.ownerId = laden.player.id;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
@@ -573,15 +627,15 @@ test('feel: carrying toward the millstone is slower than running empty', () => {
   const laden = createWorld({ seed: 11 });
   startMatch(empty);
   startMatch(laden);
-  parkIsolated(empty, 1700, 1300);
-  parkIsolated(laden, 1700, 1300);
+  const field = parkOpen(empty);
+  parkOpen(laden);
   laden.player.hasBall = true;
   laden.ball.ownerId = laden.player.id;
   const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
   runTicks(empty, east, 60);
   runTicks(laden, east, 60);
-  const dxEmpty = empty.player.position.x - 1700;
-  const dxCarry = laden.player.position.x - 1700;
+  const dxEmpty = empty.player.position.x - field.x;
+  const dxCarry = laden.player.position.x - field.x;
   assert.ok(dxCarry > 80, `carrier should still cover ground, got ${dxCarry}`);
   assert.ok(
     dxCarry < dxEmpty * 0.78,
@@ -625,4 +679,142 @@ test('feel: hold defenders collapse when their millstone is threatened', () => {
   );
   assert.ok(d1 < d0 - 40, `hold line should collapse on the carrier (${d0.toFixed(0)} → ${d1.toFixed(0)})`);
 });
+
+test('map: millstones sit farther apart on the scaled town', () => {
+  const a = ASHBOURNE_TOWN.goals[0]!.position;
+  const b = ASHBOURNE_TOWN.goals[1]!.position;
+  const span = Math.hypot(b.x - a.x, b.y - a.y);
+  assert.ok(span > 2120 * 1.4, `millstones should be farther than the old town (${span})`);
+  assert.equal(span, 2120 * TOWN_SCALE);
+});
+
+test('map: 17v17 placement stays out of walls and OOB', () => {
+  const world = createWorld({ seed: 9 });
+  const bodies = [
+    { id: world.player.id, pos: world.player.position },
+    ...world.npcs.map((n) => ({ id: n.id, pos: n.position })),
+  ];
+  for (const b of bodies) {
+    assert.ok(isWalkable(b.pos, world.map) || isInWater(b.pos, world.map), `${b.id} spawn must be legal`);
+    assert.ok(!world.map.obstacles.some((o) => {
+      if ('radius' in o) {
+        const dx = b.pos.x - o.position.x;
+        const dy = b.pos.y - o.position.y;
+        return dx * dx + dy * dy <= o.radius * o.radius;
+      }
+      return (
+        b.pos.x >= o.position.x - o.width / 2 &&
+        b.pos.x <= o.position.x + o.width / 2 &&
+        b.pos.y >= o.position.y - o.height / 2 &&
+        b.pos.y <= o.position.y + o.height / 2
+      );
+    }), `${b.id} spawned inside a building`);
+  }
+});
+
+test('map: hedge speed is slower than river speed', () => {
+  const map = ASHBOURNE_TOWN;
+  const hedge = map.hedges[0]!;
+  const hedgePt = { ...hedge.position };
+  const riverPt = { x: map.bridges[0]!.position.x + 280, y: map.river.position.y };
+  const bridgePt = { ...map.bridges[1]!.position };
+  const grass = { x: map.width * 0.70, y: map.height * 0.82 };
+
+  assert.equal(isInHedgeSlow(hedgePt, map), true, 'sample hedge point is a crawl');
+  assert.equal(isInWater(riverPt, map), true, 'sample river point is water');
+  assert.equal(isOnBridge(bridgePt, map), true);
+  assert.equal(speedMultiplierAt(grass, map), 1);
+  assert.equal(speedMultiplierAt(bridgePt, map), 1);
+  assert.equal(speedMultiplierAt(riverPt, map), RIVER_SPEED_MULT);
+  assert.equal(speedMultiplierAt(hedgePt, map), HEDGE_SPEED_MULT);
+  assert.ok(HEDGE_SPEED_MULT <= 0.25, 'hedge crawl is at most quarter-speed');
+  assert.ok(
+    speedMultiplierAt(hedgePt, map) < speedMultiplierAt(riverPt, map),
+    'hedge must be slower than the river',
+  );
+});
+
+test('feel: hedge crawl covers less ground than a river wade', () => {
+  const hedgeWorld = createWorld({ seed: 11 });
+  const riverWorld = createWorld({ seed: 11 });
+  startMatch(hedgeWorld);
+  startMatch(riverWorld);
+
+  const hedge = hedgeWorld.map.hedges.find((h) => h.width > 200) ?? hedgeWorld.map.hedges[0]!;
+  const hedgeX = hedge.position.x - hedge.width / 4;
+  const hedgeY = hedge.position.y;
+  parkIsolated(hedgeWorld, hedgeX, hedgeY);
+  assert.equal(isInHedgeSlow(hedgeWorld.player.position, hedgeWorld.map), true);
+
+  const riverX = riverWorld.map.bridges[0]!.position.x + 280;
+  const riverY = riverWorld.map.river.position.y;
+  parkIsolated(riverWorld, riverX, riverY);
+  assert.equal(isInWater(riverWorld.player.position, riverWorld.map), true);
+
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  const hx0 = hedgeWorld.player.position.x;
+  const rx0 = riverWorld.player.position.x;
+  runTicks(hedgeWorld, east, 60);
+  runTicks(riverWorld, east, 60);
+  const hedgeDx = hedgeWorld.player.position.x - hx0;
+  const riverDx = riverWorld.player.position.x - rx0;
+  assert.ok(riverDx > 60, `river wade should still move, got ${riverDx}`);
+  assert.ok(
+    hedgeDx < riverDx * 0.7,
+    `hedge crawl should lose to river wade (${hedgeDx} vs ${riverDx})`,
+  );
+});
+
+test('feel: shove authority drops in a packed hug', () => {
+  assert.equal(hugShoveAuthority(0), 1);
+  assert.ok(hugShoveAuthority(3) < 0.7);
+  assert.equal(hugShoveAuthority(6), HUG_MIN_SHOVE);
+  assert.equal(hugShoveAuthority(12), HUG_MIN_SHOVE);
+});
+
+test('feel: a packed hug barely moves under shove', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  const hugIds = packHugAround(world, field.x, field.y, 8);
+  assert.ok(countHugNeighbors(world, world.player.id, world.player.position) >= 6);
+
+  const hugBodies = () => [
+    world.player.position,
+    ...hugIds.map((id) => world.npcs.find((n) => n.id === id)!.position),
+  ];
+  const start = hugBodies();
+  const c0x = start.reduce((s, p) => s + p.x, 0) / start.length;
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 }, sprint: true };
+  runTicks(world, east, 120);
+  const end = hugBodies();
+  const c1x = end.reduce((s, p) => s + p.x, 0) / end.length;
+  const packDx = c1x - c0x;
+  const playerDx = world.player.position.x - field.x;
+  assert.ok(playerDx < 140, `player should grind, not barge (${playerDx})`);
+  assert.ok(packDx < 120, `packed hug should creep, got centroid dx=${packDx}`);
+  assert.ok(packDx > -20, `pack should not explode backwards (${packDx})`);
+});
+
+test('feel: a loose ball can still squirt out of a packed hug', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packHugAround(world, field.x, field.y, 8);
+  world.player.hasBall = false;
+  world.ball.ownerId = null;
+  Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
+  world.ball.position = { x: field.x, y: field.y };
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 8, y: 1.5 });
+  world.ball.velocity = { x: 480, y: 90 };
+
+  runTicks(world, IDLE, 90);
+  const d = Math.hypot(world.ball.position.x - field.x, world.ball.position.y - field.y);
+  const popped = world.ball.ownerId !== null;
+  assert.ok(
+    popped || d > 70,
+    `ball should squirt or be claimed, dist=${d.toFixed(0)} owner=${world.ball.ownerId}`,
+  );
+});
+
 
