@@ -27,7 +27,7 @@ import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamin
 import { clampNpcVelocities, isTurnUpSwarm, steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
-import { tapGoal } from './goaling.js';
+import { tapGoal, tickNpcGoalTap } from './goaling.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
 import { countHugNeighbors, hugShoveAuthority } from './hug.js';
 import {
@@ -585,8 +585,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     tryPickupBall(world, { includeNpcs: !isTurnUpSwarm(world) });
   }
 
-  // 10. Goal tap (rising-edge driven by input.goalTap).
+  // 10. Goal tap: player rising-edge, then NPC auto-contest at their millstone.
   if (input.goalTap) tapGoal(world);
+  tickNpcGoalTap(world);
 
   // 11. Tick.
   world.tick += 1;

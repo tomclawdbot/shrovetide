@@ -1006,6 +1006,11 @@ export class GameScene extends Phaser.Scene {
     return this.world.player.hasBall && isCarrierAtOpponentGoal(this.world);
   }
 
+  /** Any carrier (player or NPC) in millstone reach — climax pips / copy. */
+  private millstoneClimax(): boolean {
+    return isCarrierAtOpponentGoal(this.world);
+  }
+
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
@@ -1241,12 +1246,17 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.atStone()) {
+    if (this.millstoneClimax()) {
       const taps = this.world.goaling.taps;
       this.lastGoalingTaps = taps;
-      const copy = this.touch?.active ? 'HOLD THE STONE — tap Goal' : 'HOLD THE STONE';
-      this.setCaption(copy, this.touch?.active ? taps : null);
-      if (!this.touch?.active) {
+      const ours = this.world.player.hasBall;
+      const copy = ours
+        ? this.touch?.active
+          ? 'HOLD THE STONE — tap Goal'
+          : 'HOLD THE STONE'
+        : "They're goaling";
+      this.setCaption(copy, this.touch?.active && ours ? taps : null);
+      if (!this.touch?.active || !ours) {
         const cx = VIEW_W / 2;
         const cy = (this.promptText.y ?? VIEW_H - 56) - 40;
         for (let i = 0; i < 3; i++) {

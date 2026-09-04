@@ -146,7 +146,7 @@ export {
   GOAL_TAP_MAX_CHAIN_TICKS,
 } from './match.js';
 
-export { tapGoal, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
+export { tapGoal, tickNpcGoalTap, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
 
 // Squad placement (strategy phase)
 export {

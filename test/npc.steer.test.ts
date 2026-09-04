@@ -8,6 +8,7 @@ import Matter from 'matter-js';
 import {
   CONTEST_STEER_RADIUS,
   createWorld,
+  isCarrierAtOpponentGoal,
   isTurnUpSwarm,
   npcSteerTarget,
   opponentGoalFor,
@@ -424,4 +425,56 @@ test('npc: SCORE_DRIVE force is a scoring nudge, not a rocket multiplier', () =>
     SCORE_DRIVE_SPEED_MULT <= 1.05,
     `SCORE_DRIVE_SPEED_MULT ${SCORE_DRIVE_SPEED_MULT} must not raise NPC carriers above a defendable walk`,
   );
+});
+
+test('npc: carrier at the scoring millstone auto-taps and goals without the player', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 1);
+  const goal = opponentGoalFor(hunter.team, world.map);
+  isolate(world, hunter.id, goal.x, goal.y - 24);
+  giveBallTo(world, hunter.id);
+  assert.equal(isCarrierAtOpponentGoal(world), true, 'setup: NPC is in millstone reach');
+  assert.equal(world.player.hasBall, false);
+
+  runTicks(world, IDLE, 20);
+  assert.ok(world.goaling.taps >= 1, `first tap should land, taps=${world.goaling.taps}`);
+  assert.equal(world.goaling.carrierId, hunter.id);
+  assert.equal(world.matchState, 'playing', 'one tap is not a goal');
+
+  runTicks(world, IDLE, 100);
+  assert.equal(world.matchState, 'over', 'NPC 3-tap contest should finish the match');
+  assert.equal(world.winState?.reason, 'goal');
+  assert.equal(world.winState?.scorerId, hunter.id);
+  assert.equal(world.winState?.scorerTeam, 1);
+  assert.equal(world.score[1], 1);
+  assert.equal(world.score[0], 0);
+});
+
+test('npc: team 0 carrier goals at the Down millstone, not home', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 0);
+  const down = opponentGoalFor(0, world.map);
+  isolate(world, hunter.id, down.x, down.y - 24);
+  giveBallTo(world, hunter.id);
+  runTicks(world, IDLE, 120);
+  assert.equal(world.matchState, 'over');
+  assert.equal(world.winState?.scorerTeam, 0);
+  assert.equal(world.score[0], 1);
+});
+
+test('npc: carrier at the home millstone cannot score', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 1);
+  const home = world.map.goals.find((g) => g.team === hunter.team)!.position;
+  isolate(world, hunter.id, home.x, home.y - 24);
+  giveBallTo(world, hunter.id);
+  assert.equal(isCarrierAtOpponentGoal(world), false, 'home millstone is the wrong end');
+  runTicks(world, IDLE, 120);
+  assert.equal(world.matchState, 'playing', 'must not goal at the home stone');
+  assert.equal(world.score[0], 0);
+  assert.equal(world.score[1], 0);
+  assert.equal(world.goaling.taps, 0);
 });
