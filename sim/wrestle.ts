@@ -4,19 +4,22 @@
 //   • Wriggle — empty-handed, in contact with a dense pack, not yet on the stone.
 //     Inward impulse + a shove-floor so you can grind in; costly Breath; not a teleport.
 //   • Rip — empty-handed, already deep / near the stone, dense pack.
-//     Hold builds pressure; on success the ball pops along facing (or away
-//     from the densest cluster). Early release spends Breath and does not pop.
+//     Hold builds pressure; on success the ball pops *clear of the scrum*
+//     along facing (or out through the player's side). Early release spends
+//     Breath and does not pop. Brief jostles do not reset a live contest.
 //
 // Deterministic: no Math.random, no wall-clock. Pickup is suppressed while
 // the hold is active so a wrestle can finish instead of auto-grabbing.
 
 import Matter from 'matter-js';
+import { isInMapBounds, isInObstacle, isOutOfBounds, nearestLegalPoint } from './maps.js';
 import { CHAR_FRICTION, CHAR_FRICTION_STATIC, toMatterVelocity } from './physics.js';
 import { PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
 import {
   countBodiesNear,
   countHugNeighbors,
   hugNeighborCentroid,
+  hugPackExtent,
   HUG_NEIGHBOR_RADIUS,
 } from './hug.js';
 import type { Input, Vec2 } from './types.js';
@@ -25,15 +28,25 @@ import type { World } from './world.js';
 /** Matches MOVEMENT.inputDeadzone — avoid importing world.ts (cycle). */
 const AIM_DEADZONE = 0.15;
 
-/** Must be this close to the stone to Rip (deeper than a rim stand). */
-export const RIP_REACH = 42;
+/** Must be this close to the stone to start Rip (hug-neighbour distance). */
+export const RIP_REACH = HUG_NEIGHBOR_RADIUS;
 /** Several bodies nearby — a real scrum, not a 1v1. */
 export const RIP_MIN_NEIGHBORS = 3;
 /** Hold time to pop the stone once Rip is eligible. */
 export const RIP_SUCCESS_SECONDS = 0.5;
-/** Pop speed (px/s) on a successful Rip. Between a short and long pass. */
-export const RIP_POP_SPEED = 280;
-export const RIP_IMMUNITY_TICKS = PASS_PICKUP_IMMUNITY_TICKS;
+/** Pop speed (px/s) after the stone is already placed outside the pack. */
+export const RIP_POP_SPEED = 340;
+/** Ripper cannot re-grab while the stone is leaving the scrum. */
+export const RIP_IMMUNITY_TICKS = 48;
+/**
+ * Ticks the popped stone ignores character collisions so the first physics
+ * step cannot bounce it back into the bodies it just left.
+ */
+export const RIP_GHOST_TICKS = 12;
+/** Extra gap past the pack's outer skin so the stone is visibly free. */
+export const RIP_CLEAR_PADDING = 26;
+/** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
+export const RIP_GRACE_TICKS = 18;
 
 /** Touching this many bodies counts as “in contact with the hug”. */
 export const WRIGGLE_CONTACT_NEIGHBORS = 2;
@@ -96,9 +109,24 @@ export function canWriggle(world: World): boolean {
   return pack >= WRIGGLE_PACK_AROUND_BALL;
 }
 
-/** Button / prompt mode. Rip wins when both could apply. */
+/** Still in the wrestle — empty-handed and near the scrum — even if Rip range flickers. */
+export function inRipContest(world: World): boolean {
+  if (world.player.hasBall) return false;
+  if (world.ball.ownerId === world.player.id) return false;
+  if (distToBall(world) > WRIGGLE_APPROACH_RADIUS) return false;
+  const near = countHugNeighbors(world, world.player.id, world.player.position);
+  if (near >= 1) return true;
+  return countBodiesNear(world, world.ball.position, HUG_NEIGHBOR_RADIUS) >= WRIGGLE_PACK_AROUND_BALL;
+}
+
+/** Button / prompt mode. Live Rip pressure keeps the pad on Rip through a jostle. */
 export function wrestleMode(world: World): WrestleMode {
-  if (canRip(world)) return 'rip';
+  if (
+    canRip(world) ||
+    (world._ripPressure > 0 && (inRipContest(world) || world._ripGraceTicks > 0))
+  ) {
+    return 'rip';
+  }
   if (canWriggle(world)) return 'wriggle';
   return 'none';
 }
@@ -107,7 +135,7 @@ function wrestleHeld(input: Input): boolean {
   return input.rip || input.wriggle;
 }
 
-function popDirection(world: World, input: Input): Vec2 {
+function facingDir(world: World, input: Input): Vec2 | null {
   const moveLen = Math.hypot(input.move.x, input.move.y);
   if (moveLen > AIM_DEADZONE) {
     return { x: input.move.x / moveLen, y: input.move.y / moveLen };
@@ -116,6 +144,18 @@ function popDirection(world: World, input: Input): Vec2 {
   if (cv > 1) {
     return { x: world._controlVel.x / cv, y: world._controlVel.y / cv };
   }
+  return null;
+}
+
+/**
+ * Facing wins (a ray from the pack centroid along facing leaves the far side
+ * if you are looking into the stone). Otherwise out through the player's side.
+ */
+function popDirection(world: World, input: Input, centroid: Vec2): Vec2 {
+  const facing = facingDir(world, input);
+  if (facing) return facing;
+  const throughPlayer = toward(centroid, world.player.position);
+  if (throughPlayer) return throughPlayer;
   const cluster = hugNeighborCentroid(world, world.player.id, world.player.position);
   if (cluster) {
     const away = toward(cluster, world.player.position);
@@ -126,6 +166,37 @@ function popDirection(world: World, input: Input): Vec2 {
   return { x: 1, y: 0 };
 }
 
+function rotate(dir: Vec2, angle: number): Vec2 {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c };
+}
+
+function legalPopSpot(world: World, pos: Vec2): boolean {
+  if (!isInMapBounds(pos, world.map)) return false;
+  if (isOutOfBounds(pos, world.map)) return false;
+  if (isInObstacle(pos, world.map)) return false;
+  return true;
+}
+
+/** Place the stone outside the pack along `dir`, or the next legal angle. */
+export function clearPopPose(
+  world: World,
+  centroid: Vec2,
+  dir: Vec2,
+  dist: number,
+): { pos: Vec2; dir: Vec2 } {
+  const angles = [0, 0.5, -0.5, 1.05, -1.05, 1.7, -1.7, Math.PI];
+  for (const a of angles) {
+    const d = a === 0 ? dir : rotate(dir, a);
+    const pos = { x: centroid.x + d.x * dist, y: centroid.y + d.y * dist };
+    if (legalPopSpot(world, pos)) return { pos, dir: d };
+  }
+  const raw = { x: centroid.x + dir.x * dist, y: centroid.y + dir.y * dist };
+  const legal = nearestLegalPoint(raw, world.map);
+  return { pos: { x: legal.x, y: legal.y }, dir };
+}
+
 function clearBallOwner(world: World): void {
   if (world.ball.ownerId === world.player.id) {
     world.player.hasBall = false;
@@ -133,30 +204,39 @@ function clearBallOwner(world: World): void {
   world.ball.ownerId = null;
 }
 
-/** Squirt the stone free along `dir` (unit). */
+/** How far from the pack centroid the stone must sit to be clear of the scrum. */
+export function ripClearDistance(world: World, around: Vec2 = world.ball.position): number {
+  const pack = hugPackExtent(world, around);
+  const skin = pack?.radius ?? HUG_NEIGHBOR_RADIUS;
+  return skin + world.ball.radius + RIP_CLEAR_PADDING;
+}
+
+/** Squirt the stone free along `dir` (unit) — placed outside the packed scrum. */
 export function popBallFree(world: World, dir: Vec2, speed: number): void {
-  const { player, ball, physics } = world;
-  const offset = player.radius + ball.radius + 8;
-  const releaseX = player.position.x + dir.x * offset;
-  const releaseY = player.position.y + dir.y * offset;
+  const { ball, physics } = world;
+  const pack = hugPackExtent(world, ball.position);
+  const centroid = pack?.centroid ?? { ...ball.position };
+  const dist = ripClearDistance(world, ball.position);
+  const pose = clearPopPose(world, centroid, dir, dist);
 
   clearBallOwner(world);
-  world.passImmuneId = player.id;
+  world.passImmuneId = world.player.id;
   world.passImmuneUntilTick = world.tick + RIP_IMMUNITY_TICKS;
+  world._ripGhostUntilTick = world.tick + RIP_GHOST_TICKS;
 
-  physics.ballBody.isSensor = false;
-  Matter.Body.setPosition(physics.ballBody, { x: releaseX, y: releaseY });
+  physics.ballBody.isSensor = true;
+  Matter.Body.setPosition(physics.ballBody, { x: pose.pos.x, y: pose.pos.y });
   Matter.Body.setVelocity(
     physics.ballBody,
     toMatterVelocity({
-      x: dir.x * speed,
-      y: dir.y * speed,
+      x: pose.dir.x * speed,
+      y: pose.dir.y * speed,
     }),
   );
-  ball.position.x = releaseX;
-  ball.position.y = releaseY;
-  ball.velocity.x = dir.x * speed;
-  ball.velocity.y = dir.y * speed;
+  ball.position.x = pose.pos.x;
+  ball.position.y = pose.pos.y;
+  ball.velocity.x = pose.dir.x * speed;
+  ball.velocity.y = pose.dir.y * speed;
 }
 
 /**
@@ -165,27 +245,47 @@ export function popBallFree(world: World, dir: Vec2, speed: number): void {
  */
 export function tickWrestle(world: World, input: Input, dt: number): WrestleTick {
   const held = wrestleHeld(input);
-  const mode = held ? wrestleMode(world) : 'none';
-  const canWork = mode !== 'none' && world.player.stamina > 0;
-
-  if (mode !== 'rip') {
-    world._ripPressure = 0;
+  const staminaOk = world.player.stamina > 0;
+  const contest = inRipContest(world);
+  let ripping =
+    held && staminaOk && (canRip(world) || (world._ripPressure > 0 && contest));
+  if (!ripping && held && staminaOk && world._ripPressure > 0 && world._ripGraceTicks > 0) {
+    ripping = true;
+    world._ripGraceTicks -= 1;
+  } else if (ripping) {
+    world._ripGraceTicks = RIP_GRACE_TICKS;
+  } else {
+    world._ripGraceTicks = 0;
   }
 
-  if (mode === 'rip' && canWork) {
+  let mode: WrestleMode = 'none';
+  if (ripping) {
+    mode = 'rip';
+  } else if (held && staminaOk && canWriggle(world)) {
+    mode = 'wriggle';
+  } else if (held) {
+    mode = wrestleMode(world);
+  }
+
+  if (!ripping) {
+    world._ripPressure = 0;
+  } else {
     world._ripPressure += dt / RIP_SUCCESS_SECONDS;
     if (world._ripPressure >= 1) {
       world._ripPressure = 0;
-      popBallFree(world, popDirection(world, input), RIP_POP_SPEED);
+      const pack = hugPackExtent(world, world.ball.position);
+      const centroid = pack?.centroid ?? { ...world.ball.position };
+      popBallFree(world, popDirection(world, input, centroid), RIP_POP_SPEED);
     }
   }
 
   const wriggleDir =
-    mode === 'wriggle' && canWork ? toward(world.player.position, world.ball.position) : null;
+    mode === 'wriggle' && staminaOk ? toward(world.player.position, world.ball.position) : null;
 
   return {
-    mode: canWork ? mode : held ? mode : 'none',
-    suppressPickup: held && mode !== 'none',
+    mode,
+    // Hold near the stone never auto-grabs — a wrestle must be allowed to finish.
+    suppressPickup: held && distToBall(world) <= WRIGGLE_APPROACH_RADIUS,
     wriggleDir,
   };
 }

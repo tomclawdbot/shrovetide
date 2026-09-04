@@ -188,6 +188,10 @@
       .pad-btn.held {
         background: #c4a35a;
       }
+      #wrestle-btn.held,
+      #wrestle-btn.charging {
+        box-shadow: 0 0 0 3px rgba(228, 212, 168, calc(0.28 + var(--wrestle-pressure, 0) * 0.6));
+      }
       /* Right action cluster: Sprint sits above Kick. Wriggle/Rip appears
          to the left of Kick only when the sim says the hold is live. */
       #right-pads {

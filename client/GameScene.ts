@@ -1084,6 +1084,7 @@ export class GameScene extends Phaser.Scene {
     this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
     this.touch?.setWrestle(
       live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none',
+      live ? this.world._ripPressure : 0,
     );
 
     if (!live) {

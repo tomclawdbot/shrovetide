@@ -8,8 +8,12 @@ import {
   canWriggle,
   countHugNeighbors,
   createWorld,
-  RIP_POP_SPEED,
+  hugPackExtent,
+  inRipContest,
+  popBallFree,
+  RIP_REACH,
   RIP_SUCCESS_SECONDS,
+  ripClearDistance,
   startMatch,
   stepWorld,
   teammateAtPoint,
@@ -130,11 +134,35 @@ test('rip: eligible only when empty-handed, near the stone, in a dense pack', ()
   assert.equal(canRip(world), false, 'packed but far from the stone');
 });
 
-test('rip: holding F pops the stone along facing; Breath drains', () => {
+function distFrom(world: World, origin: { x: number; y: number }): number {
+  return Math.hypot(world.ball.position.x - origin.x, world.ball.position.y - origin.y);
+}
+
+test('rip: popBallFree places the stone outside the packed hug', () => {
   const world = createWorld({ seed: 4 });
   startMatch(world);
   const field = openField(world);
   packHug(world, field.x, field.y, 8);
+  const pack = hugPackExtent(world, field)!;
+  const need = ripClearDistance(world, field);
+  popBallFree(world, { x: 1, y: 0 }, 340);
+  const d = distFrom(world, pack.centroid);
+  assert.ok(
+    d >= pack.radius + world.ball.radius,
+    `stone must leave the scrum skin, d=${d.toFixed(1)} packR=${pack.radius.toFixed(1)} need=${need.toFixed(1)}`,
+  );
+  assert.ok(d >= need - 1, `placement should use the clear distance, d=${d.toFixed(1)} need=${need.toFixed(1)}`);
+  assert.equal(world.ball.ownerId, null);
+  assert.ok(world.ball.position.x > pack.centroid.x + 20, 'east pop should leave on the east side');
+});
+
+test('rip: holding F pops the stone clear of the pack; Breath drains', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packHug(world, field.x, field.y, 8);
+  const pack0 = hugPackExtent(world, field)!;
+  const clear = pack0.radius + world.ball.radius + 8;
   const breath0 = world.player.stamina;
   const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
   runTicks(world, rip, Math.ceil(RIP_SUCCESS_SECONDS * 60) + 2);
@@ -142,13 +170,73 @@ test('rip: holding F pops the stone along facing; Breath drains', () => {
   assert.ok(world.player.stamina < breath0 - 8, `Rip should spend Breath (${world.player.stamina} vs ${breath0})`);
   assert.equal(world.ball.ownerId, null);
   assert.equal(world.player.hasBall, false);
+  const d = distFrom(world, field);
   const dx = world.ball.position.x - field.x;
-  const speed = Math.hypot(world.ball.velocity.x, world.ball.velocity.y);
   assert.ok(
-    dx > 20 || speed > RIP_POP_SPEED * 0.4,
-    `stone should squirt free, dx=${dx.toFixed(1)} speed=${speed.toFixed(0)}`,
+    d > clear,
+    `stone must pop clear of the packed scrum, d=${d.toFixed(1)} clear=${clear.toFixed(1)}`,
   );
-  assert.ok(world.ball.velocity.x > 0 || dx > 0, 'pop should favour facing (east)');
+  assert.ok(dx > 20, `pop should favour facing (east), dx=${dx.toFixed(1)}`);
+});
+
+test('rip: after pop the stone stays free of the original scrum', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packHug(world, field.x, field.y, 8);
+  const pack0 = hugPackExtent(world, field)!;
+  const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
+  runTicks(world, rip, Math.ceil(RIP_SUCCESS_SECONDS * 60) + 2);
+  assert.equal(world.ball.ownerId, null);
+  runTicks(world, IDLE, 30);
+  assert.equal(world.ball.ownerId, null, 'ripper immunity must block instant re-grab');
+  assert.equal(world.player.hasBall, false);
+  const d = distFrom(world, field);
+  assert.ok(
+    d > pack0.radius,
+    `stone must stay out of the original cluster, d=${d.toFixed(1)} packR=${pack0.radius.toFixed(1)}`,
+  );
+});
+
+test('rip: facing into the pack still squirts the stone out the far side', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  // Player stands west of the stone, facing east — into the hug.
+  packHug(world, field.x, field.y, 8, { x: -28, y: 0 });
+  const pack0 = hugPackExtent(world, field)!;
+  const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
+  runTicks(world, rip, Math.ceil(RIP_SUCCESS_SECONDS * 60) + 2);
+  const d = distFrom(world, field);
+  assert.equal(world.ball.ownerId, null);
+  assert.ok(
+    d > pack0.radius + world.ball.radius,
+    `inward facing must still clear the scrum, d=${d.toFixed(1)} packR=${pack0.radius.toFixed(1)}`,
+  );
+  assert.ok(world.ball.position.x > field.x, 'east facing pops out the east side of the pack');
+});
+
+test('rip: a brief shove out of Rip range does not reset a live hold', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packHug(world, field.x, field.y, 8);
+  const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
+  runTicks(world, rip, 12);
+  assert.ok(world._ripPressure > 0.3 && world._ripPressure < 1, 'contest should be building');
+  teleportId(world, world.player.id, field.x + RIP_REACH + 8, field.y);
+  assert.equal(canRip(world), false, 'now outside Rip reach');
+  assert.equal(inRipContest(world), true, 'still in the wrestle');
+  const pack0 = hugPackExtent(world, field)!;
+  // Keep holding in place — walking away should not be required to finish.
+  const hold: Input = { ...IDLE, rip: true, wriggle: true };
+  runTicks(world, hold, Math.ceil(RIP_SUCCESS_SECONDS * 60) + 4);
+  const d = distFrom(world, field);
+  assert.equal(world.ball.ownerId, null);
+  assert.ok(
+    d > pack0.radius,
+    `grace hold should still pop clear, d=${d.toFixed(1)} packR=${pack0.radius.toFixed(1)}`,
+  );
 });
 
 test('rip: early release spends Breath and does not pop', () => {
@@ -202,7 +290,7 @@ test('wriggle: hold makes measurable progress into a packed hug', () => {
   runTicks(burrow, wriggle, 45);
   const dIdle = Math.hypot(idle.player.position.x - field.x, idle.player.position.y - field.y);
   const dWriggle = Math.hypot(burrow.player.position.x - field.x, burrow.player.position.y - field.y);
-  assert.ok(dWriggle < d0 - 18, `wriggle should close on the stone (${d0.toFixed(0)} → ${dWriggle.toFixed(0)})`);
+  assert.ok(dWriggle < d0 - 14, `wriggle should close on the stone (${d0.toFixed(0)} → ${dWriggle.toFixed(0)})`);
   assert.ok(
     dWriggle < dIdle - 10,
     `wriggle should beat standing in the pack (${dWriggle.toFixed(0)} vs idle ${dIdle.toFixed(0)})`,

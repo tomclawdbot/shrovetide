@@ -49,6 +49,54 @@ export function hugShoveAuthority(neighbors: number): number {
   return 1 - packed * (1 - HUG_MIN_SHOVE);
 }
 
+/** Scrum around `around`: centroid, outer skin radius, and body count. */
+export interface HugPackExtent {
+  centroid: Vec2;
+  /** Distance from centroid to the outer skin of the furthest packed body. */
+  radius: number;
+  count: number;
+}
+
+/**
+ * Bodies close enough to `around` (usually the stone) to count as the scrum.
+ * Wider than HUG_NEIGHBOR_RADIUS so a rim body still blocks a pop.
+ */
+export const HUG_PACK_GATHER_RADIUS = HUG_NEIGHBOR_RADIUS + 20;
+
+/** Packed cluster around `around`, or null if nobody is that close. */
+export function hugPackExtent(
+  world: World,
+  around: Vec2,
+  gatherRadius = HUG_PACK_GATHER_RADIUS,
+): HugPackExtent | null {
+  const r2 = gatherRadius * gatherRadius;
+  const members: { x: number; y: number; r: number }[] = [];
+
+  const consider = (pos: Vec2, radius: number): void => {
+    const dx = pos.x - around.x;
+    const dy = pos.y - around.y;
+    if (dx * dx + dy * dy <= r2) members.push({ x: pos.x, y: pos.y, r: radius });
+  };
+
+  consider(world.player.position, world.player.radius);
+  for (const npc of world.npcs) consider(npc.position, npc.radius);
+  if (members.length === 0) return null;
+
+  let sx = 0;
+  let sy = 0;
+  for (const m of members) {
+    sx += m.x;
+    sy += m.y;
+  }
+  const centroid = { x: sx / members.length, y: sy / members.length };
+  let radius = 0;
+  for (const m of members) {
+    const d = Math.hypot(m.x - centroid.x, m.y - centroid.y) + m.r;
+    if (d > radius) radius = d;
+  }
+  return { centroid, radius, count: members.length };
+}
+
 /** Average position of hug-radius neighbours, or null if nobody is that close. */
 export function hugNeighborCentroid(world: World, id: string, pos: Vec2): Vec2 | null {
   const r2 = HUG_NEIGHBOR_RADIUS * HUG_NEIGHBOR_RADIUS;

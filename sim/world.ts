@@ -43,10 +43,13 @@ export {
   countBodiesNear,
   countHugNeighbors,
   hugNeighborCentroid,
+  hugPackExtent,
   hugShoveAuthority,
   HUG_MIN_SHOVE,
   HUG_NEIGHBOR_RADIUS,
   HUG_PACK_COUNT,
+  HUG_PACK_GATHER_RADIUS,
+  type HugPackExtent,
 } from './hug.js';
 
 export const PLAYER_RADIUS = 16;
@@ -115,8 +118,12 @@ export interface World extends SimState {
    */
   passImmuneId: string | null;
   passImmuneUntilTick: number;
-  /** 0..1 Rip contest. Resets on release, ineligibility, or switch. */
+  /** 0..1 Rip contest. Resets on release, leaving the scrum, or switch. */
   _ripPressure: number;
+  /** Ticks of Rip grace left after a jostle leaves Rip range. */
+  _ripGraceTicks: number;
+  /** While `tick < this`, the popped stone is a sensor so it cannot re-glue. */
+  _ripGhostUntilTick: number;
 }
 
 export interface CreateWorldOptions {
@@ -283,6 +290,8 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     passImmuneId: null,
     passImmuneUntilTick: 0,
     _ripPressure: 0,
+    _ripGraceTicks: 0,
+    _ripGhostUntilTick: 0,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -458,6 +467,11 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
 
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);
+  // A just-ripped stone stays a sensor for a few ticks so the scrum cannot
+  // bounce it straight back into the bodies it left.
+  if (world.tick < world._ripGhostUntilTick) {
+    physics.ballBody.isSensor = true;
+  }
 
   // 4. Controlled character movement.
   //
