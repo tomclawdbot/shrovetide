@@ -5,8 +5,8 @@
 // TICKET 002 changes:
 //   - map: TownMap data attached to world
 //   - squad: SQUAD_SIZE per team (17v17), one is controlled (world.player)
-//   - match state machine: 'placement' | 'playing' | 'over'
-//   - match timer + score + goaling + win state
+//   - match state machine: 'placement' | 'playing' | 'over' (two-day event)
+//   - match timer + aggregate score + goaling + win state
 //   - physics bodies are Map-keyed by character id (for instant switching)
 //
 // TICKET 003a changes (game feel):
@@ -294,6 +294,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     tick: 0,
     rngSeed: seed,
     matchState: 'placement',
+    eventDay: 1,
     matchTimeRemaining: 0,
     score: [0, 0],
     goaling: {

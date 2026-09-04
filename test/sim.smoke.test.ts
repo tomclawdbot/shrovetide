@@ -418,7 +418,7 @@ test('smoke: stamina regenerates when not sprinting', () => {
   assert.ok(world.player.stamina <= world.player.maxStamina);
 });
 
-test('smoke: goaling — 3 taps within spacing scores and ends match', () => {
+test('smoke: goaling — early 3-tap scores and tosses up without ending the event', () => {
   const world = createWorld();
   startMatch(world);
   // Teleport the controlled player right next to the opponent's goal with the ball.
@@ -435,9 +435,30 @@ test('smoke: goaling — 3 taps within spacing scores and ends match', () => {
   for (let i = 0; i < 60; i++) stepWorld(world, IDLE, 1 / 60);
   stepWorld(world, tap, 1 / 60);
 
-  assert.equal(world.matchState, 'over', 'match should be over after 3 taps');
+  assert.equal(world.matchState, 'playing', 'early goal continues the day');
+  assert.equal(world.eventDay, 1);
   assert.equal(world.score[world.player.team], 1, 'scoring team gets +1');
+  assert.equal(world.winState, null, 'event not over yet');
+  assert.equal(world.ball.ownerId, null, 'toss-up clears ownership');
+});
+
+test('smoke: late goal on day 2 ends the event', () => {
+  const world = createWorld();
+  startMatch(world);
+  world.eventDay = 2;
+  world.matchTimeRemaining = 90;
+  const goalToScoreOn = world.map.goals.find((g) => g.team !== world.player.team)!;
+  teleportPlayer(world, goalToScoreOn.position.x, goalToScoreOn.position.y);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  const tap: Input = { ...IDLE, goalTap: true };
+  for (let n = 0; n < 3; n++) {
+    for (let i = 0; i < 60; i++) stepWorld(world, IDLE, 1 / 60);
+    stepWorld(world, tap, 1 / 60);
+  }
+  assert.equal(world.matchState, 'over');
   assert.ok(world.winState !== null, 'winState populated');
+  assert.equal(world.winState?.winner, world.player.team);
 });
 
 test('feel: holding one direction stays on the pitch', () => {

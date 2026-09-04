@@ -2,15 +2,14 @@
 //
 // Carrier must be ADJACENT to the opponent's millstone (within
 // GOAL_REACH_DISTANCE) and land 3 taps with ≥0.5s spacing
-// (per TICKET 002 spec). On third tap → score, match ends immediately.
+// (per TICKET 002 spec). On third tap → scoreGoal (early toss-up or end day).
 //
 // Player taps come from input.goalTap (rising edge). NPC carriers at the
 // correct millstone auto-hold the same contest so a drive can finish.
 
 import { goalFor } from './maps.js';
 import type { World } from './world.js';
-import { endMatch } from './match.js';
-import { GOAL_TAP_MAX_CHAIN_TICKS, GOAL_TAP_SPACING_TICKS } from './match.js';
+import { scoreGoal as recordGoal, GOAL_TAP_MAX_CHAIN_TICKS, GOAL_TAP_SPACING_TICKS } from './match.js';
 
 /** Distance from carrier centre to goal centre to count as "adjacent". */
 export const GOAL_REACH_DISTANCE = 56;
@@ -105,6 +104,5 @@ function scoreGoal(world: World, scorerId: string): void {
   const scorerTeam = scorerId === world.player.id
     ? world.player.team
     : world.npcs.find((n) => n.id === scorerId)!.team;
-  world.score[scorerTeam] += 1;
-  endMatch(world, scorerId, scorerTeam, 'goal');
+  recordGoal(world, scorerId, scorerTeam);
 }
