@@ -121,6 +121,18 @@ function syncUnmute(): void {
   btn.hidden = !need;
 }
 
+/**
+ * Title / team-pick copy can overflow a short phone landscape viewport.
+ * Those regions opt in with data-allow-scroll so pan-y still works while the
+ * rest of the shell keeps pinch-zoom and rubber-band overscroll locked out.
+ */
+export function allowsPageScroll(target: EventTarget | null): boolean {
+  if (!target || typeof (target as { closest?: unknown }).closest !== 'function') {
+    return false;
+  }
+  return !!(target as Element).closest('[data-allow-scroll]');
+}
+
 function preventZoomAndOverscroll(): void {
   const eat = (ev: Event): void => {
     if (ev.cancelable) ev.preventDefault();
@@ -139,6 +151,7 @@ function preventZoomAndOverscroll(): void {
   document.addEventListener(
     'touchmove',
     (ev) => {
+      if (allowsPageScroll(ev.target)) return;
       if (ev.cancelable) ev.preventDefault();
     },
     { passive: false },
