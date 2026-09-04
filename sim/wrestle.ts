@@ -13,7 +13,7 @@
 
 import Matter from 'matter-js';
 import { isInMapBounds, isInObstacle, isOutOfBounds, nearestLegalPoint } from './maps.js';
-import { CHAR_FRICTION, CHAR_FRICTION_STATIC, toMatterVelocity } from './physics.js';
+import { CHAR_FRICTION, CHAR_FRICTION_STATIC, setBallSensor, toMatterVelocity } from './physics.js';
 import { PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
 import {
   countBodiesNear,
@@ -231,7 +231,7 @@ export function popBallFree(world: World, dir: Vec2, speed: number, ripperId?: s
   world.passImmuneUntilTick = world.tick + RIP_IMMUNITY_TICKS;
   world._ripGhostUntilTick = world.tick + RIP_GHOST_TICKS;
 
-  physics.ballBody.isSensor = true;
+  setBallSensor(physics, true);
   Matter.Body.setPosition(physics.ballBody, { x: pose.pos.x, y: pose.pos.y });
   Matter.Body.setVelocity(
     physics.ballBody,

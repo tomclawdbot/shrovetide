@@ -46,13 +46,22 @@ export const SHEPHERD_RADIUS = 130;
  */
 export const CONTEST_STEER_RADIUS = 180;
 /** Lead past a loose stone toward the millstone that team scores at. */
-const SHEPHERD_LEAD = 220;
+const SHEPHERD_LEAD = 110;
 /** Lead ahead of a teammate carrier so chase support advances the right way. */
-const ESCORT_LEAD = 200;
-/** Extra steer while carrying / shepherding so the scoring end actually moves. */
-export const SCORE_DRIVE_FORCE_MULT = 1.55;
-/** Modest extra cap for an NPC carrier grinding upfield. */
-export const SCORE_DRIVE_SPEED_MULT = 1.12;
+const ESCORT_LEAD = 140;
+/**
+ * Extra steer while carrying / escorting so the scoring end still crawls.
+ * Kept modest — 1.55 overshot the cap after physics and looked like a rocket.
+ */
+export const SCORE_DRIVE_FORCE_MULT = 1.18;
+/** Carrier cap stays at MOVEMENT.carrierSpeedMult; no extra open-field burst. */
+export const SCORE_DRIVE_SPEED_MULT = 1.0;
+/**
+ * Peak NPC open-field / carrier speed as a fraction of player Sprint
+ * (`PLAYER_MAX_SPEED * SPRINT_SPEED_MULT`). Sprint must be able to contest
+ * a breakaway; 0.88 leaves the player a catch-up margin.
+ */
+export const NPC_VS_SPRINT_BUDGET = 0.88;
 /**
  * Packed-hug shove floor while carrying. Lets a claimed stone keep crawling
  * toward the millstone instead of stalling on top of it.
@@ -92,21 +101,57 @@ export function steerNPCs(world: World): void {
       { x: dirX * NPC_STEER_FORCE * shove * forceMult, y: dirY * NPC_STEER_FORCE * shove * forceMult },
     );
 
-    const looseBoost =
-      world.ball.ownerId === null && target === world.ball.position ? LOOSE_BALL_SPEED_MULT : 1;
-    const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
-    const driveBoost = carrying ? SCORE_DRIVE_SPEED_MULT : 1;
-    const defendBoost = collapsing ? GOAL_DEFEND_SPEED_MULT : 1;
-    const terrainMult = speedMultiplierAt(npc.position, world.map);
-    const maxMatter =
-      npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * MATTER_VELOCITY_SCALE;
-    const vx = body.velocity.x;
-    const vy = body.velocity.y;
-    const speed = Math.hypot(vx, vy);
-    if (speed > maxMatter) {
-      const k = maxMatter / speed;
-      Matter.Body.setVelocity(body, { x: vx * k, y: vy * k });
-    }
+    clampBodyToCap(body, npcSpeedCap(npc, world, collapsing, target === world.ball.position));
+  }
+}
+
+/**
+ * Authored NPC speed cap in px/s (before Matter scale). Isolated carriers
+ * sit on `maxSpeed * carrierSpeedMult`; open-field chase is `maxSpeed`.
+ */
+export function npcSpeedCap(
+  npc: NPC,
+  world: World,
+  collapsing?: boolean,
+  targetingLooseBall?: boolean,
+): number {
+  const threatened = collapsing === undefined ? threatenedGoalTeam(world) : null;
+  const isCollapsing =
+    collapsing ?? (threatened !== null && npc.team === threatened);
+  const carrying = world.ball.ownerId === npc.id;
+  let aimingAtLoose = targetingLooseBall;
+  if (aimingAtLoose === undefined) {
+    const target = pickTarget(npc, world, isCollapsing);
+    aimingAtLoose = target === world.ball.position;
+  }
+  const looseBoost =
+    world.ball.ownerId === null && aimingAtLoose ? LOOSE_BALL_SPEED_MULT : 1;
+  const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
+  const driveBoost = carrying ? SCORE_DRIVE_SPEED_MULT : 1;
+  const defendBoost = isCollapsing ? GOAL_DEFEND_SPEED_MULT : 1;
+  const terrainMult = speedMultiplierAt(npc.position, world.map);
+  return npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost;
+}
+
+/** After physics: enforce the cap so a leftover collision impulse cannot stick. */
+export function clampNpcVelocities(world: World): void {
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i];
+    if (!npc) continue;
+    const body = world.physics.bodies.get(npc.id);
+    if (!body) continue;
+    clampBodyToCap(body, npcSpeedCap(npc, world));
+  }
+}
+
+function clampBodyToCap(body: Matter.Body, capPxPerSec: number): void {
+  const maxMatter = capPxPerSec * MATTER_VELOCITY_SCALE;
+  const vx = body.velocity.x;
+  const vy = body.velocity.y;
+  const speed = Math.hypot(vx, vy);
+  if (speed > maxMatter) {
+    const k = maxMatter / speed;
+    Matter.Body.setVelocity(body, { x: vx * k, y: vy * k });
   }
 }
 

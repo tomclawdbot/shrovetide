@@ -8,7 +8,7 @@
 //   - carried-ball lock uses the carrier's current physics body.
 
 import Matter from 'matter-js';
-import { toMatterVelocity } from './physics.js';
+import { clearPositionImpulse, setBallSensor, toMatterVelocity } from './physics.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
@@ -70,6 +70,11 @@ export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}
   if (bestId === null) return;
   ball.ownerId = bestId;
   player.hasBall = bestId === player.id;
+  // Sensor + pair flags now, not next tick — otherwise the claim overlap rockets.
+  setBallSensor(world.physics, true);
+  const carrierBody = world.physics.bodies.get(bestId);
+  if (carrierBody) clearPositionImpulse(carrierBody);
+  clearPositionImpulse(world.physics.ballBody);
 }
 
 /**
@@ -79,19 +84,22 @@ export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}
  *
  * While carried the ball is a sensor — otherwise Matter resolves the
  * overlapping solid bodies and rocket-launches the carrier (~10× speed).
+ * `setBallSensor` also flips existing pair.isSensor flags; Matter only
+ * sets that bit at pair creation, so a claim that started solid-on-solid
+ * would keep exploding the overlap if we only set `body.isSensor`.
  */
 export function syncCarriedBall(world: World): void {
   const { ball, physics } = world;
   const ownerId = ball.ownerId;
   if (ownerId === null) {
     if (physics.ballBody.isSensor) {
-      physics.ballBody.isSensor = false;
+      setBallSensor(physics, false);
     }
     return;
   }
   const body = physics.bodies.get(ownerId);
   if (!body) return;
-  physics.ballBody.isSensor = true;
+  setBallSensor(physics, true);
   Matter.Body.setPosition(physics.ballBody, { x: body.position.x, y: body.position.y });
   Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
 }
@@ -110,7 +118,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
     ball.ownerId = null;
     world.passImmuneId = player.id;
     world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
-    physics.ballBody.isSensor = false;
+    setBallSensor(physics, false);
     Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
     return false;
   }
@@ -135,7 +143,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
 
   // Solid again before the kick impulse so the ball interacts with the pitch.
-  physics.ballBody.isSensor = false;
+  setBallSensor(physics, false);
   Matter.Body.setPosition(physics.ballBody, { x: releaseX, y: releaseY });
   // Pass speeds are authored in px/s; Matter wants px per baseDelta.
   Matter.Body.setVelocity(
