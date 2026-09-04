@@ -8,6 +8,7 @@
 // and detect state transitions.
 
 import Matter from 'matter-js';
+import { setBallSensor } from './physics.js';
 import type { Team } from './types.js';
 import type { World } from './world.js';
 
@@ -37,7 +38,7 @@ export function startMatch(world: World): void {
   world._npcRipCooldownUntilTick = 0;
   Matter.Body.setPosition(world.physics.ballBody, world.ball.position);
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
-  world.physics.ballBody.isSensor = false;
+  setBallSensor(world.physics, false);
   // Reset timer.
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
 }

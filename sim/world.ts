@@ -22,9 +22,9 @@
 
 import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
-import { createPhysicsWorld, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
+import { createPhysicsWorld, setBallSensor, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamina.js';
-import { isTurnUpSwarm, steerNPCs } from './npc.js';
+import { clampNpcVelocities, isTurnUpSwarm, steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal } from './goaling.js';
@@ -484,7 +484,7 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // A just-ripped stone stays a sensor for a few ticks so the scrum cannot
   // bounce it straight back into the bodies it left.
   if (world.tick < world._ripGhostUntilTick) {
-    physics.ballBody.isSensor = true;
+    setBallSensor(physics, true);
   }
 
   // 4. Controlled character movement.
@@ -529,8 +529,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // 5. NPC steering (role-based; collisions deflect them around obstacles)
   steerNPCs(world);
 
-  // 6. Physics
+  // 6. Physics, then re-clamp NPC speed so a collision impulse cannot stick.
   stepPhysics(physics, dt);
+  clampNpcVelocities(world);
 
   // 7. Sync state from physics bodies (Map iteration).
   // Matter stores velocity as px/baseDelta; expose px/s on sim records.

@@ -54,6 +54,46 @@ export function toMatterVelocity(pxPerSec: Vec2): Vec2 {
   };
 }
 
+type ImpulseBody = Matter.Body & { positionImpulse?: { x: number; y: number } };
+
+/**
+ * Matter records `pair.isSensor` only when the pair is created. Flipping
+ * `body.isSensor` later does not update existing pairs — so a claim that
+ * starts as solid-on-solid keeps resolving overlap and rocket-launches
+ * the carrier (~7× the authored cap). Keep pair flags in sync.
+ */
+export function setBallSensor(physics: PhysicsWorldHandle, sensor: boolean): void {
+  const ball = physics.ballBody;
+  ball.isSensor = sensor;
+  const pairs = physics.engine.pairs.list;
+  for (let i = 0; i < pairs.length; i++) {
+    const pair = pairs[i];
+    if (!pair) continue;
+    if (!pairTouchesBody(pair, ball)) continue;
+    pair.isSensor = sensor || pair.bodyA.isSensor || pair.bodyB.isSensor;
+  }
+}
+
+/** Drop warmed collision position-impulse so a just-claimed overlap cannot keep shoving. */
+export function clearPositionImpulse(body: Matter.Body): void {
+  const impulse = (body as ImpulseBody).positionImpulse;
+  if (!impulse) return;
+  impulse.x = 0;
+  impulse.y = 0;
+}
+
+function pairTouchesBody(pair: Matter.Pair, body: Matter.Body): boolean {
+  const c = pair.collision;
+  return (
+    pair.bodyA === body ||
+    pair.bodyB === body ||
+    c.bodyA === body ||
+    c.bodyB === body ||
+    c.parentA === body ||
+    c.parentB === body
+  );
+}
+
 export function createPhysicsWorld(
   map: TownMap,
   characters: CharacterBodySpec[],

@@ -11,10 +11,17 @@ import {
   isTurnUpSwarm,
   npcSteerTarget,
   opponentGoalFor,
+  SCORE_DRIVE_FORCE_MULT,
+  SCORE_DRIVE_SPEED_MULT,
   SHEPHERD_RADIUS,
   startMatch,
   stepWorld,
   TURN_UP_SWARM_RADIUS,
+  NPC_VS_SPRINT_BUDGET,
+  PLAYER_MAX_SPEED,
+  SPRINT_SPEED_MULT,
+  MOVEMENT,
+  NPC_MAX_SPEED,
   type Input,
   type NPC,
   type World,
@@ -292,4 +299,99 @@ test('npc: hold collapse still crashes the player, not the far millstone', () =>
   assert.equal(target, world.player.position);
   const scoreAt = opponentGoalFor(holder!.team, world.map);
   assert.notEqual(target!.x, scoreAt.x);
+});
+
+function playerSprintCap(): number {
+  return PLAYER_MAX_SPEED * SPRINT_SPEED_MULT;
+}
+
+function npcBudgetPxPerSec(): number {
+  return playerSprintCap() * NPC_VS_SPRINT_BUDGET;
+}
+
+test('npc: carrier drive stays under the player-Sprint budget (no rocket)', () => {
+  const world = createWorld({ seed: 8, playerTeam: 0 });
+  startMatch(world);
+  const field = openMid(world);
+  const carrier = npcOfTeam(world, 1);
+  isolate(world, carrier.id, field.x, field.y);
+  giveBallTo(world, carrier.id);
+  const p0 = { x: carrier.position.x, y: carrier.position.y };
+  const ticks = 90;
+  runTicks(world, IDLE, ticks);
+  const dist = Math.hypot(carrier.position.x - p0.x, carrier.position.y - p0.y);
+  const mean = dist / (ticks / 60);
+  const budget = npcBudgetPxPerSec();
+  assert.ok(
+    mean < budget,
+    `NPC carrier mean ${mean.toFixed(1)} px/s must stay under Sprint budget ${budget.toFixed(1)}`,
+  );
+  assert.ok(dist > 40, `carrier should still progress, dist=${dist.toFixed(0)}`);
+  const authored = NPC_MAX_SPEED * MOVEMENT.carrierSpeedMult * 1.05;
+  assert.ok(
+    mean < authored + 20,
+    `carrier should sit near the authored carry cap (~${authored.toFixed(0)}), got ${mean.toFixed(1)}`,
+  );
+});
+
+test('npc: claiming a loose overlapping stone does not rocket toward the millstone', () => {
+  const world = createWorld({ seed: 6, playerTeam: 0 });
+  startMatch(world);
+  const field = openMid(world);
+  const hunter = npcOfTeam(world, 1);
+  isolate(world, hunter.id, field.x, field.y);
+  parkBall(world, field.x + 8, field.y);
+  world.ball.ownerId = null;
+  world.player.hasBall = false;
+  const p0 = { x: hunter.position.x, y: hunter.position.y };
+  const ticks = 90;
+  runTicks(world, IDLE, ticks);
+  assert.equal(world.ball.ownerId, hunter.id, 'chase NPC should claim off the turn-up');
+  const dist = Math.hypot(hunter.position.x - p0.x, hunter.position.y - p0.y);
+  const mean = dist / (ticks / 60);
+  const budget = npcBudgetPxPerSec();
+  assert.ok(
+    mean < budget,
+    `post-claim drive ${mean.toFixed(1)} px/s must be contestable vs Sprint budget ${budget.toFixed(1)} (rocket was ~700)`,
+  );
+  assert.ok(
+    hunter.position.x < p0.x - 40,
+    `team 1 carrier should still run toward the Up millstone, ${p0.x.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+  );
+});
+
+test('npc: player Sprint covers more ground than an NPC carrier in the same window', () => {
+  const npcWorld = createWorld({ seed: 8, playerTeam: 0 });
+  startMatch(npcWorld);
+  const field = openMid(npcWorld);
+  const carrier = npcOfTeam(npcWorld, 1);
+  isolate(npcWorld, carrier.id, field.x, field.y);
+  giveBallTo(npcWorld, carrier.id);
+  const npcX0 = carrier.position.x;
+  runTicks(npcWorld, IDLE, 90);
+  const npcDx = Math.abs(carrier.position.x - npcX0);
+
+  const playerWorld = createWorld({ seed: 8, playerTeam: 0 });
+  startMatch(playerWorld);
+  isolate(playerWorld, playerWorld.player.id, field.x, field.y);
+  const sprint: Input = { ...IDLE, move: { x: -1, y: 0 }, sprint: true };
+  const px0 = playerWorld.player.position.x;
+  runTicks(playerWorld, sprint, 90);
+  const playerDx = Math.abs(playerWorld.player.position.x - px0);
+
+  assert.ok(
+    playerDx > npcDx + 40,
+    `Sprint (${playerDx.toFixed(0)}px) must outrun an NPC carrier (${npcDx.toFixed(0)}px) so a breakaway is contestable`,
+  );
+});
+
+test('npc: SCORE_DRIVE force stays a nudge, not a rocket multiplier', () => {
+  assert.ok(
+    SCORE_DRIVE_FORCE_MULT <= 1.25,
+    `SCORE_DRIVE_FORCE_MULT ${SCORE_DRIVE_FORCE_MULT} should stay near 1 so physics cannot overshoot the cap`,
+  );
+  assert.ok(
+    SCORE_DRIVE_SPEED_MULT <= 1.05,
+    `SCORE_DRIVE_SPEED_MULT ${SCORE_DRIVE_SPEED_MULT} must not raise NPC carriers above a defendable walk`,
+  );
 });
