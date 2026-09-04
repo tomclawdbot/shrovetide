@@ -41,6 +41,10 @@ const MINIMAP_PAD = 12;
 
 const CAMERA_BASE_ZOOM = 1.5;
 const CAMERA_CROWD_ZOOM_OUT = 0.35;
+const CAMERA_ZOOM_MIN = 0.32;
+const CAMERA_ZOOM_MAX = 2.35;
+const CAMERA_PAN_SPEED = 520;
+const CAMERA_DRAG_PX = 14;
 const CROWD_RADIUS = 260;
 const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
@@ -67,7 +71,14 @@ const PALETTE = {
   shopFascia: 0x8a6844,
   shopAwning: 0x5a2a28,
   shopAwningAlt: 0xd8c4a0,
+  timberBeam: 0x2a1810,
+  brickLine: 0x5a382c,
+  chimney: 0x4a3028,
+  cobble: 0x6a5a48,
+  church: 0x6e6a62,
+  churchRoof: 0x3a3834,
   window: 0x2a4050,
+  windowLite: 0x8ab0c4,
   door: 0x2a1810,
   water: 0x2d4a5c,
   waterEdge: 0x1a3040,
@@ -110,6 +121,12 @@ interface KeyState {
   TAB: Phaser.Input.Keyboard.Key;
   Q: Phaser.Input.Keyboard.Key;
   F: Phaser.Input.Keyboard.Key;
+  C: Phaser.Input.Keyboard.Key;
+  HOME: Phaser.Input.Keyboard.Key;
+  PLUS: Phaser.Input.Keyboard.Key;
+  MINUS: Phaser.Input.Keyboard.Key;
+  OPEN_BRACKET: Phaser.Input.Keyboard.Key;
+  CLOSED_BRACKET: Phaser.Input.Keyboard.Key;
 }
 
 interface RenderChar {
@@ -140,7 +157,16 @@ export class GameScene extends Phaser.Scene {
   private ballShadow!: Phaser.GameObjects.Ellipse;
   private mapGfx!: Phaser.GameObjects.Graphics;
   private markerGfx!: Phaser.GameObjects.Graphics;
+  private followZoom = CAMERA_BASE_ZOOM;
+  private userZoom = 1;
   private currentZoom = CAMERA_BASE_ZOOM;
+  private camFollow = true;
+  private camLook = { x: 0, y: 0 };
+  private panPointerId: number | null = null;
+  private panLast = { x: 0, y: 0 };
+  private panDragging = false;
+  private pinchDist = 0;
+  private pinchMid = { x: 0, y: 0 };
 
   private hudCam!: Phaser.Cameras.Scene2D.Camera;
   private hudObjs: Phaser.GameObjects.GameObject[] = [];
@@ -159,6 +185,7 @@ export class GameScene extends Phaser.Scene {
   private minimapBg!: Phaser.GameObjects.Rectangle;
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private vignetteGfx!: Phaser.GameObjects.Graphics;
+  private followBtn!: Phaser.GameObjects.Text;
 
   private flow: Flow = 'title';
   private placeLeft = 0;
@@ -207,7 +234,7 @@ export class GameScene extends Phaser.Scene {
 
     const kb = this.input.keyboard;
     if (kb) {
-      kb.addCapture('TAB,SPACE,E,Q,F,W,A,S,D,SHIFT');
+      kb.addCapture('TAB,SPACE,E,Q,F,W,A,S,D,SHIFT,C');
       this.keys = {
         W: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
@@ -223,18 +250,27 @@ export class GameScene extends Phaser.Scene {
         TAB: kb.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
         Q: kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
         F: kb.addKey(Phaser.Input.Keyboard.KeyCodes.F),
+        C: kb.addKey(Phaser.Input.Keyboard.KeyCodes.C),
+        HOME: kb.addKey(Phaser.Input.Keyboard.KeyCodes.HOME),
+        PLUS: kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS),
+        MINUS: kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS),
+        OPEN_BRACKET: kb.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET),
+        CLOSED_BRACKET: kb.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET),
       };
       kb.on('keydown-SPACE', this.handleSpace);
       kb.on('keyup-SPACE', this.handlePassRelease);
       kb.on('keydown-E', this.handleGoalTap);
       kb.on('keydown-TAB', this.handleTab);
       kb.on('keydown-Q', this.handleQuickSwitch);
+      kb.on('keydown-C', this.handleFollowToggle);
+      kb.on('keydown-HOME', this.returnToFollow);
     }
 
-    this.input.on('pointerdown', this.handlePointer);
-    this.input.on('pointerup', () => {
-      this.eatPointer = false;
-    });
+    this.input.on('pointerdown', this.handlePointerDown);
+    this.input.on('pointermove', this.handlePointerMove);
+    this.input.on('pointerup', this.handlePointerUp);
+    this.input.on('pointerupoutside', this.handlePointerUp);
+    this.input.on('wheel', this.handleWheel);
 
     this.touch = new TouchControls({
       onKickDown: () => this.beginTouchKick(),
@@ -242,6 +278,7 @@ export class GameScene extends Phaser.Scene {
       onSwitch: () => this.handleQuickSwitch(),
       onReady: () => this.whistle(),
       onGoal: () => this.handleGoalTap(),
+      onFollow: () => this.returnToFollow(),
     });
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.layoutHud, this);
@@ -291,6 +328,7 @@ export class GameScene extends Phaser.Scene {
     );
     const promptY = VIEW_H - Math.max(56, b + 36);
     this.promptText?.setPosition(VIEW_W / 2, promptY);
+    this.followBtn?.setPosition(VIEW_W / 2, t + 64);
   };
 
   private adoptWorld(obj: Phaser.GameObjects.GameObject): void {
@@ -313,12 +351,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private punchCamera(): void {
-    this.currentZoom = CAMERA_BASE_ZOOM + 0.22;
-    this.pinCam(
-      this.world.player.position.x,
-      this.world.player.position.y,
-      this.currentZoom,
-    );
+    this.returnToFollow();
+    this.followZoom = CAMERA_BASE_ZOOM + 0.22;
+    this.currentZoom = this.clampedZoom();
+    this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
   }
 
   /**
@@ -327,19 +363,71 @@ export class GameScene extends Phaser.Scene {
    */
   private pinCam(x: number, y: number, zoom: number): void {
     const cam = this.cameras.main;
-    const z = Math.max(0.25, zoom);
+    const z = Math.max(CAMERA_ZOOM_MIN, zoom);
     cam.setZoom(z);
     cam.scrollX = x - VIEW_W / (2 * z);
     cam.scrollY = y - VIEW_H / (2 * z);
   }
 
+  private camCenter(): { x: number; y: number } {
+    const z = Math.max(CAMERA_ZOOM_MIN, this.cameras.main.zoom);
+    return {
+      x: this.cameras.main.scrollX + VIEW_W / (2 * z),
+      y: this.cameras.main.scrollY + VIEW_H / (2 * z),
+    };
+  }
+
+  private clampedZoom(): number {
+    return Math.min(CAMERA_ZOOM_MAX, Math.max(CAMERA_ZOOM_MIN, this.followZoom * this.userZoom));
+  }
+
+  private nudgeUserZoom(factor: number): void {
+    this.userZoom = Math.min(
+      CAMERA_ZOOM_MAX / Math.max(0.2, this.followZoom),
+      Math.max(CAMERA_ZOOM_MIN / Math.max(0.2, this.followZoom), this.userZoom * factor),
+    );
+    this.currentZoom = this.clampedZoom();
+  }
+
+  private breakFollow(): void {
+    if (this.camFollow) {
+      this.camLook = this.camCenter();
+      this.camFollow = false;
+    }
+  }
+
+  private returnToFollow = (): void => {
+    this.camFollow = true;
+    this.camLook.x = this.world.player.position.x;
+    this.camLook.y = this.world.player.position.y;
+    this.syncFollowHud();
+  };
+
+  private handleFollowToggle = (): void => {
+    if (this.flow === 'title') return;
+    if (this.camFollow) this.breakFollow();
+    else this.returnToFollow();
+    this.syncFollowHud();
+  };
+
+  private panLook(dx: number, dy: number): void {
+    this.breakFollow();
+    const map = this.world.map;
+    this.camLook.x = Math.min(map.width, Math.max(0, this.camLook.x + dx));
+    this.camLook.y = Math.min(map.height, Math.max(0, this.camLook.y + dy));
+    this.syncFollowHud();
+  }
+
+  private panByScreen(sx: number, sy: number): void {
+    const z = Math.max(CAMERA_ZOOM_MIN, this.currentZoom);
+    this.panLook(sx / z, sy / z);
+  }
+
   private trackPlayer(_snap: boolean): void {
     const p = this.world.player;
-    this.pinCam(
-      p.position.x + p.velocity.x * CAMERA_LEAD,
-      p.position.y + p.velocity.y * CAMERA_LEAD,
-      this.currentZoom,
-    );
+    this.camLook.x = p.position.x + p.velocity.x * CAMERA_LEAD;
+    this.camLook.y = p.position.y + p.velocity.y * CAMERA_LEAD;
+    this.pinCam(this.camLook.x, this.camLook.y, this.currentZoom);
   }
 
   /** Freeze-frame beat: you + their millstone in the same shot. */
@@ -355,7 +443,34 @@ export class GameScene extends Phaser.Scene {
       0.28,
       Math.min(0.8, VIEW_W / Math.max(80, maxX - minX), VIEW_H / Math.max(80, maxY - minY)),
     );
+    this.camFollow = true;
     this.pinCam((minX + maxX) / 2, (minY + maxY) / 2, z);
+  }
+
+  private applyLookKeys(dt: number): void {
+    const k = this.keys;
+    if (!k || this.camFollow || this.flow === 'title') return;
+    let mx = 0;
+    let my = 0;
+    if (k.UP.isDown) my -= 1;
+    if (k.DOWN.isDown) my += 1;
+    if (k.LEFT.isDown) mx -= 1;
+    if (k.RIGHT.isDown) mx += 1;
+    if (mx === 0 && my === 0) return;
+    const len = Math.hypot(mx, my) || 1;
+    const speed = CAMERA_PAN_SPEED * dt;
+    this.panLook((mx / len) * speed, (my / len) * speed);
+  }
+
+  private applyZoomKeys(): void {
+    const k = this.keys;
+    if (!k || this.flow === 'title') return;
+    if (Phaser.Input.Keyboard.JustDown(k.PLUS) || Phaser.Input.Keyboard.JustDown(k.CLOSED_BRACKET)) {
+      this.nudgeUserZoom(1.1);
+    }
+    if (Phaser.Input.Keyboard.JustDown(k.MINUS) || Phaser.Input.Keyboard.JustDown(k.OPEN_BRACKET)) {
+      this.nudgeUserZoom(1 / 1.1);
+    }
   }
 
   private applyCamera(): void {
@@ -363,7 +478,18 @@ export class GameScene extends Phaser.Scene {
       this.frameKickoff();
       return;
     }
-    this.trackPlayer(true);
+    this.currentZoom = this.clampedZoom();
+    if (this.camFollow) {
+      this.trackPlayer(true);
+      return;
+    }
+    this.pinCam(this.camLook.x, this.camLook.y, this.currentZoom);
+  }
+
+  private syncFollowHud(): void {
+    const show = !this.camFollow && this.flow !== 'title' && this.world.matchState !== 'over';
+    this.followBtn?.setVisible(show);
+    this.touch?.setLooking(show);
   }
 
   // -------------------------------------------------------------------------
@@ -410,6 +536,8 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.lineStyle(4, PALETTE.oobEdge, 1);
       this.mapGfx.strokeRect(x, y, z.width, z.height);
     }
+    this.dressChurchyard(map.outOfBounds[0]!);
+    this.dressMemorial(map.outOfBounds[1]!);
 
     for (const h of map.hedges) {
       const hx = h.position.x - h.width / 2;
@@ -456,16 +584,17 @@ export class GameScene extends Phaser.Scene {
     for (const o of map.obstacles) {
       if (!isBuilding(o)) continue;
       const oy = o.position.y - o.height / 2;
+      const fasciaH = Math.min(18, o.height * 0.22);
       const label = this.add
-        .text(o.position.x, oy - 6, o.name, {
+        .text(o.position.x, oy + 4 + fasciaH * 0.5, o.name.toUpperCase(), {
           fontFamily: FONT,
-          fontSize: '13px',
-          color: '#e8d2a8',
+          fontSize: o.kind === 'pub' ? '11px' : '10px',
+          color: '#f3ead4',
           stroke: '#1a100a',
-          strokeThickness: 4,
+          strokeThickness: 3,
           align: 'center',
         })
-        .setOrigin(0.5, 1)
+        .setOrigin(0.5, 0.5)
         .setDepth(1);
       this.adoptWorld(label);
     }
@@ -487,7 +616,7 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  /** Timber pub or brick shop — named Ashbourne high-street flavour, not a blank box. */
+  /** Timber-framed pub or brick shopfront — Ashbourne high street, not a labeled box. */
   private drawBuilding(o: Obstacle): void {
     const g = this.mapGfx;
     if ('radius' in o) {
@@ -502,43 +631,144 @@ export class GameScene extends Phaser.Scene {
     const ox = o.position.x - o.width / 2;
     const oy = o.position.y - o.height / 2;
     const pub = isBuilding(o) && o.kind === 'pub';
+
+    g.fillStyle(PALETTE.cobble, 0.35);
+    g.fillRect(ox - 10, oy + o.height - 4, o.width + 20, 14);
+
+    g.fillStyle(PALETTE.chimney, 1);
+    g.fillRect(ox + o.width * 0.18, oy - 28, 10, 16);
+    g.fillRect(ox + o.width * 0.72, oy - 26, 8, 14);
+
     g.fillStyle(pub ? PALETTE.pubRoof : PALETTE.buildingRoof, 1);
-    g.fillRect(ox + 6, oy - 16, o.width, 20);
+    g.fillTriangle(ox - 6, oy + 4, ox + o.width / 2, oy - 22, ox + o.width + 6, oy + 4);
+    g.fillRect(ox + 4, oy - 8, o.width - 8, 14);
+
     g.fillStyle(pub ? PALETTE.pubTimber : PALETTE.shopBrick, 1);
     g.fillRect(ox, oy, o.width, o.height);
     g.lineStyle(3, PALETTE.buildingEdge, 1);
     g.strokeRect(ox, oy, o.width, o.height);
 
-    const fasciaH = Math.min(18, o.height * 0.22);
-    g.fillStyle(pub ? PALETTE.pubFascia : PALETTE.shopFascia, 1);
-    g.fillRect(ox + 4, oy + 4, o.width - 8, fasciaH);
-
-    const doorW = Math.min(22, o.width * 0.22);
-    const doorH = Math.min(32, o.height * 0.42);
-    g.fillStyle(PALETTE.door, 1);
-    g.fillRect(o.position.x - doorW / 2, oy + o.height - doorH - 2, doorW, doorH);
-
-    const winW = Math.min(18, o.width * 0.16);
-    const winH = Math.min(16, o.height * 0.22);
-    g.fillStyle(PALETTE.window, 0.92);
-    g.fillRect(ox + o.width * 0.18 - winW / 2, oy + o.height * 0.42, winW, winH);
-    g.fillRect(ox + o.width * 0.82 - winW / 2, oy + o.height * 0.42, winW, winH);
-
     if (pub) {
-      g.lineStyle(2, PALETTE.buildingEdge, 1);
-      g.lineBetween(ox + o.width + 2, oy + 8, ox + o.width + 2, oy + 26);
-      g.fillStyle(PALETTE.pubSign, 1);
-      g.fillCircle(ox + o.width + 2, oy + 34, 8);
-      g.lineStyle(2, PALETTE.buildingEdge, 0.9);
-      g.strokeCircle(ox + o.width + 2, oy + 34, 8);
+      g.lineStyle(5, PALETTE.timberBeam, 0.95);
+      g.strokeRect(ox + 3, oy + 3, o.width - 6, o.height - 6);
+      g.lineBetween(ox + 3, oy + o.height * 0.45, ox + o.width - 3, oy + o.height * 0.45);
+      g.lineBetween(ox + o.width * 0.5, oy + 3, ox + o.width * 0.5, oy + o.height - 3);
+      g.lineBetween(ox + 8, oy + 8, ox + o.width * 0.5 - 4, oy + o.height * 0.45 - 4);
+      g.lineBetween(ox + o.width - 8, oy + 8, ox + o.width * 0.5 + 4, oy + o.height * 0.45 - 4);
     } else {
-      const awningY = oy + fasciaH + 4;
-      const stripe = (o.width - 12) / 6;
-      for (let i = 0; i < 6; i++) {
-        g.fillStyle(i % 2 === 0 ? PALETTE.shopAwning : PALETTE.shopAwningAlt, 0.9);
-        g.fillRect(ox + 6 + i * stripe, awningY, stripe, 8);
+      g.lineStyle(1, PALETTE.brickLine, 0.55);
+      for (let y = oy + 8; y < oy + o.height - 4; y += 7) {
+        g.lineBetween(ox + 2, y, ox + o.width - 2, y);
       }
     }
+
+    const fasciaH = Math.min(20, o.height * 0.24);
+    g.fillStyle(pub ? PALETTE.pubFascia : PALETTE.shopFascia, 1);
+    g.fillRect(ox + 4, oy + 4, o.width - 8, fasciaH);
+    g.lineStyle(2, PALETTE.buildingEdge, 0.8);
+    g.strokeRect(ox + 4, oy + 4, o.width - 8, fasciaH);
+
+    const pane = (px: number, py: number, w: number, h: number): void => {
+      g.fillStyle(PALETTE.window, 1);
+      g.fillRect(px, py, w, h);
+      g.fillStyle(PALETTE.windowLite, 0.28);
+      g.fillRect(px + 1, py + 1, w * 0.45, h * 0.4);
+      g.lineStyle(1, PALETTE.timberBeam, 0.9);
+      g.lineBetween(px, py + h / 2, px + w, py + h / 2);
+      g.lineBetween(px + w / 2, py, px + w / 2, py + h);
+      g.strokeRect(px, py, w, h);
+    };
+
+    const winW = Math.min(20, o.width * 0.18);
+    const winH = Math.min(18, o.height * 0.22);
+    const winY = oy + o.height * 0.42;
+    pane(ox + o.width * 0.18 - winW / 2, winY, winW, winH);
+    pane(ox + o.width * 0.82 - winW / 2, winY, winW, winH);
+    if (o.width > 90) {
+      pane(ox + o.width * 0.5 - winW / 2, winY, winW, winH);
+    }
+
+    const doorW = Math.min(24, o.width * 0.24);
+    const doorH = Math.min(36, o.height * 0.44);
+    const dx = o.position.x - doorW / 2;
+    const dy = oy + o.height - doorH - 2;
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(dx, dy, doorW, doorH);
+    g.lineStyle(2, PALETTE.timberBeam, 1);
+    g.strokeRect(dx, dy, doorW, doorH);
+    g.fillStyle(PALETTE.pubSign, 0.85);
+    g.fillCircle(dx + doorW - 5, dy + doorH * 0.5, 2);
+
+    if (pub) {
+      const hx = ox + o.width + 4;
+      g.lineStyle(3, PALETTE.timberBeam, 1);
+      g.lineBetween(hx, oy + 6, hx, oy + 28);
+      g.fillStyle(PALETTE.pubFascia, 1);
+      g.fillRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+      g.lineStyle(2, PALETTE.pubSign, 1);
+      g.strokeRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+      g.fillStyle(PALETTE.pubSign, 1);
+      g.fillCircle(hx, oy + 37, 5);
+    } else {
+      const awningY = oy + fasciaH + 3;
+      const stripe = (o.width - 10) / 8;
+      for (let i = 0; i < 8; i++) {
+        g.fillStyle(i % 2 === 0 ? PALETTE.shopAwning : PALETTE.shopAwningAlt, 0.95);
+        g.fillTriangle(
+          ox + 5 + i * stripe,
+          awningY,
+          ox + 5 + (i + 1) * stripe,
+          awningY,
+          ox + 5 + (i + 0.5) * stripe,
+          awningY + 12,
+        );
+      }
+      g.fillStyle(PALETTE.windowLite, 0.35);
+      g.fillRect(ox + 8, oy + o.height * 0.62, o.width - 16, o.height * 0.18);
+    }
+  }
+
+  /** St Oswald's churchyard — render only; OOB collision unchanged. */
+  private dressChurchyard(z: { position: { x: number; y: number }; width: number; height: number }): void {
+    const g = this.mapGfx;
+    const cx = z.position.x;
+    const cy = z.position.y;
+    g.fillStyle(PALETTE.church, 1);
+    g.fillRect(cx - 28, cy - 8, 56, 48);
+    g.fillStyle(PALETTE.churchRoof, 1);
+    g.fillTriangle(cx - 36, cy - 8, cx, cy - 44, cx + 36, cy - 8);
+    g.fillRect(cx + 10, cy - 58, 14, 28);
+    g.fillStyle(PALETTE.pubSign, 0.9);
+    g.fillCircle(cx + 17, cy - 62, 4);
+    g.fillStyle(PALETTE.windowLite, 0.45);
+    g.fillRect(cx - 10, cy + 8, 10, 16);
+    g.fillRect(cx + 4, cy + 8, 10, 16);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(cx - 6, cy + 22, 12, 18);
+    for (let i = 0; i < 5; i++) {
+      const gx = cx - 50 + i * 22;
+      const gy = cy + 38;
+      g.fillStyle(PALETTE.churchRoof, 1);
+      g.fillRect(gx, gy, 8, 14);
+      g.fillTriangle(gx - 2, gy, gx + 4, gy - 8, gx + 10, gy);
+    }
+  }
+
+  /** Clifton memorial garden — render only; OOB collision unchanged. */
+  private dressMemorial(z: { position: { x: number; y: number }; width: number; height: number }): void {
+    const g = this.mapGfx;
+    const cx = z.position.x;
+    const cy = z.position.y;
+    g.fillStyle(PALETTE.church, 1);
+    g.fillRect(cx - 10, cy + 8, 20, 36);
+    g.fillTriangle(cx - 16, cy + 8, cx, cy - 28, cx + 16, cy + 8);
+    g.fillStyle(PALETTE.millstone, 0.85);
+    g.fillCircle(cx, cy - 4, 8);
+    g.lineStyle(3, PALETTE.millstoneEdge, 0.9);
+    g.strokeCircle(cx, cy - 4, 8);
+    g.fillStyle(PALETTE.hedgeLeaf, 0.5);
+    g.fillCircle(cx - 40, cy + 20, 16);
+    g.fillCircle(cx + 38, cy + 16, 14);
   }
 
   private createSprites(): void {
@@ -648,6 +878,27 @@ export class GameScene extends Phaser.Scene {
 
     this.timerText = this.hudText(VIEW_W / 2, 14, '1:30', '26px', '#f3ead4', 0.5, 0);
     this.scoreText = this.hudText(VIEW_W / 2, 44, 'Up 0 — 0 Down', '18px', '#f3ead4', 0.5, 0);
+
+    this.followBtn = this.adoptHud(
+      this.add
+        .text(VIEW_W / 2, 78, 'Follow  ·  C', {
+          fontFamily: FONT,
+          fontSize: '18px',
+          color: '#1a140c',
+          backgroundColor: '#e4d4a8',
+          padding: { x: 16, y: 6 },
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(14)
+        .setVisible(false)
+        .setInteractive({ useHandCursor: true }),
+    );
+    this.followBtn.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      pointer.event?.stopPropagation?.();
+      this.eatPointer = true;
+      this.returnToFollow();
+    });
 
     this.overlayText = this.adoptHud(
       this.add
@@ -815,7 +1066,7 @@ export class GameScene extends Phaser.Scene {
     this.punchCamera();
   };
 
-  private handlePointer = (pointer: Phaser.Input.Pointer): void => {
+  private handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
     void unlockAudio();
     if (this.eatPointer) {
       this.eatPointer = false;
@@ -825,34 +1076,125 @@ export class GameScene extends Phaser.Scene {
       this.beginPlacement();
       return;
     }
-    // DOM pads (Goal / Rip / Wriggle / Kick / Sprint / Switch) sit above the
-    // canvas — never treat those presses as a pitch tap-to-select.
     const evTarget = pointer.event?.target;
-    if (evTarget instanceof Element && evTarget.closest('#touch-layer .pad-btn')) {
+    if (evTarget instanceof Element && evTarget.closest('#touch-layer .pad-btn, #touch-layer #follow-btn')) {
+      return;
+    }
+    if (this.minimapContains(pointer.x, pointer.y)) {
+      this.panToMinimap(pointer.x, pointer.y);
       return;
     }
     const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    // Goal first only while actually goaling: teammates pile on the millstone.
     if (this.flow === 'playing' && this.atStone() && this.millstoneHit(worldPt.x, worldPt.y)) {
       this.handleGoalTap();
       return;
     }
-    const tappedMate = teammateAtPoint(this.world, worldPt.x, worldPt.y);
-    if (tappedMate) {
-      if (this.flow === 'placing' || this.flow === 'playing') {
-        if (switchControl(this.world, tappedMate)) {
-          this.clearPassCharge();
-          this.retargetPlace();
-          this.punchCamera();
-        }
+    if (this.trySelectTeammate(worldPt.x, worldPt.y)) return;
+    this.panPointerId = pointer.id;
+    this.panLast.x = pointer.x;
+    this.panLast.y = pointer.y;
+    this.panDragging = false;
+  };
+
+  private handlePointerMove = (pointer: Phaser.Input.Pointer): void => {
+    if (this.flow === 'title') return;
+    const a = this.input.pointer1;
+    const b = this.input.pointer2;
+    if (a.isDown && b.isDown) {
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const midX = (a.x + b.x) / 2;
+      const midY = (a.y + b.y) / 2;
+      if (this.pinchDist <= 1) {
+        this.pinchDist = dist;
+        this.pinchMid.x = midX;
+        this.pinchMid.y = midY;
+        return;
       }
+      this.nudgeUserZoom(dist / this.pinchDist);
+      this.pinchDist = dist;
+      this.panByScreen(this.pinchMid.x - midX, this.pinchMid.y - midY);
+      this.pinchMid.x = midX;
+      this.pinchMid.y = midY;
+      this.panDragging = true;
       return;
     }
-    if (this.flow === 'placing') {
-      if (!this.placeTargetId) return;
-      placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
-    }
+    this.pinchDist = 0;
+    if (this.panPointerId !== pointer.id) return;
+    const dx = pointer.x - this.panLast.x;
+    const dy = pointer.y - this.panLast.y;
+    if (!this.panDragging && Math.hypot(dx, dy) < CAMERA_DRAG_PX) return;
+    this.panDragging = true;
+    this.panByScreen(-dx, -dy);
+    this.panLast.x = pointer.x;
+    this.panLast.y = pointer.y;
   };
+
+  private handlePointerUp = (pointer: Phaser.Input.Pointer): void => {
+    this.pinchDist = 0;
+    if (this.panPointerId !== pointer.id) {
+      this.eatPointer = false;
+      return;
+    }
+    const dragged = this.panDragging;
+    this.panPointerId = null;
+    this.panDragging = false;
+    this.eatPointer = false;
+    if (dragged) return;
+    const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    if (this.trySelectTeammate(worldPt.x, worldPt.y)) return;
+    if (this.flow !== 'placing' || !this.placeTargetId) return;
+    placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
+  };
+
+  /** Screen-stable hit size so zoomed-out look view can still tap a mate. */
+  private tapSlop(): number {
+    const z = Math.max(CAMERA_ZOOM_MIN, this.cameras.main.zoom);
+    return Math.max(56, 52 / z);
+  }
+
+  private trySelectTeammate(x: number, y: number): boolean {
+    if (this.flow !== 'placing' && this.flow !== 'playing') return false;
+    const tappedMate = teammateAtPoint(this.world, x, y, this.tapSlop());
+    if (!tappedMate) return false;
+    if (!switchControl(this.world, tappedMate)) return false;
+    this.clearPassCharge();
+    this.retargetPlace();
+    this.punchCamera();
+    return true;
+  }
+
+  private handleWheel = (
+    pointer: Phaser.Input.Pointer,
+    _currentlyOver: Phaser.GameObjects.GameObject[],
+    _dx: number,
+    dy: number,
+  ): void => {
+    if (this.flow === 'title') return;
+    void pointer;
+    this.nudgeUserZoom(dy > 0 ? 0.92 : 1.08);
+  };
+
+  private minimapOrigin(): { ox: number; oy: number } {
+    return {
+      ox: VIEW_W - MINIMAP_W - Math.max(MINIMAP_PAD, this.hudPad.r),
+      oy: Math.max(MINIMAP_PAD, this.hudPad.t),
+    };
+  }
+
+  private minimapContains(x: number, y: number): boolean {
+    if (this.flow !== 'playing' && this.flow !== 'placing') return false;
+    const { ox, oy } = this.minimapOrigin();
+    return x >= ox && x <= ox + MINIMAP_W && y >= oy && y <= oy + MINIMAP_H;
+  }
+
+  private panToMinimap(px: number, py: number): void {
+    const { ox, oy } = this.minimapOrigin();
+    const map = this.world.map;
+    this.breakFollow();
+    this.camLook.x = ((px - ox) / MINIMAP_W) * map.width;
+    this.camLook.y = ((py - oy) / MINIMAP_H) * map.height;
+    this.syncFollowHud();
+  }
 
   /** After a control switch, map-tap placement must target an NPC, not the player. */
   private retargetPlace(): void {
@@ -959,6 +1301,8 @@ export class GameScene extends Phaser.Scene {
     if (this.world.matchState === 'over') this.flow = 'playing';
     this.syncTouchFlow();
 
+    this.applyLookKeys(dt);
+    this.applyZoomKeys();
     this.render();
   }
 
@@ -967,10 +1311,16 @@ export class GameScene extends Phaser.Scene {
     let mx = 0;
     let my = 0;
     if (k) {
-      if (k.W.isDown || k.UP.isDown) my -= 1;
-      if (k.S.isDown || k.DOWN.isDown) my += 1;
-      if (k.A.isDown || k.LEFT.isDown) mx -= 1;
-      if (k.D.isDown || k.RIGHT.isDown) mx += 1;
+      if (k.W.isDown) my -= 1;
+      if (k.S.isDown) my += 1;
+      if (k.A.isDown) mx -= 1;
+      if (k.D.isDown) mx += 1;
+      if (this.camFollow) {
+        if (k.UP.isDown) my -= 1;
+        if (k.DOWN.isDown) my += 1;
+        if (k.LEFT.isDown) mx -= 1;
+        if (k.RIGHT.isDown) mx += 1;
+      }
     }
     const keyLen = Math.hypot(mx, my);
     if (keyLen > 0) {
@@ -1029,9 +1379,13 @@ export class GameScene extends Phaser.Scene {
     }
     const crowdFactor = Math.min(1, nearby / 8);
     const targetZoom = CAMERA_BASE_ZOOM - CAMERA_CROWD_ZOOM_OUT * crowdFactor;
-    this.currentZoom += (targetZoom - this.currentZoom) * ZOOM_LERP;
+    if (this.camFollow) {
+      this.followZoom += (targetZoom - this.followZoom) * ZOOM_LERP;
+    }
+    this.currentZoom = this.clampedZoom();
     this.applyCamera();
     this.hudCam.setScroll(0, 0);
+    this.syncFollowHud();
 
     this.markerGfx.clear();
 
@@ -1245,6 +1599,11 @@ export class GameScene extends Phaser.Scene {
       this.setCaption(`${label} — that way`);
       return;
     }
+    if (!this.camFollow && !this.atStone()) {
+      const copy = this.touch?.active ? 'Look — tap Follow to return' : 'Look — Follow / C to return · tap a teammate';
+      this.setCaption(copy);
+      return;
+    }
 
     if (this.millstoneClimax()) {
       const taps = this.world.goaling.taps;
@@ -1355,5 +1714,13 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(ox + p.position.x * sx, oy + p.position.y * sy, 4);
     g.lineStyle(1, 0x000000, 0.8);
     g.strokeCircle(ox + p.position.x * sx, oy + p.position.y * sy, 4);
+
+    const z = Math.max(CAMERA_ZOOM_MIN, this.currentZoom);
+    const vw = VIEW_W / z;
+    const vh = VIEW_H / z;
+    const cx = this.camLook.x;
+    const cy = this.camLook.y;
+    g.lineStyle(1, PALETTE.youRing, this.camFollow ? 0.45 : 0.95);
+    g.strokeRect(ox + (cx - vw / 2) * sx, oy + (cy - vh / 2) * sy, vw * sx, vh * sy);
   }
 }

@@ -23,7 +23,6 @@ import {
   HUG_NEIGHBOR_RADIUS,
 } from './hug.js';
 import { opponentGoalFor } from './maps.js';
-import { STAMINA_RIP_DRAIN } from './stamina.js';
 import type { Input, NPC, Team, Vec2 } from './types.js';
 import type { World } from './world.js';
 
@@ -34,8 +33,10 @@ const AIM_DEADZONE = 0.15;
 export const RIP_REACH = HUG_NEIGHBOR_RADIUS;
 /** Several bodies nearby — a real scrum, not a 1v1. */
 export const RIP_MIN_NEIGHBORS = 3;
+/** Packed hug around an opposing carrier: 2 neighbours is enough to start the strip. */
+export const RIP_CARRIER_MIN_NEIGHBORS = 2;
 /** Hold time to pop the stone once Rip is eligible. */
-export const RIP_SUCCESS_SECONDS = 0.5;
+export const RIP_SUCCESS_SECONDS = 0.4;
 /** Pop speed (px/s) after the stone is already placed outside the pack. */
 export const RIP_POP_SPEED = 340;
 /** Ripper cannot re-grab while the stone is leaving the scrum. */
@@ -48,11 +49,11 @@ export const RIP_GHOST_TICKS = 12;
 /** Extra gap past the pack's outer skin so the stone is visibly free. */
 export const RIP_CLEAR_PADDING = 26;
 /** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
-export const RIP_GRACE_TICKS = 18;
+export const RIP_GRACE_TICKS = 24;
 /** After an NPC pops the stone, nobody NPC-rips again until this many ticks. */
 export const NPC_RIP_COOLDOWN_TICKS = 210;
-/** Same hold as the player — contested, not an instant strip. */
-export const NPC_RIP_SUCCESS_SECONDS = RIP_SUCCESS_SECONDS;
+/** NPC hold is slightly longer so a player strip in a packed hug lands first. */
+export const NPC_RIP_SUCCESS_SECONDS = 0.5;
 
 /** Touching this many bodies counts as “in contact with the hug”. */
 export const WRIGGLE_CONTACT_NEIGHBORS = 2;
@@ -101,7 +102,15 @@ export function canRip(world: World): boolean {
   if (world.player.hasBall) return false;
   if (world.ball.ownerId === world.player.id) return false;
   if (distToBall(world) > RIP_REACH) return false;
-  return countHugNeighbors(world, world.player.id, world.player.position) >= RIP_MIN_NEIGHBORS;
+  const neighbors = countHugNeighbors(world, world.player.id, world.player.position);
+  const ownerId = world.ball.ownerId;
+  if (ownerId !== null) {
+    const carrier = charPose(world, ownerId);
+    if (carrier && carrier.team !== world.player.team) {
+      return neighbors >= RIP_CARRIER_MIN_NEIGHBORS;
+    }
+  }
+  return neighbors >= RIP_MIN_NEIGHBORS;
 }
 
 export function canWriggle(world: World): boolean {
@@ -410,7 +419,6 @@ export function tickNpcRip(world: World, dt: number, playerWrestling: boolean): 
 
   world._npcRipId = npc.id;
   world._npcRipPressure += dt / NPC_RIP_SUCCESS_SECONDS;
-  npc.stamina = Math.max(0, npc.stamina - STAMINA_RIP_DRAIN * dt);
   if (world._npcRipPressure < 1) return;
 
   popBallFree(world, npcRipDirection(world, npc), RIP_POP_SPEED, npc.id);

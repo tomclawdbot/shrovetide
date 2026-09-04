@@ -237,6 +237,20 @@
         padding: 0 14px;
         align-self: center;
       }
+      #follow-btn {
+        grid-column: 3;
+        grid-row: 1;
+        justify-self: end;
+        align-self: start;
+        min-width: 84px;
+        height: 36px;
+        border-radius: 18px;
+        font-size: 16px;
+        padding: 0 14px;
+        background: #e4d4a8;
+        color: var(--dusk);
+        z-index: 3;
+      }
       #switch-btn {
         grid-column: 3;
         grid-row: 2;
@@ -371,6 +385,7 @@
           <button id="kick-btn" class="pad-btn" type="button">Kick</button>
         </div>
         <button id="switch-btn" class="pad-btn" type="button">Switch</button>
+        <button id="follow-btn" class="pad-btn" type="button" hidden>Follow</button>
         <button id="ready-btn" class="pad-btn" type="button">Whistle</button>
         <button id="goal-btn" class="pad-btn" type="button" hidden>Goal</button>
       </div>

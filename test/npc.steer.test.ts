@@ -8,8 +8,13 @@ import Matter from 'matter-js';
 import {
   CONTEST_STEER_RADIUS,
   createWorld,
+  EXHAUSTED_SPEED_MULT,
+  goalFor,
+  isAmongClosestHolders,
   isCarrierAtOpponentGoal,
   isTurnUpSwarm,
+  npcIsBursting,
+  npcSpeedCap,
   npcSteerTarget,
   opponentGoalFor,
   SCORE_DRIVE_FORCE_MULT,
@@ -477,4 +482,90 @@ test('npc: carrier at the home millstone cannot score', () => {
   assert.equal(world.score[0], 0);
   assert.equal(world.score[1], 0);
   assert.equal(world.goaling.taps, 0);
+});
+
+test('npc: chasing a loose stone spends Breath; spent Breath kills the burst', () => {
+  const world = createWorld({ seed: 4, playerTeam: 0 });
+  startMatch(world);
+  const field = openMid(world);
+  parkBall(world, field.x, field.y);
+  world.ball.ownerId = null;
+  world.player.hasBall = false;
+  const hunter = npcOfTeam(world, 1);
+  isolate(world, hunter.id, field.x - 420, field.y);
+  hunter.stamina = 100;
+  assert.equal(npcIsBursting(hunter, world), true, 'loose-ball chase is a Sprint-like burst');
+  const capFresh = npcSpeedCap(hunter, world);
+  runTicks(world, IDLE, 90);
+  assert.ok(
+    hunter.stamina < 100 - 20,
+    `open-field chase should spend Breath, stamina=${hunter.stamina.toFixed(1)}`,
+  );
+  hunter.stamina = 0;
+  const capSpent = npcSpeedCap(hunter, world);
+  assert.ok(
+    capSpent < capFresh * 0.75,
+    `spent Breath must drop the cap (${capSpent.toFixed(0)} vs ${capFresh.toFixed(0)})`,
+  );
+  assert.ok(
+    Math.abs(capSpent - NPC_MAX_SPEED * EXHAUSTED_SPEED_MULT) < 8,
+    `spent chase cap should sit on exhausted walk, got ${capSpent.toFixed(1)}`,
+  );
+});
+
+test('npc: idle hold regenerates Breath', () => {
+  const world = createWorld({ seed: 5, playerTeam: 0 });
+  startMatch(world);
+  const holder = world.npcs.find((n) => n.team === world.player.team && n.role === 'hold');
+  assert.ok(holder);
+  const home = goalFor(holder!.team, world.map);
+  isolate(world, holder!.id, home.x, home.y);
+  holder!.holdPosition = { x: home.x, y: home.y };
+  holder!.stamina = 12;
+  holder!.velocity = { x: 0, y: 0 };
+  // Park the stone on the far millstone so this holder is covering, not chasing.
+  const away = opponentGoalFor(holder!.team, world.map);
+  parkBall(world, away.x, away.y);
+  world.ball.ownerId = world.player.id;
+  world.player.hasBall = true;
+  teleportId(world, world.player.id, away.x - 80, away.y);
+  runTicks(world, IDLE, 90);
+  assert.ok(
+    holder!.stamina > 12 + 8,
+    `idle cover should regen Breath (${holder!.stamina.toFixed(1)})`,
+  );
+});
+
+test('npc: hold reclaimers chase an enemy carrier; others cover the home millstone', () => {
+  const world = createWorld({ seed: 5, playerTeam: 0 });
+  startMatch(world);
+  const mid = { x: world.map.width * 0.5, y: world.map.height * 0.82 };
+  const enemy = world.npcs.find((n) => n.team !== world.player.team && n.role === 'chase');
+  assert.ok(enemy);
+  isolate(world, enemy!.id, mid.x, mid.y);
+  giveBallTo(world, enemy!.id);
+
+  const holders = world.npcs.filter((n) => n.team === world.player.team && n.role === 'hold');
+  assert.ok(holders.length >= 4, 'home side should have hold bodies');
+  const home = goalFor(0, world.map);
+  holders.forEach((h, i) => {
+    teleportId(world, h.id, home.x + 80 + i * 30, home.y + 120 + (i % 2) * 40);
+    h.holdPosition = { ...h.position };
+  });
+
+  const reclaimers = holders.filter((h) => isAmongClosestHolders(h, world, 2));
+  assert.equal(reclaimers.length, 2);
+  for (const h of reclaimers) {
+    const t = npcSteerTarget(h, world);
+    assert.ok(t);
+    assert.equal(t, enemy!.position, `${h.id} should hunt the enemy carrier`);
+  }
+  const cover = holders.filter((h) => !isAmongClosestHolders(h, world, 2));
+  assert.ok(cover.length >= 1);
+  for (const h of cover) {
+    const t = npcSteerTarget(h, world);
+    assert.ok(t);
+    assert.equal(t!.x, home.x, `${h.id} should fall back to the home millstone`);
+    assert.equal(t!.y, home.y);
+  }
 });
