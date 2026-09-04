@@ -240,6 +240,8 @@ export class GameScene extends Phaser.Scene {
   private kickoffLeft = 0;
   private lastThumpAt = 0;
   private lastWall = 0;
+  private lastScore: [number, number] = [0, 0];
+  private lastEventDay: 1 | 2 = 1;
 
   constructor() {
     super('GameScene');
@@ -266,6 +268,8 @@ export class GameScene extends Phaser.Scene {
     this.teach = 'move';
     this.scoredJuice = false;
     this.lastGoalingTaps = 0;
+    this.lastScore = [0, 0];
+    this.lastEventDay = 1;
     this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
 
     this.cameras.main.setBackgroundColor(PALETTE.bg);
@@ -958,7 +962,7 @@ export class GameScene extends Phaser.Scene {
     );
     this.staminaLabel = this.hudText(pad, pad + 26, 'Breath', '16px', '#f3ead4');
 
-    this.timerText = this.hudText(VIEW_W / 2, 14, '1:30', '26px', '#f3ead4', 0.5, 0);
+    this.timerText = this.hudText(VIEW_W / 2, 14, 'Day 1 · 5:00', '26px', '#f3ead4', 0.5, 0);
     this.scoreText = this.hudText(VIEW_W / 2, 44, 'Up 0 — 0 Down', '18px', '#f3ead4', 0.5, 0);
 
     this.followBtn = this.adoptHud(
@@ -1003,7 +1007,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nCarry the stone to their millstone.\nThree taps to goal.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
+          "SHROVETIDE\n\nTwo days · five minutes each.\nCarry the stone to their millstone.\nThree taps to goal.\n\nGoal inside three minutes → toss-up.\nLate goal or time ends the day.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
           {
             fontFamily: FONT,
             fontSize: '24px',
@@ -1399,6 +1403,9 @@ export class GameScene extends Phaser.Scene {
     this.teach = 'move';
     this.lastWall = this.now();
     this.kickoffLeft = KICKOFF_SECONDS;
+    this.lastScore = [...this.world.score];
+    this.lastEventDay = this.world.eventDay;
+    this.scoredJuice = false;
     this.syncTouchFlow();
     this.layoutHud();
   }
@@ -1795,25 +1802,32 @@ export class GameScene extends Phaser.Scene {
     const remain = Math.max(0, this.world.matchTimeRemaining);
     const mm = Math.floor(remain / 60);
     const ss = Math.floor(remain % 60).toString().padStart(2, '0');
-    this.timerText.setText(`${mm}:${ss}`);
+    this.timerText.setText(`Day ${this.world.eventDay} · ${mm}:${ss}`);
     this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
+
+    this.noteEventBeats();
 
     this.pipGfx.clear();
     const over = this.world.matchState === 'over' && this.world.winState;
     if (over) {
       const ws = this.world.winState!;
+      const tally = `Up ${this.world.score[0]} — ${this.world.score[1]} Down`;
       let msg: string;
-      if (ws.winner === null) msg = 'Time. Nobody goaled.';
-      else {
+      if (ws.winner === null) {
+        msg =
+          this.world.score[0] === 0 && this.world.score[1] === 0
+            ? 'Two days. Nobody goaled.'
+            : `Draw.\n${tally}`;
+      } else {
         const teamLabel = ws.winner === 0 ? "Up'Ards" : "Down'Ards";
-        msg = `${teamLabel} have it.`;
+        msg = `${teamLabel} have it.\n${tally}`;
       }
       this.overlayText.setText(msg);
       this.overlayText.setVisible(true);
       this.againBtn.setVisible(true);
       this.againBtn.setInteractive({ useHandCursor: true });
       this.setCaption('');
-      if (ws.reason === 'goal' && !this.scoredJuice) {
+      if (!this.scoredJuice) {
         this.scoredJuice = true;
         this.hitStopLeft = 0.24;
       }
@@ -1822,6 +1836,30 @@ export class GameScene extends Phaser.Scene {
       this.againBtn.setVisible(false);
       this.drawPrompts();
     }
+  }
+
+  /** Early-goal toss-up and Day 2 start — juice without ending the event. */
+  private noteEventBeats(): void {
+    if (this.world.matchState !== 'playing') {
+      this.lastScore = [...this.world.score];
+      this.lastEventDay = this.world.eventDay;
+      return;
+    }
+    const scored =
+      this.world.score[0] > this.lastScore[0] || this.world.score[1] > this.lastScore[1];
+    const dayRolled = this.world.eventDay === 2 && this.lastEventDay === 1;
+    if (scored && !dayRolled) {
+      this.hitStopLeft = Math.max(this.hitStopLeft, 0.2);
+      const up = this.world.score[0] > this.lastScore[0];
+      const side = up ? "Up'Ards" : "Down'Ards";
+      this.flash(`${side} goal — toss-up`);
+    }
+    if (dayRolled) {
+      this.kickoffLeft = Math.max(this.kickoffLeft, 1.6);
+      this.flash('Day 2 — toss-up');
+    }
+    this.lastScore = [...this.world.score];
+    this.lastEventDay = this.world.eventDay;
   }
 
   private placeCountdown(): string {
@@ -1841,6 +1879,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.kickoffLeft > 0) {
+      if (this.world.eventDay === 2 && this.now() - this.playStartedAt > 2000) {
+        this.setCaption('DAY 2 — ball up at the turn-up');
+        return;
+      }
       const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
       const side = this.world.player.team === 0 ? "YOU ARE UP'ARDS" : "YOU ARE DOWN'ARDS";
       this.setCaption(`${side} — play to ${mill}`);

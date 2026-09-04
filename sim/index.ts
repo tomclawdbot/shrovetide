@@ -163,12 +163,19 @@ export {
   tickNpcStamina,
 } from './npc.js';
 
-// Match state machine + scoring
+// Match state machine + scoring (two-day event)
 export {
   startMatch,
   endMatch,
+  endDay,
+  endEvent,
+  scoreGoal,
+  tossUpBall,
   tickMatch,
+  dayElapsedSeconds,
+  isEarlyGoalWindow,
   DEFAULT_MATCH_DURATION_SECONDS,
+  EARLY_GOAL_WINDOW_SECONDS,
   GOAL_TAP_SPACING_TICKS,
   GOAL_TAP_MAX_CHAIN_TICKS,
 } from './match.js';

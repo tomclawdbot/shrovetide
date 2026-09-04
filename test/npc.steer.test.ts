@@ -432,7 +432,7 @@ test('npc: SCORE_DRIVE force is a scoring nudge, not a rocket multiplier', () =>
   );
 });
 
-test('npc: carrier at the scoring millstone auto-taps and goals without the player', () => {
+test('npc: carrier at the scoring millstone auto-taps; early goal tosses up', () => {
   const world = createWorld({ seed: 7, playerTeam: 0 });
   startMatch(world);
   const hunter = npcOfTeam(world, 1);
@@ -448,10 +448,28 @@ test('npc: carrier at the scoring millstone auto-taps and goals without the play
   assert.equal(world.matchState, 'playing', 'one tap is not a goal');
 
   runTicks(world, IDLE, 100);
-  assert.equal(world.matchState, 'over', 'NPC 3-tap contest should finish the match');
+  assert.equal(world.matchState, 'playing', 'early NPC goal continues the day');
+  assert.equal(world.score[1], 1);
+  assert.equal(world.score[0], 0);
+  assert.equal(world.ball.ownerId, null, 'toss-up after early goal');
+  assert.equal(world.winState, null);
+});
+
+test('npc: late goal on day 2 ends the event for the scoring side', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  world.eventDay = 2;
+  world.matchTimeRemaining = 90;
+  const hunter = npcOfTeam(world, 1);
+  const goal = opponentGoalFor(hunter.team, world.map);
+  isolate(world, hunter.id, goal.x, goal.y - 24);
+  giveBallTo(world, hunter.id);
+  runTicks(world, IDLE, 120);
+  assert.equal(world.matchState, 'over', 'late day-2 goal finishes the event');
   assert.equal(world.winState?.reason, 'goal');
   assert.equal(world.winState?.scorerId, hunter.id);
   assert.equal(world.winState?.scorerTeam, 1);
+  assert.equal(world.winState?.winner, 1);
   assert.equal(world.score[1], 1);
   assert.equal(world.score[0], 0);
 });
@@ -459,6 +477,8 @@ test('npc: carrier at the scoring millstone auto-taps and goals without the play
 test('npc: team 0 carrier goals at Sturston, not home Clifton', () => {
   const world = createWorld({ seed: 7, playerTeam: 0 });
   startMatch(world);
+  world.eventDay = 2;
+  world.matchTimeRemaining = 90;
   const hunter = npcOfTeam(world, 0);
   const down = opponentGoalFor(0, world.map);
   isolate(world, hunter.id, down.x, down.y - 24);

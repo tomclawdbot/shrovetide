@@ -111,15 +111,15 @@ export interface GoalTapState {
   maxChainTicks: number;
 }
 
-/** Match result once state === 'over'. */
+/** Match result once state === 'over' (after both days). */
 export interface WinState {
-  /** Winning team, or null for a draw. */
+  /** Winning team by aggregate score, or null for a draw. */
   winner: Team | null;
-  /** Why the match ended. */
+  /** How the final day ended. */
   reason: 'goal' | 'time';
-  /** id of the character who scored (null if draw). */
+  /** id of the character who scored the closing goal (null if time / draw). */
   scorerId: string | null;
-  /** Team of the scorer (for the win screen label). */
+  /** Team of that scorer (for the win screen label). */
   scorerTeam: Team | null;
 }
 
@@ -134,12 +134,14 @@ export interface SimState {
   rngSeed: number;
   /** Current match state. */
   matchState: MatchState;
-  /** Seconds remaining in the match. */
+  /** Day of the two-day event (1 or 2). */
+  eventDay: 1 | 2;
+  /** Seconds remaining on the current day's clock. */
   matchTimeRemaining: number;
-  /** [team0Score, team1Score]. */
+  /** Aggregate [team0Score, team1Score] across both days. */
   score: [number, number];
   /** Goaling tap-progress state. */
   goaling: GoalTapState;
-  /** Set when matchState === 'over'. */
+  /** Set when matchState === 'over' (event finished). */
   winState: WinState | null;
 }
