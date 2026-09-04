@@ -22,11 +22,15 @@ import {
   isInWater,
   isOnBridge,
   isWalkable,
+  MILL_CLIFTON,
+  MILL_STURSTON,
   moveControlled,
+  opponentGoalFor,
   PASS_PICKUP_IMMUNITY_TICKS,
   quickSwitch,
   releasePass,
   RIVER_SPEED_MULT,
+  scoringGoalMarker,
   SQUAD_SIZE,
   speedMultiplierAt,
   startMatch,
@@ -736,6 +740,30 @@ test('map: millstones sit farther apart on the scaled town', () => {
   const span = Math.hypot(b.x - a.x, b.y - a.y);
   assert.ok(span > 2120 * 1.4, `millstones should be farther than the old town (${span})`);
   assert.equal(span, 2120 * TOWN_SCALE);
+});
+
+test('map: Clifton is the Down mill (west), Sturston the Up mill (east)', () => {
+  const clifton = ASHBOURNE_TOWN.goals.find((g) => g.name === MILL_CLIFTON)!;
+  const sturston = ASHBOURNE_TOWN.goals.find((g) => g.name === MILL_STURSTON)!;
+  assert.ok(clifton.position.x < sturston.position.x, 'Clifton is west, Sturston east');
+  assert.equal(clifton.team, 0, 'Up defend Clifton (Down score there)');
+  assert.equal(sturston.team, 1, 'Down defend Sturston (Up score there)');
+  const upScores = scoringGoalMarker(0, ASHBOURNE_TOWN);
+  const downScores = scoringGoalMarker(1, ASHBOURNE_TOWN);
+  assert.equal(upScores.name, MILL_STURSTON);
+  assert.equal(downScores.name, MILL_CLIFTON);
+  assert.equal(opponentGoalFor(0, ASHBOURNE_TOWN).x, sturston.position.x);
+  assert.equal(opponentGoalFor(1, ASHBOURNE_TOWN).x, clifton.position.x);
+});
+
+test('world: Down player spawns east and scores at Clifton', () => {
+  const world = createWorld({ seed: 1, playerTeam: 1 });
+  assert.equal(world.player.team, 1);
+  assert.ok(world.player.id.startsWith('down-'));
+  assert.ok(world.player.position.x > world.map.width * 0.5, 'Down spawn on the east half');
+  const clifton = scoringGoalMarker(1, world.map);
+  assert.equal(clifton.name, MILL_CLIFTON);
+  assert.ok(clifton.position.x < world.player.position.x, 'Clifton is west of a Down spawn');
 });
 
 test('map: buildings read as named Ashbourne pubs and shops', () => {
