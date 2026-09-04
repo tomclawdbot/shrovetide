@@ -109,7 +109,15 @@ export {
   type WrestleTick,
 } from './wrestle.js';
 
-export { GOAL_CONTEST_RADIUS, GOAL_DEFEND_SPEED_MULT, threatenedGoalTeam } from './npc.js';
+export {
+  CONTEST_STEER_RADIUS,
+  GOAL_CONTEST_RADIUS,
+  GOAL_DEFEND_SPEED_MULT,
+  SHEPHERD_RADIUS,
+  TURN_UP_SWARM_RADIUS,
+  npcSteerTarget,
+  threatenedGoalTeam,
+} from './npc.js';
 
 // Match state machine + scoring
 export {

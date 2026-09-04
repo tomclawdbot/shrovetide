@@ -1,6 +1,8 @@
 // sim/npc.ts — NPC AI steering. Role-based (TICKET 002):
-//   - chase: full commitment to ball/player (the "hug" from TICKET 001)
-//   - hold: stay near holdPosition, but engage ball if it's within range
+//   - chase: swarm a loose stone; once carrying / shepherding, drive the
+//     millstone that team scores at (opponentGoalFor) — never their home stone
+//   - hold: stay near holdPosition, but engage ball if it's within range;
+//     collapse onto a carrier who threatens their own millstone
 //
 // NPCs are steered via matter.js applyForce; obstacles deflect them naturally
 // via collision (the "hug" still works). Terrain slow-down (river / hedge)
@@ -8,9 +10,9 @@
 // Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
-import { speedMultiplierAt } from './maps.js';
+import { opponentGoalFor, speedMultiplierAt } from './maps.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
-import type { Team, Vec2 } from './types.js';
+import type { NPC, Team, Vec2 } from './types.js';
 import { countHugNeighbors, hugShoveAuthority, MOVEMENT, type World } from './world.js';
 
 /**
@@ -31,6 +33,22 @@ const LOOSE_BALL_SPEED_MULT = 1.22;
 export const GOAL_CONTEST_RADIUS = 680;
 /** Speed boost for NPCs defending their threatened millstone. */
 export const GOAL_DEFEND_SPEED_MULT = 1.16;
+/**
+ * Kickoff: stay in a pure swarm while the stone is still at the turn-up.
+ * After it squirts clear, chase intelligence drives the scoring end.
+ */
+export const TURN_UP_SWARM_RADIUS = 240;
+/** Close enough to a loose stone to shepherd it instead of only swarming. */
+export const SHEPHERD_RADIUS = 96;
+/**
+ * The single closest contesting body may start driving the scoring end
+ * from a little farther out than contact — still on the stone, not mid-pitch.
+ */
+export const CONTEST_STEER_RADIUS = 160;
+/** Lead past a loose stone toward the millstone that team scores at. */
+const SHEPHERD_LEAD = 64;
+/** Lead ahead of a teammate carrier so chase support advances the right way. */
+const ESCORT_LEAD = 100;
 
 export function steerNPCs(world: World): void {
   const threatened = threatenedGoalTeam(world);
@@ -86,6 +104,16 @@ export function threatenedGoalTeam(world: World): Team | null {
   return null;
 }
 
+/**
+ * Public steer target for tests and HUD/debug.
+ * Carriers and shepherds aim at the millstone their team scores at.
+ */
+export function npcSteerTarget(npc: NPC, world: World): Vec2 | null {
+  const threatened = threatenedGoalTeam(world);
+  const collapsing = threatened !== null && npc.team === threatened;
+  return pickTarget(npc, world, collapsing);
+}
+
 function contestFocus(world: World): Vec2 {
   if (world.ball.ownerId !== null) {
     const carrier = findCharacter(world, world.ball.ownerId);
@@ -96,20 +124,45 @@ function contestFocus(world: World): Vec2 {
 
 /** Pick the target position for an NPC based on its role + ball/player state. */
 function pickTarget(
-  npc: World['npcs'][number],
+  npc: NPC,
   world: World,
   collapsing: boolean,
 ): Vec2 | null {
-  if (collapsing || npc.role === 'chase') {
-    // Commit immediately — a 420px hesitate left kickoff as open grass.
-    if (world.ball.ownerId !== null) {
-      const carrier = findCharacter(world, world.ball.ownerId);
+  const scoreAt = opponentGoalFor(npc.team, world.map);
+
+  // Carrier: always the millstone this team scores at — never home stone.
+  if (world.ball.ownerId === npc.id) {
+    return { x: scoreAt.x, y: scoreAt.y };
+  }
+
+  // Threatened hold/chase: crash the stone to stop a breakaway.
+  if (collapsing) {
+    return contestFocus(world);
+  }
+
+  if (world.ball.ownerId !== null) {
+    const carrier = findCharacter(world, world.ball.ownerId);
+    if (npc.role === 'chase') {
+      if (carrier && carrier.team === npc.team) {
+        return advanceToward(carrier.position, scoreAt, ESCORT_LEAD);
+      }
       if (carrier) return carrier.position;
+    }
+    return holdTarget(npc, world);
+  }
+
+  // Loose stone: swarm at the turn-up; once it squirts, shepherd the scoring end.
+  if (npc.role === 'chase') {
+    if (!isTurnUpSwarm(world) && isShepherding(npc, world)) {
+      return advanceToward(world.ball.position, scoreAt, SHEPHERD_LEAD);
     }
     return world.ball.position;
   }
 
-  // HOLD — guard holdPosition, but crash the loose ball from a long way out.
+  return holdTarget(npc, world);
+}
+
+function holdTarget(npc: NPC, world: World): Vec2 {
   if (!npc.holdPosition) {
     return world.ball.position;
   }
@@ -123,7 +176,50 @@ function pickTarget(
   return npc.holdPosition;
 }
 
-function findCharacter(world: World, id: string): { position: Vec2 } | null {
+function isTurnUpSwarm(world: World): boolean {
+  const tu = world.map.turnUp;
+  const dx = world.ball.position.x - tu.x;
+  const dy = world.ball.position.y - tu.y;
+  return Math.hypot(dx, dy) < TURN_UP_SWARM_RADIUS;
+}
+
+function isShepherding(npc: NPC, world: World): boolean {
+  const dx = world.ball.position.x - npc.position.x;
+  const dy = world.ball.position.y - npc.position.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= SHEPHERD_RADIUS) return true;
+  return closestContestingId(world) === npc.id && dist <= CONTEST_STEER_RADIUS;
+}
+
+function closestContestingId(world: World): string {
+  let bestId = world.player.id;
+  let bestD = hypot2(world.player.position, world.ball.position);
+  for (const other of world.npcs) {
+    const d = hypot2(other.position, world.ball.position);
+    if (d < bestD) {
+      bestD = d;
+      bestId = other.id;
+    }
+  }
+  return bestId;
+}
+
+function advanceToward(from: Vec2, goal: { x: number; y: number }, lead: number): Vec2 {
+  const dx = goal.x - from.x;
+  const dy = goal.y - from.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return { x: goal.x, y: goal.y };
+  const k = Math.min(lead, dist);
+  return { x: from.x + (dx / dist) * k, y: from.y + (dy / dist) * k };
+}
+
+function hypot2(a: Vec2, b: Vec2): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+function findCharacter(world: World, id: string): { position: Vec2; team: Team } | null {
   if (id === world.player.id) return world.player;
   const npc = world.npcs.find((n) => n.id === id);
   return npc ?? null;
