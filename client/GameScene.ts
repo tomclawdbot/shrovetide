@@ -10,10 +10,12 @@ import {
   createWorld,
   cycleTeammate,
   DEFAULT_DIFFICULTY,
+  formatDayClock,
   isBuilding,
   isCarrierAtOpponentGoal,
   MILL_CLIFTON,
   moveControlled,
+  nightfallAmount,
   opponentGoalFor,
   placeTeammate,
   quickSwitch,
@@ -223,6 +225,7 @@ export class GameScene extends Phaser.Scene {
   private minimapBg!: Phaser.GameObjects.Rectangle;
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private vignetteGfx!: Phaser.GameObjects.Graphics;
+  private nightOverlay!: Phaser.GameObjects.Rectangle;
   private followBtn!: Phaser.GameObjects.Text;
 
   private flow: Flow = 'title';
@@ -896,6 +899,14 @@ export class GameScene extends Phaser.Scene {
     this.adoptWorld(this.peopleGfx);
     this.markerGfx = this.add.graphics().setDepth(5);
     this.adoptWorld(this.markerGfx);
+
+    // Full-screen dusk veil on the world camera (HUD stays readable).
+    this.nightOverlay = this.add
+      .rectangle(0, 0, VIEW_W, VIEW_H, 0x060a18, 0)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(6);
+    this.adoptWorld(this.nightOverlay);
   }
 
   private collectCharacters(): RenderChar[] {
@@ -962,7 +973,7 @@ export class GameScene extends Phaser.Scene {
     );
     this.staminaLabel = this.hudText(pad, pad + 26, 'Breath', '16px', '#f3ead4');
 
-    this.timerText = this.hudText(VIEW_W / 2, 14, 'Day 1 · 5:00', '26px', '#f3ead4', 0.5, 0);
+    this.timerText = this.hudText(VIEW_W / 2, 14, 'Day 1 · 1:00 PM', '26px', '#f3ead4', 0.5, 0);
     this.scoreText = this.hudText(VIEW_W / 2, 44, 'Up 0 — 0 Down', '18px', '#f3ead4', 0.5, 0);
 
     this.followBtn = this.adoptHud(
@@ -1007,7 +1018,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nTwo days · five minutes each.\nCarry the stone to their millstone.\nThree taps to goal.\n\nGoal inside three minutes → toss-up.\nLate goal or time ends the day.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
+          "SHROVETIDE\n\nTwo days · 1pm–10pm each.\nCarry the stone to their millstone.\nThree taps to goal.\n\nGoal before dusk → toss-up.\nNightfall ends the day.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
           {
             fontFamily: FONT,
             fontSize: '24px',
@@ -1762,6 +1773,11 @@ export class GameScene extends Phaser.Scene {
     this.timerText.setVisible(on);
     this.scoreText.setVisible(on);
     this.minimapBg.setVisible(on);
+    if (!on) {
+      this.nightOverlay.setAlpha(0);
+      this.nightOverlay.setVisible(false);
+      this.cameras.main.setBackgroundColor(PALETTE.bg);
+    }
   }
 
   private renderHud(): void {
@@ -1799,11 +1815,9 @@ export class GameScene extends Phaser.Scene {
       this.staminaLabel.setText('Breath');
     }
 
-    const remain = Math.max(0, this.world.matchTimeRemaining);
-    const mm = Math.floor(remain / 60);
-    const ss = Math.floor(remain % 60).toString().padStart(2, '0');
-    this.timerText.setText(`Day ${this.world.eventDay} · ${mm}:${ss}`);
+    this.timerText.setText(`Day ${this.world.eventDay} · ${formatDayClock(this.world)}`);
     this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
+    this.updateNightfall();
 
     this.noteEventBeats();
 
@@ -1836,6 +1850,23 @@ export class GameScene extends Phaser.Scene {
       this.againBtn.setVisible(false);
       this.drawPrompts();
     }
+  }
+
+  /** Darken the pitch as the day clock runs toward 10pm. HUD stays clear. */
+  private updateNightfall(): void {
+    const live = this.flow === 'playing' || this.flow === 'placing';
+    const amount = live ? nightfallAmount(this.world) : 0;
+    this.nightOverlay.setAlpha(amount);
+    this.nightOverlay.setVisible(amount > 0.01);
+    // Cool the clear-color behind the map so edges don't flash daylight.
+    const dayBg = PALETTE.bg;
+    const nightBg = 0x05070f;
+    const mix = amount / 0.72;
+    const lerp = (a: number, b: number): number => Math.round(a + (b - a) * mix);
+    const r = lerp((dayBg >> 16) & 0xff, (nightBg >> 16) & 0xff);
+    const g = lerp((dayBg >> 8) & 0xff, (nightBg >> 8) & 0xff);
+    const b = lerp(dayBg & 0xff, nightBg & 0xff);
+    this.cameras.main.setBackgroundColor((r << 16) | (g << 8) | b);
   }
 
   /** Early-goal toss-up and Day 2 start — juice without ending the event. */

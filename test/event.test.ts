@@ -7,7 +7,9 @@ import {
   createWorld,
   DEFAULT_MATCH_DURATION_SECONDS,
   EARLY_GOAL_WINDOW_SECONDS,
+  formatDayClock,
   isEarlyGoalWindow,
+  nightfallAmount,
   startMatch,
   stepWorld,
   type Input,
@@ -57,6 +59,23 @@ test('event: day clock is five minutes and early window is three', () => {
   assert.equal(world.eventDay, 1);
   assert.equal(world.matchTimeRemaining, 300);
   assert.equal(isEarlyGoalWindow(world), true);
+});
+
+test('event: day clock reads 1pm at kickoff and 10pm at expiry', () => {
+  const world = createWorld();
+  startMatch(world);
+  assert.equal(formatDayClock(world), '1:00 PM');
+  assert.equal(nightfallAmount(world), 0, 'midday is still bright');
+
+  // 7:00 PM — dusk well underway (daylight holds until ~4pm).
+  world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS / 3;
+  assert.equal(formatDayClock(world), '7:00 PM');
+  assert.ok(nightfallAmount(world) > 0.3, 'evening has darkened the pitch');
+  assert.ok(nightfallAmount(world) < 0.6, 'not full night at 7pm');
+
+  world.matchTimeRemaining = 0;
+  assert.equal(formatDayClock(world), '10:00 PM');
+  assert.ok(nightfallAmount(world) > 0.65, '10pm is deep night');
 });
 
 test('event: early goal scores, tosses up, keeps remaining day time', () => {
