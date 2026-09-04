@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { stickVector } from '../client/touch.js';
-import { readVisibleBox } from '../client/shell.js';
+import { allowsPageScroll, readVisibleBox } from '../client/shell.js';
 
 test('stick: rest at origin, full tilt matches WASD magnitude 1', () => {
   assert.deepEqual(stickVector(0, 0), { x: 0, y: 0 });
@@ -41,4 +41,21 @@ test('visible box: Chrome iOS toolbar shrinks height and offsets top', () => {
   assert.equal(box.top, 48);
   assert.equal(box.height, 300);
   assert.equal(box.width, 844);
+});
+
+test('scroll allow: title menu opt-in unlocks pan; everything else stays locked', () => {
+  assert.equal(allowsPageScroll(null), false);
+  assert.equal(
+    allowsPageScroll({
+      closest: (_sel: string) => null,
+    } as unknown as EventTarget),
+    false,
+  );
+  const scrollRegion = { id: 'team-pick-scroll' };
+  assert.equal(
+    allowsPageScroll({
+      closest: (sel: string) => (sel === '[data-allow-scroll]' ? scrollRegion : null),
+    } as unknown as EventTarget),
+    true,
+  );
 });
