@@ -11,11 +11,13 @@ import {
   cycleTeammate,
   isBuilding,
   isCarrierAtOpponentGoal,
+  MILL_CLIFTON,
   moveControlled,
   opponentGoalFor,
   placeTeammate,
   quickSwitch,
   releasePass,
+  scoringGoalMarker,
   startMatch,
   stepWorld,
   switchControl,
@@ -91,6 +93,7 @@ const PALETTE = {
   millstone: 0xe4d4a8,
   millstoneEdge: 0x4a3a1c,
   teamUp: 0x3d6eaa,
+  teamUpTrim: 0xf5d76e,
   teamDown: 0xb43c2e,
   youRing: 0xfff6e8,
   ball: 0xf3ead4,
@@ -100,6 +103,24 @@ const PALETTE = {
   staminaGood: 0xc4a35a,
   staminaLow: 0xc44a32,
 } as const;
+
+/** Down'Ards wear any colours — each body a different motley fill. */
+const DOWN_MOTLEY = [
+  0xe23d28, 0x2ecc71, 0xf1c40f, 0x9b59b6, 0xe67e22, 0x1abc9c, 0xe91e8c, 0x3498db, 0xc0392b,
+  0x27ae60, 0xf39c12, 0x8e44ad,
+] as const;
+
+function downFill(id: string): number {
+  const m = /-(\d+)$/.exec(id);
+  const n = m ? Number(m[1]) : 0;
+  let h = n * 17;
+  for (let i = 0; i < id.length; i++) h = (h + id.charCodeAt(i) * (i + 3)) >>> 0;
+  return DOWN_MOTLEY[h % DOWN_MOTLEY.length]!;
+}
+
+function bodyFill(id: string, team: Team): number {
+  return team === 0 ? PALETTE.teamUp : downFill(id);
+}
 
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
 
@@ -181,6 +202,7 @@ export class GameScene extends Phaser.Scene {
   private promptText!: Phaser.GameObjects.Text;
   private titleCard!: Phaser.GameObjects.Text;
   private againBtn!: Phaser.GameObjects.Text;
+  private teamPickAbort: AbortController | null = null;
   private pipGfx!: Phaser.GameObjects.Graphics;
   private minimapBg!: Phaser.GameObjects.Rectangle;
   private minimapGfx!: Phaser.GameObjects.Graphics;
@@ -264,6 +286,10 @@ export class GameScene extends Phaser.Scene {
       kb.on('keydown-Q', this.handleQuickSwitch);
       kb.on('keydown-C', this.handleFollowToggle);
       kb.on('keydown-HOME', this.returnToFollow);
+      kb.on('keydown-U', () => this.chooseTeam(0));
+      kb.on('keydown-ONE', () => this.chooseTeam(0));
+      kb.on('keydown-TWO', () => this.chooseTeam(1));
+      kb.on('keydown-D', () => this.chooseTeam(1));
     }
 
     this.input.on('pointerdown', this.handlePointerDown);
@@ -283,6 +309,9 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.layoutHud, this);
       window.visualViewport?.removeEventListener('resize', this.layoutHud);
+      this.teamPickAbort?.abort();
+      this.teamPickAbort = null;
+      this.setTeamPickVisible(false);
       this.touch?.dispose();
       this.touch = null;
     });
@@ -292,6 +321,8 @@ export class GameScene extends Phaser.Scene {
     this.drawMapStatic();
     this.createSprites();
     this.createHUD();
+    this.bindTeamPick();
+    this.setTeamPickVisible(true);
 
     this.bindCameras();
     this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
@@ -600,20 +631,51 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const g of map.goals) {
-      const tint = g.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
-      this.mapGfx.lineStyle(8, tint, 0.85);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 42);
-      this.mapGfx.fillStyle(PALETTE.millstone, 1);
-      this.mapGfx.fillCircle(g.position.x, g.position.y, 22);
-      this.mapGfx.lineStyle(4, PALETTE.millstoneEdge, 1);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 22);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 12);
-      this.mapGfx.fillStyle(PALETTE.millstoneEdge, 1);
-      this.mapGfx.fillCircle(g.position.x, g.position.y, 4);
+      this.drawMillstone(g.position.x, g.position.y, g.name);
+      const label = this.add
+        .text(g.position.x, g.position.y + 58, g.name.toUpperCase(), {
+          fontFamily: FONT,
+          fontSize: '22px',
+          color: g.name === MILL_CLIFTON ? '#f3ead4' : '#f5d76e',
+          stroke: '#1a100a',
+          strokeThickness: 5,
+          align: 'center',
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(1);
+      this.adoptWorld(label);
     }
 
     this.mapGfx.lineStyle(3, 0x1a140c, 0.7);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
+  }
+
+  /** Sturston (Up goal) blue/yellow; Clifton (Down goal) motley ring. */
+  private drawMillstone(x: number, y: number, name: string): void {
+    const g = this.mapGfx;
+    if (name === MILL_CLIFTON) {
+      const segs = DOWN_MOTLEY.length;
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2 - Math.PI / 2;
+        const a1 = ((i + 1) / segs) * Math.PI * 2 - Math.PI / 2;
+        g.lineStyle(10, DOWN_MOTLEY[i]!, 0.95);
+        g.beginPath();
+        g.arc(x, y, 42, a0, a1, false);
+        g.strokePath();
+      }
+    } else {
+      g.lineStyle(10, PALETTE.teamUp, 0.95);
+      g.strokeCircle(x, y, 42);
+      g.lineStyle(5, PALETTE.teamUpTrim, 1);
+      g.strokeCircle(x, y, 34);
+    }
+    g.fillStyle(PALETTE.millstone, 1);
+    g.fillCircle(x, y, 22);
+    g.lineStyle(4, PALETTE.millstoneEdge, 1);
+    g.strokeCircle(x, y, 22);
+    g.strokeCircle(x, y, 12);
+    g.fillStyle(PALETTE.millstoneEdge, 1);
+    g.fillCircle(x, y, 4);
   }
 
   /** Timber-framed pub or brick shopfront — Ashbourne high street, not a labeled box. */
@@ -779,7 +841,7 @@ export class GameScene extends Phaser.Scene {
       this.shadowSprites.set(ch.id, shadow);
       this.adoptWorld(shadow);
 
-      const body = this.add.circle(ch.x, ch.y, ch.radius, PALETTE.teamUp);
+      const body = this.add.circle(ch.x, ch.y, ch.radius, bodyFill(ch.id, ch.team));
       body.setDepth(2);
       body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
       this.bodySprites.set(ch.id, body);
@@ -921,7 +983,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nUp'Ards  vs  Down'Ards\n\nUp play to the Down millstone (right).\nDown play the other way.\n\nSpace or tap — walk out",
+          "SHROVETIDE\n\nUp'Ards play to Sturston (right).\nDown'Ards play to Clifton (left).\n\nU / 1 — Up'Ards\nD / 2 — Down'Ards",
           {
             fontFamily: FONT,
             fontSize: '28px',
@@ -1020,7 +1082,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleSpace = (): void => {
     if (this.flow === 'title') {
-      this.beginPlacement();
+      this.chooseTeam(0);
       return;
     }
     if (this.flow === 'placing') return;
@@ -1072,10 +1134,7 @@ export class GameScene extends Phaser.Scene {
       this.eatPointer = false;
       return;
     }
-    if (this.flow === 'title') {
-      this.beginPlacement();
-      return;
-    }
+    if (this.flow === 'title') return;
     const evTarget = pointer.event?.target;
     if (evTarget instanceof Element && evTarget.closest('#touch-layer .pad-btn, #touch-layer #follow-btn')) {
       return;
@@ -1213,6 +1272,61 @@ export class GameScene extends Phaser.Scene {
     return Math.hypot(x - g.x, y - g.y) <= 80;
   }
 
+  private bindTeamPick(): void {
+    this.teamPickAbort?.abort();
+    this.teamPickAbort = new AbortController();
+    const { signal } = this.teamPickAbort;
+    const up = document.getElementById('pick-up');
+    const down = document.getElementById('pick-down');
+    up?.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.chooseTeam(0);
+      },
+      { signal },
+    );
+    down?.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.chooseTeam(1);
+      },
+      { signal },
+    );
+  }
+
+  private setTeamPickVisible(on: boolean): void {
+    const el = document.getElementById('team-pick');
+    if (el) el.hidden = !on;
+    this.titleCard?.setVisible(on && !el);
+  }
+
+  private chooseTeam = (team: Team): void => {
+    if (this.flow !== 'title') return;
+    void unlockAudio();
+    if (this.world.player.team !== team) this.rebuildWorld(team);
+    this.beginPlacement();
+  };
+
+  private rebuildWorld(team: Team): void {
+    for (const s of this.bodySprites.values()) s.destroy();
+    for (const s of this.shadowSprites.values()) s.destroy();
+    this.bodySprites.clear();
+    this.shadowSprites.clear();
+    this.ballSprite?.destroy();
+    this.ballShadow?.destroy();
+    this.markerGfx?.destroy();
+    this.worldObjs = this.worldObjs.filter((o) => o.active);
+    this.world = createWorld({ playerTeam: team });
+    this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
+    this.createSprites();
+    this.placeTargetId = this.world.npcs.find((n) => n.team === team)?.id ?? null;
+    this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
+  }
+
   private beginPlacement(): void {
     if (this.flow !== 'title') return;
     this.flow = 'placing';
@@ -1220,7 +1334,7 @@ export class GameScene extends Phaser.Scene {
     this.lastWall = this.now();
     this.spaceReady = false;
     this.eatPointer = true;
-    this.titleCard.setVisible(false);
+    this.setTeamPickVisible(false);
     this.syncTouchFlow();
     this.layoutHud();
   }
@@ -1397,8 +1511,8 @@ export class GameScene extends Phaser.Scene {
       body.setPosition(c.x, c.y);
       shadow.setPosition(c.x, c.y + c.radius * 0.55);
 
-      const teamColor = c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
-      body.setFillStyle(teamColor);
+      const fill = bodyFill(c.id, c.team);
+      body.setFillStyle(fill);
 
       if (c.controlled) {
         body.setRadius(c.radius * 1.5);
@@ -1407,9 +1521,17 @@ export class GameScene extends Phaser.Scene {
         const ty = c.y - c.radius * 1.5 - 16;
         this.markerGfx.fillStyle(PALETTE.youRing, 1);
         this.markerGfx.fillTriangle(c.x - 9, ty - 10, c.x + 9, ty - 10, c.x, ty);
+        if (c.team === 0) {
+          this.markerGfx.lineStyle(3, PALETTE.teamUpTrim, 1);
+          this.markerGfx.strokeCircle(c.x, c.y, c.radius * 1.5 + 4);
+        }
       } else {
         body.setRadius(c.radius);
-        body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
+        if (c.team === 0) {
+          body.setStrokeStyle(4, PALETTE.teamUpTrim, 1);
+        } else {
+          body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
+        }
         body.setDepth(2);
       }
 
@@ -1514,7 +1636,7 @@ export class GameScene extends Phaser.Scene {
   private renderHud(): void {
     const live = this.flow === 'playing';
     this.setMatchHud(live);
-    this.titleCard.setVisible(this.flow === 'title');
+    this.setTeamPickVisible(this.flow === 'title');
     this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
     this.touch?.setWrestle(
       live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none',
@@ -1595,8 +1717,9 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.kickoffLeft > 0) {
-      const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
-      this.setCaption(`${label} — that way`);
+      const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
+      const side = this.world.player.team === 0 ? "YOU ARE UP'ARDS" : "YOU ARE DOWN'ARDS";
+      this.setCaption(`${side} — play to ${mill}`);
       return;
     }
     if (!this.camFollow && !this.atStone()) {
@@ -1641,12 +1764,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const touch = !!this.touch?.active;
+    const mill = scoringGoalMarker(this.world.player.team, this.world.map).name;
     const copy: Record<Teach, string> = {
       move: touch ? 'Stick — run' : 'WASD — run',
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
-      goal: touch ? 'At their millstone, tap Goal' : 'At their millstone, tap E',
+      goal: touch ? `At ${mill}, tap Goal` : `At ${mill}, tap E`,
       done: '',
     };
     this.setCaption(copy[this.teach]);
@@ -1695,13 +1819,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const goal of map.goals) {
-      g.fillStyle(PALETTE.millstone, 1);
-      g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3);
+      if (goal.name === MILL_CLIFTON) {
+        g.fillStyle(DOWN_MOTLEY[0]!, 1);
+      } else {
+        g.fillStyle(PALETTE.teamUpTrim, 1);
+      }
+      g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.4);
     }
 
     for (const c of chars) {
       if (c.controlled) continue;
-      g.fillStyle(c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown, 0.9);
+      g.fillStyle(bodyFill(c.id, c.team), 0.9);
       g.fillCircle(ox + c.x * sx, oy + c.y * sy, 2.2);
     }
 

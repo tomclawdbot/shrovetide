@@ -1,6 +1,7 @@
 // sim/npc.ts — NPC AI steering. Role-based (TICKET 002):
 //   - chase: swarm a loose stone; once carrying / shepherding, drive the
 //     millstone that team scores at (opponentGoalFor) — never their home stone
+//     Up'Ards drive Sturston (east); Down'Ards drive Clifton (west).
 //   - hold: stay near holdPosition, but engage ball if it's within range;
 //     collapse onto a carrier who threatens their own millstone
 //
