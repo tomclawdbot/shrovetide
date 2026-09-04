@@ -1523,49 +1523,57 @@ export class GameScene extends Phaser.Scene {
     const gait = this.now() / 85 + (h % 97) * 0.21;
     const swing = Math.sin(gait) * r * (moving ? 0.44 : 0.07);
     const kit = kitFill(c.team);
-    const hipX = c.x - ux * r * 0.2;
-    const hipY = c.y - uy * r * 0.2;
-    const chestX = c.x + ux * r * 0.4;
-    const chestY = c.y + uy * r * 0.4;
-    const torsoW = r * 1.08;
+    const hipX = c.x - ux * r * 0.48;
+    const hipY = c.y - uy * r * 0.48;
+    const chestX = c.x + ux * r * 0.22;
+    const chestY = c.y + uy * r * 0.22;
+    const torsoW = r * 0.72;
     const legColor = c.team === 0 ? 0x24344c : 0x0a0a0a;
 
     for (const side of [-1, 1] as const) {
-      const hx = hipX + px * r * 0.32 * side;
-      const hy = hipY + py * r * 0.32 * side;
+      const hx = hipX + px * r * 0.22 * side;
+      const hy = hipY + py * r * 0.22 * side;
       const stride = swing * side;
-      fillCapsule(g, hx, hy, hx - ux * r * 0.55 + ux * stride, hy - uy * r * 0.55 + uy * stride, r * 0.36, legColor);
+      fillCapsule(
+        g,
+        hx,
+        hy,
+        hx - ux * r * 0.7 + ux * stride,
+        hy - uy * r * 0.7 + uy * stride,
+        r * 0.3,
+        legColor,
+      );
     }
 
     if (c.team === 1) {
-      fillCapsule(g, hipX, hipY, chestX, chestY, torsoW + 3.2, PALETTE.teamDownEdge);
+      fillCapsule(g, hipX, hipY, chestX, chestY, torsoW + 2, PALETTE.teamDownEdge);
     }
     fillCapsule(g, hipX, hipY, chestX, chestY, torsoW, kit);
 
     if (c.team === 0) {
-      const stripeW = r * 0.46;
-      g.lineStyle(Math.max(3.2, r * 0.24), PALETTE.teamUpTrim, 1);
-      for (const t of [0.22, 0.5, 0.78]) {
+      const stripeW = r * 0.34;
+      g.lineStyle(Math.max(2.4, r * 0.16), PALETTE.teamUpTrim, 1);
+      for (const t of [0.18, 0.4, 0.62, 0.84]) {
         const sx = hipX + (chestX - hipX) * t;
         const sy = hipY + (chestY - hipY) * t;
         g.lineBetween(sx - px * stripeW, sy - py * stripeW, sx + px * stripeW, sy + py * stripeW);
       }
     }
 
-    const shx = chestX - ux * r * 0.1;
-    const shy = chestY - uy * r * 0.1;
+    const shx = chestX - ux * r * 0.02;
+    const shy = chestY - uy * r * 0.02;
     for (const side of [-1, 1] as const) {
       const stride = -swing * side;
-      const ax0 = shx + px * r * 0.22 * side;
-      const ay0 = shy + py * r * 0.22 * side;
-      const ax1 = shx + px * r * 0.52 * side + ux * stride * 0.55;
-      const ay1 = shy + py * r * 0.52 * side + uy * stride * 0.55;
-      fillCapsule(g, ax0, ay0, ax1, ay1, r * 0.28, kit);
+      const ax0 = shx + px * r * 0.28 * side;
+      const ay0 = shy + py * r * 0.28 * side;
+      const ax1 = shx + px * r * 0.62 * side + ux * stride * 0.7;
+      const ay1 = shy + py * r * 0.62 * side + uy * stride * 0.7;
+      fillCapsule(g, ax0, ay0, ax1, ay1, r * 0.24, kit);
     }
 
-    const headR = r * 0.46;
-    const headX = c.x + ux * r * 0.74;
-    const headY = c.y + uy * r * 0.74;
+    const headR = r * 0.5;
+    const headX = c.x + ux * r * 0.78;
+    const headY = c.y + uy * r * 0.78;
     g.fillStyle(skin, 1);
     g.fillCircle(headX, headY, headR);
     g.fillStyle(hair, 1);
