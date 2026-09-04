@@ -94,7 +94,8 @@ const PALETTE = {
   millstoneEdge: 0x4a3a1c,
   teamUp: 0x3d6eaa,
   teamUpTrim: 0xf5d76e,
-  teamDown: 0xb43c2e,
+  teamDown: 0x161616,
+  teamDownEdge: 0xe8dcc8,
   youRing: 0xfff6e8,
   ball: 0xf3ead4,
   ballEdge: 0x1a140c,
@@ -104,22 +105,34 @@ const PALETTE = {
   staminaLow: 0xc44a32,
 } as const;
 
-/** Down'Ards wear any colours — each body a different motley fill. */
-const DOWN_MOTLEY = [
-  0xe23d28, 0x2ecc71, 0xf1c40f, 0x9b59b6, 0xe67e22, 0x1abc9c, 0xe91e8c, 0x3498db, 0xc0392b,
-  0x27ae60, 0xf39c12, 0x8e44ad,
-] as const;
+const SKIN = [0xe8c4a0, 0xd4a07a, 0xc48a62, 0x8d5a3c] as const;
+const HAIR = [0x1a120c, 0x2a1a12, 0x3d2914, 0x5a3a22] as const;
 
-function downFill(id: string): number {
-  const m = /-(\d+)$/.exec(id);
-  const n = m ? Number(m[1]) : 0;
-  let h = n * 17;
-  for (let i = 0; i < id.length; i++) h = (h + id.charCodeAt(i) * (i + 3)) >>> 0;
-  return DOWN_MOTLEY[h % DOWN_MOTLEY.length]!;
+function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return h >>> 0;
 }
 
-function bodyFill(id: string, team: Team): number {
-  return team === 0 ? PALETTE.teamUp : downFill(id);
+function kitFill(team: Team): number {
+  return team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
+}
+
+function fillCapsule(
+  g: Phaser.GameObjects.Graphics,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  width: number,
+  color: number,
+  alpha = 1,
+): void {
+  g.lineStyle(width, color, alpha);
+  g.lineBetween(x1, y1, x2, y2);
+  g.fillStyle(color, alpha);
+  g.fillCircle(x1, y1, width / 2);
+  g.fillCircle(x2, y2, width / 2);
 }
 
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
@@ -172,11 +185,12 @@ export class GameScene extends Phaser.Scene {
   private keys: KeyState | null = null;
   private touch: TouchControls | null = null;
   private hudPad = { l: 16, r: 16, t: 16, b: 16 };
-  private bodySprites = new Map<string, Phaser.GameObjects.Arc>();
   private shadowSprites = new Map<string, Phaser.GameObjects.Ellipse>();
+  private lastFacing = new Map<string, { x: number; y: number }>();
   private ballSprite!: Phaser.GameObjects.Arc;
   private ballShadow!: Phaser.GameObjects.Ellipse;
   private mapGfx!: Phaser.GameObjects.Graphics;
+  private peopleGfx!: Phaser.GameObjects.Graphics;
   private markerGfx!: Phaser.GameObjects.Graphics;
   private followZoom = CAMERA_BASE_ZOOM;
   private userZoom = 1;
@@ -650,24 +664,24 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  /** Sturston (Up goal) blue/yellow; Clifton (Down goal) motley ring. */
+  /** Sturston (Up goal) blue/yellow hoops; Clifton (Down goal) black. */
   private drawMillstone(x: number, y: number, name: string): void {
     const g = this.mapGfx;
     if (name === MILL_CLIFTON) {
-      const segs = DOWN_MOTLEY.length;
+      g.lineStyle(11, PALETTE.teamDownEdge, 0.95);
+      g.strokeCircle(x, y, 42);
+      g.lineStyle(8, PALETTE.teamDown, 1);
+      g.strokeCircle(x, y, 42);
+    } else {
+      const segs = 8;
       for (let i = 0; i < segs; i++) {
         const a0 = (i / segs) * Math.PI * 2 - Math.PI / 2;
         const a1 = ((i + 1) / segs) * Math.PI * 2 - Math.PI / 2;
-        g.lineStyle(10, DOWN_MOTLEY[i]!, 0.95);
+        g.lineStyle(10, i % 2 === 0 ? PALETTE.teamUp : PALETTE.teamUpTrim, 0.95);
         g.beginPath();
         g.arc(x, y, 42, a0, a1, false);
         g.strokePath();
       }
-    } else {
-      g.lineStyle(10, PALETTE.teamUp, 0.95);
-      g.strokeCircle(x, y, 42);
-      g.lineStyle(5, PALETTE.teamUpTrim, 1);
-      g.strokeCircle(x, y, 34);
     }
     g.fillStyle(PALETTE.millstone, 1);
     g.fillCircle(x, y, 22);
@@ -836,16 +850,10 @@ export class GameScene extends Phaser.Scene {
   private createSprites(): void {
     for (const ch of this.collectCharacters()) {
       const shadow = this.add
-        .ellipse(ch.x, ch.y + ch.radius * 0.55, ch.radius * 2.1, ch.radius, PALETTE.shadow, 0.35)
+        .ellipse(ch.x, ch.y + ch.radius * 0.7, ch.radius * 1.8, ch.radius * 0.7, PALETTE.shadow, 0.32)
         .setDepth(1);
       this.shadowSprites.set(ch.id, shadow);
       this.adoptWorld(shadow);
-
-      const body = this.add.circle(ch.x, ch.y, ch.radius, bodyFill(ch.id, ch.team));
-      body.setDepth(2);
-      body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
-      this.bodySprites.set(ch.id, body);
-      this.adoptWorld(body);
     }
 
     this.ballShadow = this.add
@@ -860,16 +868,19 @@ export class GameScene extends Phaser.Scene {
       .setDepth(3);
     this.adoptWorld(this.ballShadow);
 
-    this.ballSprite = this.add.circle(
-      this.world.ball.position.x,
-      this.world.ball.position.y,
-      this.world.ball.radius,
-      PALETTE.ball,
-    );
-    this.ballSprite.setStrokeStyle(3, PALETTE.ballEdge);
-    this.ballSprite.setDepth(4);
+    this.ballSprite = this.add
+      .circle(
+        this.world.ball.position.x,
+        this.world.ball.position.y,
+        this.world.ball.radius,
+        PALETTE.ball,
+      )
+      .setStrokeStyle(3, PALETTE.ballEdge)
+      .setDepth(4);
     this.adoptWorld(this.ballSprite);
 
+    this.peopleGfx = this.add.graphics().setDepth(2);
+    this.adoptWorld(this.peopleGfx);
     this.markerGfx = this.add.graphics().setDepth(5);
     this.adoptWorld(this.markerGfx);
   }
@@ -1312,12 +1323,12 @@ export class GameScene extends Phaser.Scene {
   };
 
   private rebuildWorld(team: Team): void {
-    for (const s of this.bodySprites.values()) s.destroy();
     for (const s of this.shadowSprites.values()) s.destroy();
-    this.bodySprites.clear();
     this.shadowSprites.clear();
+    this.lastFacing.clear();
     this.ballSprite?.destroy();
     this.ballShadow?.destroy();
+    this.peopleGfx?.destroy();
     this.markerGfx?.destroy();
     this.worldObjs = this.worldObjs.filter((o) => o.active);
     this.world = createWorld({ playerTeam: team });
@@ -1475,6 +1486,100 @@ export class GameScene extends Phaser.Scene {
     return isCarrierAtOpponentGoal(this.world);
   }
 
+  private facingOf(c: RenderChar): { x: number; y: number } {
+    if (c.controlled) {
+      const mx = this.inputState.move.x;
+      const my = this.inputState.move.y;
+      const ml = Math.hypot(mx, my);
+      if (ml > 0.15) {
+        const f = { x: mx / ml, y: my / ml };
+        this.lastFacing.set(c.id, f);
+        return f;
+      }
+    }
+    const sp = Math.hypot(c.vx, c.vy);
+    if (sp > 8) {
+      const f = { x: c.vx / sp, y: c.vy / sp };
+      this.lastFacing.set(c.id, f);
+      return f;
+    }
+    return this.lastFacing.get(c.id) ?? { x: c.team === 0 ? 1 : -1, y: 0 };
+  }
+
+  /**
+   * Top-down runner: head, kit torso, striding limbs.
+   * Up'Ards wear blue/yellow hoops; Down'Ards wear black. Sim radius unchanged.
+   */
+  private drawPerson(c: RenderChar): void {
+    const g = this.peopleGfx;
+    const h = hashId(c.id);
+    const skin = SKIN[h % SKIN.length]!;
+    const hair = HAIR[(h >>> 8) % HAIR.length]!;
+    const r = c.radius * (c.controlled ? 1.22 : 1);
+    const { x: ux, y: uy } = this.facingOf(c);
+    const px = -uy;
+    const py = ux;
+    const moving = Math.hypot(c.vx, c.vy) > 12;
+    const gait = this.now() / 85 + (h % 97) * 0.21;
+    const swing = Math.sin(gait) * r * (moving ? 0.44 : 0.07);
+    const kit = kitFill(c.team);
+    const hipX = c.x - ux * r * 0.2;
+    const hipY = c.y - uy * r * 0.2;
+    const chestX = c.x + ux * r * 0.4;
+    const chestY = c.y + uy * r * 0.4;
+    const torsoW = r * 1.08;
+    const legColor = c.team === 0 ? 0x24344c : 0x0a0a0a;
+
+    for (const side of [-1, 1] as const) {
+      const hx = hipX + px * r * 0.32 * side;
+      const hy = hipY + py * r * 0.32 * side;
+      const stride = swing * side;
+      fillCapsule(g, hx, hy, hx - ux * r * 0.55 + ux * stride, hy - uy * r * 0.55 + uy * stride, r * 0.36, legColor);
+    }
+
+    if (c.team === 1) {
+      fillCapsule(g, hipX, hipY, chestX, chestY, torsoW + 3.2, PALETTE.teamDownEdge);
+    }
+    fillCapsule(g, hipX, hipY, chestX, chestY, torsoW, kit);
+
+    if (c.team === 0) {
+      const stripeW = r * 0.46;
+      g.lineStyle(Math.max(3.2, r * 0.24), PALETTE.teamUpTrim, 1);
+      for (const t of [0.22, 0.5, 0.78]) {
+        const sx = hipX + (chestX - hipX) * t;
+        const sy = hipY + (chestY - hipY) * t;
+        g.lineBetween(sx - px * stripeW, sy - py * stripeW, sx + px * stripeW, sy + py * stripeW);
+      }
+    }
+
+    const shx = chestX - ux * r * 0.1;
+    const shy = chestY - uy * r * 0.1;
+    for (const side of [-1, 1] as const) {
+      const stride = -swing * side;
+      const ax0 = shx + px * r * 0.22 * side;
+      const ay0 = shy + py * r * 0.22 * side;
+      const ax1 = shx + px * r * 0.52 * side + ux * stride * 0.55;
+      const ay1 = shy + py * r * 0.52 * side + uy * stride * 0.55;
+      fillCapsule(g, ax0, ay0, ax1, ay1, r * 0.28, kit);
+    }
+
+    const headR = r * 0.46;
+    const headX = c.x + ux * r * 0.74;
+    const headY = c.y + uy * r * 0.74;
+    g.fillStyle(skin, 1);
+    g.fillCircle(headX, headY, headR);
+    g.fillStyle(hair, 1);
+    g.fillCircle(headX - ux * headR * 0.22, headY - uy * headR * 0.22, headR * 0.72);
+
+    if (c.controlled) {
+      this.markerGfx.lineStyle(3, PALETTE.youRing, 1);
+      this.markerGfx.strokeCircle(c.x, c.y, r * 1.32);
+      const ty = Math.min(c.y, headY) - headR - 12;
+      this.markerGfx.fillStyle(PALETTE.youRing, 1);
+      this.markerGfx.fillTriangle(c.x - 8, ty - 9, c.x + 8, ty - 9, c.x, ty);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
@@ -1501,53 +1606,20 @@ export class GameScene extends Phaser.Scene {
     this.hudCam.setScroll(0, 0);
     this.syncFollowHud();
 
+    this.peopleGfx.clear();
     this.markerGfx.clear();
 
-    for (const c of chars) {
-      const body = this.bodySprites.get(c.id);
+    const drawOrder = [...chars].sort((a, b) => {
+      if (a.controlled !== b.controlled) return a.controlled ? 1 : -1;
+      return a.y - b.y;
+    });
+    for (const c of drawOrder) {
       const shadow = this.shadowSprites.get(c.id);
-      if (!body || !shadow) continue;
+      if (shadow) shadow.setPosition(c.x, c.y + c.radius * 0.7);
+      this.drawPerson(c);
+    }
 
-      body.setPosition(c.x, c.y);
-      shadow.setPosition(c.x, c.y + c.radius * 0.55);
-
-      const fill = bodyFill(c.id, c.team);
-      body.setFillStyle(fill);
-
-      if (c.controlled) {
-        body.setRadius(c.radius * 1.5);
-        body.setStrokeStyle(6, PALETTE.youRing, 1);
-        body.setDepth(3);
-        const ty = c.y - c.radius * 1.5 - 16;
-        this.markerGfx.fillStyle(PALETTE.youRing, 1);
-        this.markerGfx.fillTriangle(c.x - 9, ty - 10, c.x + 9, ty - 10, c.x, ty);
-        if (c.team === 0) {
-          this.markerGfx.lineStyle(3, PALETTE.teamUpTrim, 1);
-          this.markerGfx.strokeCircle(c.x, c.y, c.radius * 1.5 + 4);
-        }
-      } else {
-        body.setRadius(c.radius);
-        if (c.team === 0) {
-          body.setStrokeStyle(4, PALETTE.teamUpTrim, 1);
-        } else {
-          body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
-        }
-        body.setDepth(2);
-      }
-
-      const speed = Math.hypot(c.vx, c.vy);
-      if (speed > 4) {
-        const ux = c.vx / speed;
-        const uy = c.vy / speed;
-        this.markerGfx.lineStyle(3, PALETTE.buildingEdge, 0.7);
-        this.markerGfx.lineBetween(
-          c.x + ux * c.radius * 0.2,
-          c.y + uy * c.radius * 0.2,
-          c.x + ux * (c.radius + 10),
-          c.y + uy * (c.radius + 10),
-        );
-      }
-
+    for (const c of chars) {
       if (carrierId !== null && carrierId === c.id) {
         const pulse = 3 + Math.sin(this.now() / 130) * 2;
         this.markerGfx.lineStyle(3, PALETTE.ball, 0.95);
@@ -1820,17 +1892,33 @@ export class GameScene extends Phaser.Scene {
 
     for (const goal of map.goals) {
       if (goal.name === MILL_CLIFTON) {
-        g.fillStyle(DOWN_MOTLEY[0]!, 1);
+        g.fillStyle(PALETTE.teamDownEdge, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.6);
+        g.fillStyle(PALETTE.teamDown, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 2.4);
       } else {
+        g.fillStyle(PALETTE.teamUp, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.4);
         g.fillStyle(PALETTE.teamUpTrim, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 1.6);
       }
-      g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.4);
     }
 
     for (const c of chars) {
       if (c.controlled) continue;
-      g.fillStyle(bodyFill(c.id, c.team), 0.9);
-      g.fillCircle(ox + c.x * sx, oy + c.y * sy, 2.2);
+      const mx = ox + c.x * sx;
+      const my = oy + c.y * sy;
+      if (c.team === 0) {
+        g.fillStyle(PALETTE.teamUp, 0.95);
+        g.fillCircle(mx, my, 2.3);
+        g.fillStyle(PALETTE.teamUpTrim, 0.95);
+        g.fillCircle(mx, my, 1.1);
+      } else {
+        g.fillStyle(PALETTE.teamDownEdge, 0.9);
+        g.fillCircle(mx, my, 2.5);
+        g.fillStyle(PALETTE.teamDown, 0.95);
+        g.fillCircle(mx, my, 1.8);
+      }
     }
 
     const b = this.world.ball;
