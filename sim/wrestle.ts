@@ -45,6 +45,8 @@ export const RIP_IMMUNITY_TICKS = 48;
 export const RIP_GHOST_TICKS = 12;
 /** Extra gap past the pack's outer skin so the stone is visibly free. */
 export const RIP_CLEAR_PADDING = 26;
+/** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
+export const RIP_GRACE_TICKS = 18;
 
 /** Touching this many bodies counts as “in contact with the hug”. */
 export const WRIGGLE_CONTACT_NEIGHBORS = 2;
@@ -119,7 +121,12 @@ export function inRipContest(world: World): boolean {
 
 /** Button / prompt mode. Live Rip pressure keeps the pad on Rip through a jostle. */
 export function wrestleMode(world: World): WrestleMode {
-  if (canRip(world) || (world._ripPressure > 0 && inRipContest(world))) return 'rip';
+  if (
+    canRip(world) ||
+    (world._ripPressure > 0 && (inRipContest(world) || world._ripGraceTicks > 0))
+  ) {
+    return 'rip';
+  }
   if (canWriggle(world)) return 'wriggle';
   return 'none';
 }
@@ -240,8 +247,16 @@ export function tickWrestle(world: World, input: Input, dt: number): WrestleTick
   const held = wrestleHeld(input);
   const staminaOk = world.player.stamina > 0;
   const contest = inRipContest(world);
-  const ripping =
+  let ripping =
     held && staminaOk && (canRip(world) || (world._ripPressure > 0 && contest));
+  if (!ripping && held && staminaOk && world._ripPressure > 0 && world._ripGraceTicks > 0) {
+    ripping = true;
+    world._ripGraceTicks -= 1;
+  } else if (ripping) {
+    world._ripGraceTicks = RIP_GRACE_TICKS;
+  } else {
+    world._ripGraceTicks = 0;
+  }
 
   let mode: WrestleMode = 'none';
   if (ripping) {

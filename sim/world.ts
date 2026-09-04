@@ -120,6 +120,8 @@ export interface World extends SimState {
   passImmuneUntilTick: number;
   /** 0..1 Rip contest. Resets on release, leaving the scrum, or switch. */
   _ripPressure: number;
+  /** Ticks of Rip grace left after a jostle leaves Rip range. */
+  _ripGraceTicks: number;
   /** While `tick < this`, the popped stone is a sensor so it cannot re-glue. */
   _ripGhostUntilTick: number;
 }
@@ -288,6 +290,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     passImmuneId: null,
     passImmuneUntilTick: 0,
     _ripPressure: 0,
+    _ripGraceTicks: 0,
     _ripGhostUntilTick: 0,
   };
 

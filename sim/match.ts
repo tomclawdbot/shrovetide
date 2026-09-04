@@ -29,6 +29,7 @@ export function startMatch(world: World): void {
   world.passImmuneId = null;
   world.passImmuneUntilTick = 0;
   world._ripPressure = 0;
+  world._ripGraceTicks = 0;
   world._ripGhostUntilTick = 0;
   Matter.Body.setPosition(world.physics.ballBody, world.ball.position);
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });

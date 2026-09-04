@@ -78,6 +78,7 @@ export function switchControl(world: World, targetId: string): boolean {
   world._controlVel.x = 0;
   world._controlVel.y = 0;
   world._ripPressure = 0;
+  world._ripGraceTicks = 0;
   world._ripGhostUntilTick = 0;
 
   // Re-tag the physics body label so debug overlays stay readable.
