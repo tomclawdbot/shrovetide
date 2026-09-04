@@ -55,13 +55,16 @@ export {
   createWorld,
   countHugNeighbors,
   hugPackExtent,
+  hugShoveAt,
   hugShoveAuthority,
+  isInHugZone,
   integrateControlVelocity,
   stepWorld,
   HUG_MIN_SHOVE,
   HUG_NEIGHBOR_RADIUS,
   HUG_PACK_COUNT,
   HUG_PACK_GATHER_RADIUS,
+  HUG_ZONE_RADIUS,
   type HugPackExtent,
   MOVEMENT,
   PLAYER_RADIUS,
@@ -75,6 +78,14 @@ export {
   type MovementTuning,
   type World,
 } from './world.js';
+
+export {
+  DEFAULT_DIFFICULTY,
+  DIFFICULTY_TUNING,
+  difficultyTuning,
+  type Difficulty,
+  type DifficultyTuning,
+} from './difficulty.js';
 
 export { releasePass, pickupReach, tryPickupBall, PASS_PICKUP_IMMUNITY_TICKS, PICKUP_PADDING } from './pass.js';
 export {
@@ -136,6 +147,7 @@ export {
   HOLD_LOOSE_ENGAGE_DISTANCE,
   HOLD_LOOSE_HELP_COUNT,
   HOLD_RECLAIM_COUNT,
+  LOOSE_BALL_SPEED_MULT,
   NPC_VS_SPRINT_BUDGET,
   SCORE_DRIVE_FORCE_MULT,
   SCORE_DRIVE_SPEED_MULT,

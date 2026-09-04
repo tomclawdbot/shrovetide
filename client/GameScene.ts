@@ -9,6 +9,7 @@ import Phaser from 'phaser';
 import {
   createWorld,
   cycleTeammate,
+  DEFAULT_DIFFICULTY,
   isBuilding,
   isCarrierAtOpponentGoal,
   MILL_CLIFTON,
@@ -24,6 +25,7 @@ import {
   teammateAtPoint,
   npcRipContest,
   wrestleMode,
+  type Difficulty,
   type Input,
   type Obstacle,
   type Team,
@@ -138,7 +140,7 @@ function fillCapsule(
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
 
 type Flow = 'title' | 'placing' | 'playing';
-type Teach = 'move' | 'ball' | 'kick' | 'sprint' | 'goal' | 'done';
+type Teach = 'move' | 'ball' | 'kick' | 'sprint' | 'breath' | 'goal' | 'done';
 
 interface KeyState {
   W: Phaser.Input.Keyboard.Key;
@@ -224,6 +226,7 @@ export class GameScene extends Phaser.Scene {
   private followBtn!: Phaser.GameObjects.Text;
 
   private flow: Flow = 'title';
+  private difficulty: Difficulty = DEFAULT_DIFFICULTY;
   private placeLeft = 0;
   private placeTargetId: string | null = null;
   private spaceReady = false;
@@ -259,6 +262,7 @@ export class GameScene extends Phaser.Scene {
       wriggle: false,
     };
     this.flow = 'title';
+    this.difficulty = DEFAULT_DIFFICULTY;
     this.teach = 'move';
     this.scoredJuice = false;
     this.lastGoalingTaps = 0;
@@ -295,7 +299,10 @@ export class GameScene extends Phaser.Scene {
       };
       kb.on('keydown-SPACE', this.handleSpace);
       kb.on('keyup-SPACE', this.handlePassRelease);
-      kb.on('keydown-E', this.handleGoalTap);
+      kb.on('keydown-E', () => {
+        if (this.flow === 'title') this.setDifficulty('easy');
+        else this.handleGoalTap();
+      });
       kb.on('keydown-TAB', this.handleTab);
       kb.on('keydown-Q', this.handleQuickSwitch);
       kb.on('keydown-C', this.handleFollowToggle);
@@ -304,6 +311,8 @@ export class GameScene extends Phaser.Scene {
       kb.on('keydown-ONE', () => this.chooseTeam(0));
       kb.on('keydown-TWO', () => this.chooseTeam(1));
       kb.on('keydown-D', () => this.chooseTeam(1));
+      kb.on('keydown-N', () => this.setDifficulty('normal'));
+      kb.on('keydown-H', () => this.setDifficulty('hard'));
     }
 
     this.input.on('pointerdown', this.handlePointerDown);
@@ -994,10 +1003,10 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nUp'Ards play to Sturston (right).\nDown'Ards play to Clifton (left).\n\nU / 1 — Up'Ards\nD / 2 — Down'Ards",
+          "SHROVETIDE\n\nCarry the stone to their millstone.\nThree taps to goal.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
           {
             fontFamily: FONT,
-            fontSize: '28px',
+            fontSize: '24px',
             color: '#f3ead4',
             align: 'center',
             backgroundColor: '#140e0add',
@@ -1307,18 +1316,50 @@ export class GameScene extends Phaser.Scene {
       },
       { signal },
     );
+    for (const id of ['diff-easy', 'diff-normal', 'diff-hard'] as const) {
+      const btn = document.getElementById(id);
+      btn?.addEventListener(
+        'pointerdown',
+        (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const level = btn.getAttribute('data-difficulty') as Difficulty | null;
+          if (level === 'easy' || level === 'normal' || level === 'hard') {
+            this.setDifficulty(level);
+          }
+        },
+        { signal },
+      );
+    }
+    this.syncDifficultyButtons();
+  }
+
+  private setDifficulty(level: Difficulty): void {
+    if (this.flow !== 'title') return;
+    this.difficulty = level;
+    this.syncDifficultyButtons();
+  }
+
+  private syncDifficultyButtons(): void {
+    for (const id of ['diff-easy', 'diff-normal', 'diff-hard'] as const) {
+      const btn = document.getElementById(id);
+      if (!btn) continue;
+      const level = btn.getAttribute('data-difficulty');
+      btn.setAttribute('aria-pressed', level === this.difficulty ? 'true' : 'false');
+    }
   }
 
   private setTeamPickVisible(on: boolean): void {
     const el = document.getElementById('team-pick');
     if (el) el.hidden = !on;
     this.titleCard?.setVisible(on && !el);
+    if (on) this.syncDifficultyButtons();
   }
 
   private chooseTeam = (team: Team): void => {
     if (this.flow !== 'title') return;
     void unlockAudio();
-    if (this.world.player.team !== team) this.rebuildWorld(team);
+    this.rebuildWorld(team);
     this.beginPlacement();
   };
 
@@ -1331,7 +1372,7 @@ export class GameScene extends Phaser.Scene {
     this.peopleGfx?.destroy();
     this.markerGfx?.destroy();
     this.worldObjs = this.worldObjs.filter((o) => o.active);
-    this.world = createWorld({ playerTeam: team });
+    this.world = createWorld({ playerTeam: team, difficulty: this.difficulty });
     this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
     this.createSprites();
     this.placeTargetId = this.world.npcs.find((n) => n.team === team)?.id ?? null;
@@ -1466,7 +1507,7 @@ export class GameScene extends Phaser.Scene {
     this.inputState.rip = wrestle;
     this.inputState.wriggle = wrestle;
     if (this.isPassing && !this.world.player.hasBall) this.clearPassCharge();
-    if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'goal';
+    if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'breath';
     if (this.inputState.charging) {
       this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
     }
@@ -1474,6 +1515,9 @@ export class GameScene extends Phaser.Scene {
 
   private advanceTeach(): void {
     if (this.world.player.hasBall && this.teach === 'ball') this.teach = 'kick';
+    if (this.teach === 'breath' && this.world.player.stamina < this.world.player.maxStamina * 0.85) {
+      this.teach = 'goal';
+    }
     if (this.now() - this.playStartedAt > TEACH_WINDOW_MS) this.teach = 'done';
   }
 
@@ -1850,6 +1894,7 @@ export class GameScene extends Phaser.Scene {
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
+      breath: 'Breath returns only when still',
       goal: touch ? `At ${mill}, tap Goal` : `At ${mill}, tap E`,
       done: '',
     };
