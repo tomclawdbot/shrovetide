@@ -1,6 +1,5 @@
 // sim/stamina.ts — pure stamina model. No side effects beyond the entity.
-
-import type { Player } from './types.js';
+// Shared by the controlled player and NPCs so Breath economy is one rule.
 
 /** Stamina per second drained while moving without Sprint. */
 export const STAMINA_MOVE_DRAIN = 10;
@@ -19,6 +18,12 @@ export const EXHAUSTED_SPEED_MULT = 0.6;
 /** Speed multiplier while sprinting with Breath remaining. */
 export const SPRINT_SPEED_MULT = 1.28;
 
+/** Anyone with a Breath bar — player or NPC. */
+export interface StaminaEntity {
+  stamina: number;
+  maxStamina: number;
+}
+
 export interface StaminaTick {
   sprinting: boolean;
   /** True when movement input is past the deadzone. */
@@ -30,35 +35,35 @@ export interface StaminaTick {
 
 /**
  * Update stamina for one tick. Clamped to [0, maxStamina].
- * Pure function — only mutates the passed player's stamina.
+ * Pure function — only mutates the passed entity's stamina.
  *
  * Drain rule: any movement costs Breath; Sprint costs more; carrying
  * adds a flat extra. Regen rule: only idle (no move, no Sprint) recovers.
  * Spent Breath stays spent until you stand still.
  */
-export function updateStamina(player: Player, tick: StaminaTick, dt: number): void {
+export function updateStamina(entity: StaminaEntity, tick: StaminaTick, dt: number): void {
   const extra = tick.carrying ? STAMINA_CARRY_DRAIN : 0;
   let delta = 0;
   if (tick.ripping) {
-    delta = player.stamina > 0 ? -(STAMINA_RIP_DRAIN + extra) * dt : 0;
+    delta = entity.stamina > 0 ? -(STAMINA_RIP_DRAIN + extra) * dt : 0;
   } else if (tick.wriggling) {
-    delta = player.stamina > 0 ? -(STAMINA_WRIGGLE_DRAIN + extra) * dt : 0;
+    delta = entity.stamina > 0 ? -(STAMINA_WRIGGLE_DRAIN + extra) * dt : 0;
   } else if (tick.sprinting) {
-    delta = player.stamina > 0 ? -(STAMINA_SPRINT_DRAIN + extra) * dt : 0;
+    delta = entity.stamina > 0 ? -(STAMINA_SPRINT_DRAIN + extra) * dt : 0;
   } else if (tick.moving) {
-    delta = player.stamina > 0 ? -(STAMINA_MOVE_DRAIN + extra) * dt : 0;
+    delta = entity.stamina > 0 ? -(STAMINA_MOVE_DRAIN + extra) * dt : 0;
   } else {
     delta = STAMINA_REGEN_RATE * dt;
   }
-  player.stamina = Math.max(0, Math.min(player.maxStamina, player.stamina + delta));
+  entity.stamina = Math.max(0, Math.min(entity.maxStamina, entity.stamina + delta));
 }
 
 /** Walk/run multiplier from Breath: 1.0 normally, 0.6 when fully spent. */
-export function getSpeedMultiplier(player: Player): number {
-  return player.stamina <= 0 ? EXHAUSTED_SPEED_MULT : 1.0;
+export function getSpeedMultiplier(entity: StaminaEntity): number {
+  return entity.stamina <= 0 ? EXHAUSTED_SPEED_MULT : 1.0;
 }
 
 /** Extra cap while sprinting with Breath left; spent Breath kills the burst. */
-export function getSprintMultiplier(player: Player, sprinting: boolean): number {
-  return sprinting && player.stamina > 0 ? SPRINT_SPEED_MULT : 1;
+export function getSprintMultiplier(entity: StaminaEntity, sprinting: boolean): number {
+  return sprinting && entity.stamina > 0 ? SPRINT_SPEED_MULT : 1;
 }

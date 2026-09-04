@@ -39,6 +39,7 @@ export interface TouchHandlers {
   onSwitch: () => void;
   onReady: () => void;
   onGoal: () => void;
+  onFollow?: () => void;
 }
 
 /**
@@ -68,6 +69,14 @@ export class TouchControls {
 
   get active(): boolean {
     return this.enabled;
+  }
+
+  /** Follow chip while the camera is panned off the controlled body. */
+  setLooking(on: boolean): void {
+    const btn = this.el('follow-btn');
+    if (!btn) return;
+    const show = this.enabled && on && (this.flow === 'playing' || this.flow === 'placing');
+    btn.hidden = !show;
   }
 
   setFlow(flow: TouchFlow): void {
@@ -162,6 +171,7 @@ export class TouchControls {
     const sw = this.el('switch-btn');
     const ready = this.el('ready-btn');
     const goal = this.el('goal-btn');
+    const follow = this.el('follow-btn');
     if (!layer || !well || !kick || !sprint || !wrestle || !sw || !ready || !goal) return;
 
     well.addEventListener('pointerdown', this.onStickDown, { signal });
@@ -194,6 +204,7 @@ export class TouchControls {
     sw.addEventListener('pointerdown', this.onSwitch, { signal });
     ready.addEventListener('pointerdown', this.onReady, { signal });
     goal.addEventListener('pointerdown', this.onGoal, { signal });
+    follow?.addEventListener('pointerdown', this.onFollow, { signal });
     const rail = this.el('caption-rail');
     rail?.addEventListener(
       'pointerdown',
@@ -252,6 +263,7 @@ export class TouchControls {
     if (sprint) sprint.hidden = this.flow !== 'playing';
     if (ready) ready.hidden = this.flow !== 'placing';
     if (sw) sw.hidden = this.flow === 'title' || this.flow === 'over';
+    if (this.flow === 'title' || this.flow === 'over') this.setLooking(false);
     this.setAtStone(this.flow === 'playing' && this.atStone);
     this.setWrestle(this.flow === 'playing' ? this.wrestleLabel : 'none');
     if (this.flow !== 'playing') {
@@ -392,5 +404,11 @@ export class TouchControls {
     ev.preventDefault();
     ev.stopPropagation();
     this.handlers.onGoal();
+  };
+
+  private onFollow = (ev: PointerEvent): void => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    this.handlers.onFollow?.();
   };
 }

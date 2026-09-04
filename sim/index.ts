@@ -81,6 +81,8 @@ export {
   STAMINA_WRIGGLE_DRAIN,
   EXHAUSTED_SPEED_MULT,
   SPRINT_SPEED_MULT,
+  type StaminaEntity,
+  type StaminaTick,
 } from './stamina.js';
 
 export {
@@ -101,6 +103,7 @@ export {
   wrestleMode,
   NPC_RIP_COOLDOWN_TICKS,
   NPC_RIP_SUCCESS_SECONDS,
+  RIP_CARRIER_MIN_NEIGHBORS,
   RIP_CLEAR_PADDING,
   RIP_GHOST_TICKS,
   RIP_GRACE_TICKS,
@@ -124,16 +127,23 @@ export {
   CONTEST_STEER_RADIUS,
   GOAL_CONTEST_RADIUS,
   GOAL_DEFEND_SPEED_MULT,
+  HOLD_BALL_ENGAGE_DISTANCE,
+  HOLD_LOOSE_ENGAGE_DISTANCE,
+  HOLD_LOOSE_HELP_COUNT,
+  HOLD_RECLAIM_COUNT,
   NPC_VS_SPRINT_BUDGET,
   SCORE_DRIVE_FORCE_MULT,
   SCORE_DRIVE_SPEED_MULT,
   SHEPHERD_RADIUS,
   TURN_UP_SWARM_RADIUS,
   clampNpcVelocities,
+  isAmongClosestHolders,
   isTurnUpSwarm,
+  npcIsBursting,
   npcSpeedCap,
   npcSteerTarget,
   threatenedGoalTeam,
+  tickNpcStamina,
 } from './npc.js';
 
 // Match state machine + scoring

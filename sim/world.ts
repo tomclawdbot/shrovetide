@@ -24,7 +24,7 @@ import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
 import { createPhysicsWorld, setBallSensor, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamina.js';
-import { clampNpcVelocities, isTurnUpSwarm, steerNPCs } from './npc.js';
+import { isTurnUpSwarm, steerNPCs, tickNpcStamina, clampNpcVelocities } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal, tickNpcGoalTap } from './goaling.js';
@@ -437,7 +437,8 @@ function pinOnPitch(
  *
  * Order of operations (matters for determinism):
  *   1. Tick match state machine (timer + end-on-expiry).
- *   2. Update wrestle (player Rip / Wriggle, then NPC Rip) and stamina.
+ *   2. Update wrestle (player Rip / Wriggle, then NPC Rip) and stamina
+ *      (player + NPCs share the same Breath economy).
  *   3. Lock carried ball to carrier.
  *   4. Integrate + apply controlled character velocity (Wriggle adds inward).
  *   5. Steer NPCs (role-based AI).
@@ -478,6 +479,7 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     },
     dt,
   );
+  tickNpcStamina(world, dt);
 
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);

@@ -10,8 +10,9 @@
 // Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
-import { opponentGoalFor, speedMultiplierAt } from './maps.js';
+import { goalFor, opponentGoalFor, speedMultiplierAt } from './maps.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
+import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import type { NPC, Team, Vec2 } from './types.js';
 import { countHugNeighbors, hugShoveAuthority, MOVEMENT, type World } from './world.js';
 
@@ -21,9 +22,15 @@ import { countHugNeighbors, hugShoveAuthority, MOVEMENT, type World } from './wo
  */
 const NPC_STEER_FORCE = 0.0015;
 /** Distance (px) at which a HOLD NPC engages a carried ball over its hold point. */
-const HOLD_BALL_ENGAGE_DISTANCE = 220;
+export const HOLD_BALL_ENGAGE_DISTANCE = 480;
 /** Loose ball: hold players join the scrum from much further out. */
-const HOLD_LOOSE_ENGAGE_DISTANCE = 780;
+export const HOLD_LOOSE_ENGAGE_DISTANCE = 1200;
+/** Closest hold bodies who leave the millstone to reclaim an enemy carrier. */
+export const HOLD_RECLAIM_COUNT = 2;
+/** Closest hold bodies who help swarm a loose stone from anywhere. */
+export const HOLD_LOOSE_HELP_COUNT = 3;
+/** Speed above this counts as moving for NPC Breath (px/s). */
+const NPC_MOVE_SPEED = 18;
 /** Extra speed while the ball is free so either side can contest the turn-up. */
 const LOOSE_BALL_SPEED_MULT = 1.22;
 /**
@@ -107,6 +114,45 @@ export function steerNPCs(world: World): void {
 }
 
 /**
+ * Same Breath rules as the player: move drains, Sprint-like bursts drain
+ * faster, idle at a hold regenerates, spent Breath kills the burst.
+ */
+export function tickNpcStamina(world: World, dt: number): void {
+  const threatened = threatenedGoalTeam(world);
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i];
+    if (!npc) continue;
+    const collapsing = threatened !== null && npc.team === threatened;
+    const carrying = world.ball.ownerId === npc.id;
+    const ripping = world._npcRipId === npc.id && world._npcRipPressure > 0;
+    const bursting = npcIsBursting(npc, world, collapsing);
+    const moving = Math.hypot(npc.velocity.x, npc.velocity.y) > NPC_MOVE_SPEED;
+    updateStamina(
+      npc,
+      {
+        sprinting: bursting,
+        moving,
+        carrying,
+        ripping,
+      },
+      dt,
+    );
+  }
+}
+
+/** True when this NPC is using a Sprint-like speed burst (loose contest / last-third defend). */
+export function npcIsBursting(npc: NPC, world: World, collapsing?: boolean): boolean {
+  if (npc.stamina <= 0) return false;
+  if (world.ball.ownerId === npc.id) return false;
+  const threatened = collapsing === undefined ? threatenedGoalTeam(world) : null;
+  const isCollapsing = collapsing ?? (threatened !== null && npc.team === threatened);
+  if (isCollapsing) return true;
+  if (world.ball.ownerId !== null) return false;
+  const target = pickTarget(npc, world, isCollapsing);
+  return target === world.ball.position;
+}
+
+/**
  * Authored NPC speed cap in px/s (before Matter scale). Isolated carriers
  * sit on `maxSpeed * carrierSpeedMult`; open-field chase is `maxSpeed`.
  */
@@ -125,13 +171,15 @@ export function npcSpeedCap(
     const target = pickTarget(npc, world, isCollapsing);
     aimingAtLoose = target === world.ball.position;
   }
+  const breathMult = getSpeedMultiplier(npc);
+  const canBurst = npc.stamina > 0;
   const looseBoost =
-    world.ball.ownerId === null && aimingAtLoose ? LOOSE_BALL_SPEED_MULT : 1;
+    canBurst && world.ball.ownerId === null && aimingAtLoose ? LOOSE_BALL_SPEED_MULT : 1;
   const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
   const driveBoost = carrying ? SCORE_DRIVE_SPEED_MULT : 1;
-  const defendBoost = isCollapsing ? GOAL_DEFEND_SPEED_MULT : 1;
+  const defendBoost = canBurst && isCollapsing ? GOAL_DEFEND_SPEED_MULT : 1;
   const terrainMult = speedMultiplierAt(npc.position, world.map);
-  return npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost;
+  return npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * breathMult;
 }
 
 /** After physics: enforce the cap so a leftover collision impulse cannot stick. */
@@ -224,18 +272,53 @@ function pickTarget(
   return holdTarget(npc, world);
 }
 
+/**
+ * Hold role bias: help reclaim/claim when assigned or in range; otherwise
+ * cover the millstone this team defends (home stone), not mill at scatter.
+ */
 function holdTarget(npc: NPC, world: World): Vec2 {
-  if (!npc.holdPosition) {
-    return world.ball.position;
+  const home = goalFor(npc.team, world.map);
+  const focus = contestFocus(world);
+  const from = npc.holdPosition ?? npc.position;
+  const range = Math.hypot(focus.x - from.x, focus.y - from.y);
+
+  if (world.ball.ownerId === null) {
+    const help =
+      range < HOLD_LOOSE_ENGAGE_DISTANCE ||
+      isAmongClosestHolders(npc, world, HOLD_LOOSE_HELP_COUNT);
+    return help ? world.ball.position : { x: home.x, y: home.y };
   }
-  const dxBall = world.ball.position.x - npc.holdPosition.x;
-  const dyBall = world.ball.position.y - npc.holdPosition.y;
-  const engage =
-    world.ball.ownerId === null ? HOLD_LOOSE_ENGAGE_DISTANCE : HOLD_BALL_ENGAGE_DISTANCE;
-  if (Math.hypot(dxBall, dyBall) < engage) {
-    return world.ball.position;
+
+  const carrier = findCharacter(world, world.ball.ownerId);
+  if (!carrier) return { x: home.x, y: home.y };
+
+  // Teammate has the stone — stay home and cover the millstone we defend.
+  if (carrier.team === npc.team) {
+    return { x: home.x, y: home.y };
   }
-  return npc.holdPosition;
+
+  const reclaim =
+    range < HOLD_BALL_ENGAGE_DISTANCE || isAmongClosestHolders(npc, world, HOLD_RECLAIM_COUNT);
+  if (reclaim) return carrier.position;
+  return { x: home.x, y: home.y };
+}
+
+/** Nearest `count` hold-role NPCs on this team to the contest, stable by id. */
+export function isAmongClosestHolders(npc: NPC, world: World, count: number): boolean {
+  if (npc.role !== 'hold') return false;
+  const focus = contestFocus(world);
+  const holders = world.npcs.filter((n) => n.team === npc.team && n.role === 'hold');
+  holders.sort((a, b) => {
+    const da = hypot2(a.position, focus);
+    const db = hypot2(b.position, focus);
+    if (da !== db) return da - db;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const n = Math.max(0, Math.min(count, holders.length));
+  for (let i = 0; i < n; i++) {
+    if (holders[i]!.id === npc.id) return true;
+  }
+  return false;
 }
 
 export function isTurnUpSwarm(world: World): boolean {

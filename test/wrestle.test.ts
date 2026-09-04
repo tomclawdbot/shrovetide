@@ -387,3 +387,57 @@ test('tap: teammateAtPoint hits a nearby mate and ignores empty grass', () => {
   assert.equal(teammateAtPoint(world, mate!.position.x + 10, mate!.position.y), mate!.id);
   assert.equal(teammateAtPoint(world, 40, 40), null);
 });
+
+/** Player packed onto an opposing NPC carrier. */
+function packPlayerOnNpcCarrier(world: World, x: number, y: number, count = 8, radius = 34): string {
+  const carrier = world.npcs.find((n) => n.team !== world.player.team);
+  assert.ok(carrier, 'need an opposing carrier');
+  teleportId(world, carrier!.id, x, y);
+  world.player.hasBall = false;
+  world.ball.ownerId = carrier!.id;
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+  Matter.Body.setPosition(world.physics.ballBody, { x, y });
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+  world.ball.position = { x, y };
+  world.ball.velocity = { x: 0, y: 0 };
+  teleportId(world, world.player.id, x + 26, y);
+
+  let packed = 0;
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i]!;
+    if (npc.id === carrier!.id) continue;
+    if (packed < count) {
+      const angle = (packed / count) * Math.PI * 2;
+      teleportId(world, npc.id, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+      packed += 1;
+    } else {
+      teleportId(world, npc.id, 80 + ((i * 47) % 400), 80 + ((i * 31) % 300));
+    }
+  }
+  return carrier!.id;
+}
+
+test('rip: player strips an opposing NPC carrier in a packed hug', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  const carrierId = packPlayerOnNpcCarrier(world, field.x, field.y);
+  assert.equal(world.ball.ownerId, carrierId);
+  assert.equal(world.player.hasBall, false);
+  assert.ok(countHugNeighbors(world, world.player.id, world.player.position) >= 2);
+  assert.equal(canRip(world), true, 'packed onto an opposing carrier should be Rip-eligible');
+  assert.equal(wrestleMode(world), 'rip');
+
+  const pack0 = hugPackExtent(world, field)!;
+  const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
+  runTicks(world, rip, Math.ceil(RIP_SUCCESS_SECONDS * 60) + 4);
+
+  assert.equal(world.player.hasBall, false);
+  assert.equal(world.ball.ownerId, null, 'Rip should pop the stone off the NPC carrier');
+  const d = distFrom(world, field);
+  assert.ok(
+    d > pack0.radius,
+    `stone must pop clear of the packed hug, d=${d.toFixed(1)} packR=${pack0.radius.toFixed(1)}`,
+  );
+});
