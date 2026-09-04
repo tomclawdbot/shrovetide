@@ -225,8 +225,12 @@ test('rip: a brief shove out of Rip range does not reset a live hold', () => {
   const field = openField(world);
   packHug(world, field.x, field.y, 8);
   const rip: Input = { ...IDLE, rip: true, wriggle: true, move: { x: 1, y: 0 } };
-  runTicks(world, rip, 12);
-  assert.ok(world._ripPressure > 0.3 && world._ripPressure < 1, 'contest should be building');
+  const holdTicks = Math.max(12, Math.ceil(RIP_SUCCESS_SECONDS * 60 * 0.45));
+  runTicks(world, rip, holdTicks);
+  assert.ok(
+    world._ripPressure > 0.3 && world._ripPressure < 1,
+    `contest should be building (pressure=${world._ripPressure.toFixed(2)})`,
+  );
   teleportId(world, world.player.id, field.x + RIP_REACH + 8, field.y);
   assert.equal(canRip(world), false, 'now outside Rip reach');
   assert.equal(inRipContest(world), true, 'still in the wrestle');

@@ -11,11 +11,12 @@
 // Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
+import { difficultyTuning } from './difficulty.js';
 import { goalFor, opponentGoalFor, speedMultiplierAt } from './maps.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import type { NPC, Team, Vec2 } from './types.js';
-import { countHugNeighbors, hugShoveAuthority, MOVEMENT, type World } from './world.js';
+import { hugShoveAt, MOVEMENT, PLAYER_MAX_SPEED, type World } from './world.js';
 
 /**
  * Scaled with CHAR_DENSITY so an isolated chaser still hits cap in ~1s.
@@ -33,7 +34,7 @@ export const HOLD_LOOSE_HELP_COUNT = 3;
 /** Speed above this counts as moving for NPC Breath (px/s). */
 const NPC_MOVE_SPEED = 18;
 /** Extra speed while the ball is free so either side can contest the turn-up. */
-const LOOSE_BALL_SPEED_MULT = 1.22;
+export const LOOSE_BALL_SPEED_MULT = 1.22;
 /**
  * When the stone is this close to a millstone, that team's hold line
  * collapses and defenders get a burst so a clean breakaway dies in the last third.
@@ -101,9 +102,10 @@ export function steerNPCs(world: World): void {
 
     const carrying = world.ball.ownerId === npc.id;
     const drivingScore = isDrivingScoreEnd(npc, world, collapsing);
-    let shove = hugShoveAuthority(countHugNeighbors(world, npc.id, npc.position));
+    // Pack shove only on the stone — once the hug breaks, peel free at full shove.
+    let shove = hugShoveAt(world, npc.id, npc.position);
     if (carrying) shove = Math.max(shove, CARRY_SHOVE_FLOOR);
-    const forceMult = drivingScore ? SCORE_DRIVE_FORCE_MULT : 1;
+    const forceMult = drivingScore ? driveForceMult(npc, world) : 1;
     Matter.Body.applyForce(
       body,
       body.position,
@@ -174,13 +176,31 @@ export function npcSpeedCap(
   }
   const breathMult = getSpeedMultiplier(npc);
   const canBurst = npc.stamina > 0;
-  const looseBoost =
-    canBurst && world.ball.ownerId === null && aimingAtLoose ? LOOSE_BALL_SPEED_MULT : 1;
+  const opp = isOpponent(npc, world);
+  const tune = difficultyTuning(world.difficulty);
+  const speedBase = PLAYER_MAX_SPEED * (opp ? tune.opponentSpeedMult : 1);
+  const looseMult = opp ? tune.opponentLooseBoost : LOOSE_BALL_SPEED_MULT;
+  const looseBoost = canBurst && world.ball.ownerId === null && aimingAtLoose ? looseMult : 1;
   const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
-  const driveBoost = carrying ? SCORE_DRIVE_SPEED_MULT : 1;
-  const defendBoost = canBurst && isCollapsing ? GOAL_DEFEND_SPEED_MULT : 1;
+  const driveBoost = carrying
+    ? opp
+      ? tune.opponentDriveSpeedMult
+      : SCORE_DRIVE_SPEED_MULT
+    : 1;
+  const defendMult = opp ? tune.opponentDefendBoost : GOAL_DEFEND_SPEED_MULT;
+  const defendBoost = canBurst && isCollapsing ? defendMult : 1;
   const terrainMult = speedMultiplierAt(npc.position, world.map);
-  return npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * breathMult;
+  // Empty-handed NPCs match player walk pace (difficulty scales opponents only).
+  return speedBase * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * breathMult;
+}
+
+function isOpponent(npc: NPC, world: World): boolean {
+  return npc.team !== world.player.team;
+}
+
+function driveForceMult(npc: NPC, world: World): number {
+  if (isOpponent(npc, world)) return difficultyTuning(world.difficulty).opponentDriveForceMult;
+  return SCORE_DRIVE_FORCE_MULT;
 }
 
 /** After physics: enforce the cap so a leftover collision impulse cannot stick. */
@@ -284,9 +304,9 @@ function holdTarget(npc: NPC, world: World): Vec2 {
   const range = Math.hypot(focus.x - from.x, focus.y - from.y);
 
   if (world.ball.ownerId === null) {
+    const helpCount = holdLooseHelpCount(npc, world);
     const help =
-      range < HOLD_LOOSE_ENGAGE_DISTANCE ||
-      isAmongClosestHolders(npc, world, HOLD_LOOSE_HELP_COUNT);
+      range < HOLD_LOOSE_ENGAGE_DISTANCE || isAmongClosestHolders(npc, world, helpCount);
     return help ? world.ball.position : { x: home.x, y: home.y };
   }
 
@@ -298,10 +318,21 @@ function holdTarget(npc: NPC, world: World): Vec2 {
     return { x: home.x, y: home.y };
   }
 
+  const reclaimCount = holdReclaimCount(npc, world);
   const reclaim =
-    range < HOLD_BALL_ENGAGE_DISTANCE || isAmongClosestHolders(npc, world, HOLD_RECLAIM_COUNT);
+    range < HOLD_BALL_ENGAGE_DISTANCE || isAmongClosestHolders(npc, world, reclaimCount);
   if (reclaim) return carrier.position;
   return { x: home.x, y: home.y };
+}
+
+function holdReclaimCount(npc: NPC, world: World): number {
+  if (isOpponent(npc, world)) return difficultyTuning(world.difficulty).opponentReclaimCount;
+  return HOLD_RECLAIM_COUNT;
+}
+
+function holdLooseHelpCount(npc: NPC, world: World): number {
+  if (isOpponent(npc, world)) return difficultyTuning(world.difficulty).opponentLooseHelpCount;
+  return HOLD_LOOSE_HELP_COUNT;
 }
 
 /** Nearest `count` hold-role NPCs on this team to the contest, stable by id. */

@@ -29,7 +29,7 @@ import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal, tickNpcGoalTap } from './goaling.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
-import { countHugNeighbors, hugShoveAuthority } from './hug.js';
+import { hugShoveAt } from './hug.js';
 import {
   applyWriggleProgress,
   setWriggleFriction,
@@ -39,17 +39,22 @@ import {
   WRIGGLE_SHOVE_FLOOR,
 } from './wrestle.js';
 import type { Ball, Input, NPC, Player, SimState, Team, Vec2 } from './types.js';
+import { DEFAULT_DIFFICULTY, type Difficulty } from './difficulty.js';
 
 export {
+  contestFocus as hugContestFocus,
   countBodiesNear,
   countHugNeighbors,
   hugNeighborCentroid,
   hugPackExtent,
+  hugShoveAt,
   hugShoveAuthority,
+  isInHugZone,
   HUG_MIN_SHOVE,
   HUG_NEIGHBOR_RADIUS,
   HUG_PACK_COUNT,
   HUG_PACK_GATHER_RADIUS,
+  HUG_ZONE_RADIUS,
   type HugPackExtent,
 } from './hug.js';
 
@@ -57,7 +62,8 @@ export const PLAYER_RADIUS = 16;
 export const NPC_RADIUS = 14;
 export const BALL_RADIUS = 10;
 export const PLAYER_MAX_SPEED = 190; // pixels/sec
-export const NPC_MAX_SPEED = 145;
+/** Empty-handed NPC walk matches the player walk (difficulty scales opponents in npcSpeedCap). */
+export const NPC_MAX_SPEED = PLAYER_MAX_SPEED;
 export const SIM_DT = 1 / 60;
 /** Number of characters per team (including the controlled one). 17v17 scrum. */
 export const SQUAD_SIZE = 17;
@@ -133,6 +139,8 @@ export interface World extends SimState {
   _npcRipGraceTicks: number;
   /** Next tick an NPC may start a new Rip (rate-limit). */
   _npcRipCooldownUntilTick: number;
+  /** Opponent pressure preset chosen on the title screen. */
+  difficulty: Difficulty;
 }
 
 export interface CreateWorldOptions {
@@ -140,6 +148,8 @@ export interface CreateWorldOptions {
   seed?: number;
   /** Which team the controlled player is on. Default 0 (Up'Ards). */
   playerTeam?: Team;
+  /** Opponent pressure. Default normal. */
+  difficulty?: Difficulty;
 }
 
 /** mulberry32 — fast, deterministic 32-bit PRNG. */
@@ -252,6 +262,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
   const map = opts.map ?? ASHBOURNE_TOWN;
   const seed = opts.seed ?? 1;
   const playerTeam: Team = opts.playerTeam ?? 0;
+  const difficulty = opts.difficulty ?? DEFAULT_DIFFICULTY;
   const rng = mulberry32(seed);
 
   const { player, npcs } = buildCharacters(map, rng, playerTeam);
@@ -305,6 +316,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     _npcRipPressure: 0,
     _npcRipGraceTicks: 0,
     _npcRipCooldownUntilTick: 0,
+    difficulty,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -495,7 +507,8 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // multipliers (exhaustion, water, hedge) scale the result. Multiplying
   // *after* integration means wading into the river or a hedge slows you
   // immediately rather than bleeding speed over timeToStop seconds.
-  // A packed hug further cuts shove authority so the scrum crawls.
+  // A packed hug further cuts shove authority so the scrum crawls —
+  // but only while still on the stone. After a break, full shove returns.
   const staminaMult = getSpeedMultiplier(player);
   const sprintMult = getSprintMultiplier(player, input.sprint);
   const terrainMult = speedMultiplierAt(player.position, map);
@@ -506,7 +519,7 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
     player.hasBall,
     dt,
   );
-  let shove = hugShoveAuthority(countHugNeighbors(world, player.id, player.position));
+  let shove = hugShoveAt(world, player.id, player.position);
   if (wrestle.wriggleDir) shove = Math.max(shove, WRIGGLE_SHOVE_FLOOR);
   const envMult = staminaMult * terrainMult * shove;
   let vx = world._controlVel.x * envMult;

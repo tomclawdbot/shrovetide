@@ -356,23 +356,91 @@
         display: none !important;
       }
       .team-pick-card {
-        width: min(640px, 92vw);
+        width: min(720px, 94vw);
+        max-height: min(92vh, 900px);
+        overflow: auto;
         color: var(--ink);
         background: rgba(20, 14, 10, 0.92);
         border: 2px solid rgba(243, 234, 212, 0.35);
-        padding: 28px 28px 24px;
+        padding: 24px 26px 20px;
         text-align: center;
       }
       .team-pick-card h1 {
-        margin: 0 0 12px;
-        font-size: 36px;
+        margin: 0 0 8px;
+        font-size: 34px;
         letter-spacing: 0.12em;
         font-weight: 400;
       }
-      .team-pick-card p {
-        margin: 0 0 22px;
-        font-size: 18px;
+      .team-pick-card .lead {
+        margin: 0 0 14px;
+        font-size: 17px;
+        line-height: 1.4;
+      }
+      .howto {
+        margin: 0 0 16px;
+        text-align: left;
+        font-size: 14px;
         line-height: 1.45;
+        color: rgba(243, 234, 212, 0.92);
+      }
+      .howto h2 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        font-weight: 400;
+        color: #e4d4a8;
+      }
+      .howto ul {
+        margin: 0 0 12px;
+        padding-left: 1.15em;
+      }
+      .howto li {
+        margin: 0 0 4px;
+      }
+      .howto strong {
+        color: #f3ead4;
+        font-weight: 600;
+      }
+      .difficulty-block {
+        margin: 0 0 16px;
+      }
+      .difficulty-block h2 {
+        margin: 0 0 8px;
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        font-weight: 400;
+        color: #e4d4a8;
+      }
+      .difficulty-row {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .diff-btn {
+        flex: 1 1 120px;
+        pointer-events: auto;
+        touch-action: manipulation;
+        font-family: inherit;
+        font-size: 16px;
+        letter-spacing: 0.06em;
+        color: #f3ead4;
+        background: rgba(26, 20, 12, 0.85);
+        border: 2px solid rgba(243, 234, 212, 0.35);
+        padding: 10px 8px;
+        cursor: pointer;
+      }
+      .diff-btn[aria-pressed='true'] {
+        background: #e4d4a8;
+        color: #1a140c;
+        border-color: #1a140c;
+      }
+      .diff-btn .diff-hint {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        opacity: 0.8;
       }
       .team-pick-row {
         display: flex;
@@ -422,7 +490,8 @@
         color: #f3ead4;
         box-shadow: inset 0 0 0 2px #e8dcc8;
       }
-      .team-pick-btn:active {
+      .team-pick-btn:active,
+      .diff-btn:active {
         filter: brightness(1.08);
       }
       #rotate-hint {
@@ -459,10 +528,42 @@
       <div id="team-pick" hidden>
         <div class="team-pick-card">
           <h1>SHROVETIDE</h1>
-          <p>
-            Up'Ards play to <strong>Sturston</strong> (right).<br />
-            Down'Ards play to <strong>Clifton</strong> (left).
+          <p class="lead">
+            Carry the stone to the other side's millstone and hold it for three taps.
           </p>
+          <div class="howto">
+            <h2>How to play</h2>
+            <ul>
+              <li><strong>Run</strong> — WASD / stick. <strong>Sprint</strong> — Shift / Sprint pad (costs Breath).</li>
+              <li><strong>Kick</strong> — hold Space / Kick. <strong>Rip</strong> a trapped stone — hold F / Wriggle·Rip in the hug.</li>
+              <li><strong>Goal</strong> — at their millstone with the stone, tap E / Goal three times.</li>
+              <li><strong>Hug</strong> packs only around the stone; once it breaks free, the scrum peels apart.</li>
+            </ul>
+            <h2>Breath</h2>
+            <ul>
+              <li>Moving, sprinting, carrying, and ripping all spend Breath.</li>
+              <li>Breath returns only while you stand still — not while jogging.</li>
+              <li>Spent Breath (empty bar) leaves you crawling until you rest.</li>
+            </ul>
+          </div>
+          <div class="difficulty-block">
+            <h2>Difficulty</h2>
+            <div class="difficulty-row" role="group" aria-label="Difficulty">
+              <button id="diff-easy" class="diff-btn" type="button" data-difficulty="easy" aria-pressed="false">
+                Easy
+                <span class="diff-hint">Softer opponents</span>
+              </button>
+              <button id="diff-normal" class="diff-btn" type="button" data-difficulty="normal" aria-pressed="true">
+                Normal
+                <span class="diff-hint">Even chase</span>
+              </button>
+              <button id="diff-hard" class="diff-btn" type="button" data-difficulty="hard" aria-pressed="false">
+                Hard
+                <span class="diff-hint">Fiercer pack</span>
+              </button>
+            </div>
+          </div>
+          <p class="lead" style="margin-bottom: 12px">Pick a side</p>
           <div class="team-pick-row">
             <button id="pick-up" class="team-pick-btn" type="button">
               <span class="team-name">Up'Ards</span>

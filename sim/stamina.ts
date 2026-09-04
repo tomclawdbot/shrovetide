@@ -13,8 +13,8 @@ export const STAMINA_RIP_DRAIN = 30;
 export const STAMINA_WRIGGLE_DRAIN = 34;
 /** Stamina per second regenerated when idle (not moving, not sprinting). */
 export const STAMINA_REGEN_RATE = 18;
-/** Speed multiplier when stamina hits zero. */
-export const EXHAUSTED_SPEED_MULT = 0.6;
+/** Speed multiplier when stamina hits zero — a crawl, not a jog. */
+export const EXHAUSTED_SPEED_MULT = 0.35;
 /** Speed multiplier while sprinting with Breath remaining. */
 export const SPRINT_SPEED_MULT = 1.28;
 
@@ -58,7 +58,7 @@ export function updateStamina(entity: StaminaEntity, tick: StaminaTick, dt: numb
   entity.stamina = Math.max(0, Math.min(entity.maxStamina, entity.stamina + delta));
 }
 
-/** Walk/run multiplier from Breath: 1.0 normally, 0.6 when fully spent. */
+/** Walk/run multiplier from Breath: 1.0 normally, crawl when fully spent. */
 export function getSpeedMultiplier(entity: StaminaEntity): number {
   return entity.stamina <= 0 ? EXHAUSTED_SPEED_MULT : 1.0;
 }

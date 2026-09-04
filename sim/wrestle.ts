@@ -22,6 +22,7 @@ import {
   hugPackExtent,
   HUG_NEIGHBOR_RADIUS,
 } from './hug.js';
+import { difficultyTuning } from './difficulty.js';
 import { opponentGoalFor } from './maps.js';
 import type { Input, NPC, Team, Vec2 } from './types.js';
 import type { World } from './world.js';
@@ -35,8 +36,8 @@ export const RIP_REACH = HUG_NEIGHBOR_RADIUS;
 export const RIP_MIN_NEIGHBORS = 3;
 /** Packed hug around an opposing carrier: 2 neighbours is enough to start the strip. */
 export const RIP_CARRIER_MIN_NEIGHBORS = 2;
-/** Hold time to pop the stone once Rip is eligible. */
-export const RIP_SUCCESS_SECONDS = 0.4;
+/** Hold time to pop the stone once Rip is eligible — long enough for the hug to grind. */
+export const RIP_SUCCESS_SECONDS = 1.0;
 /** Pop speed (px/s) after the stone is already placed outside the pack. */
 export const RIP_POP_SPEED = 340;
 /** Ripper cannot re-grab while the stone is leaving the scrum. */
@@ -50,10 +51,10 @@ export const RIP_GHOST_TICKS = 12;
 export const RIP_CLEAR_PADDING = 26;
 /** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
 export const RIP_GRACE_TICKS = 24;
-/** After an NPC pops the stone, nobody NPC-rips again until this many ticks. */
+/** After an NPC pops the stone, nobody NPC-rips again until this many ticks (normal). */
 export const NPC_RIP_COOLDOWN_TICKS = 210;
-/** NPC hold is slightly longer so a player strip in a packed hug lands first. */
-export const NPC_RIP_SUCCESS_SECONDS = 0.5;
+/** Default NPC hold (normal). Overridden per match by difficulty tuning. */
+export const NPC_RIP_SUCCESS_SECONDS = 1.15;
 
 /** Touching this many bodies counts as “in contact with the hug”. */
 export const WRIGGLE_CONTACT_NEIGHBORS = 2;
@@ -358,6 +359,7 @@ function pickNpcRipper(world: World): NPC | null {
   let best: NPC | null = null;
   let bestD = Infinity;
   for (const npc of world.npcs) {
+    if (npc.team === world.player.team) continue;
     if (!canNpcRip(world, npc)) continue;
     const d = distIdToBall(world, npc.id);
     if (d < bestD || (d === bestD && best !== null && npc.id < best.id)) {
@@ -418,11 +420,13 @@ export function tickNpcRip(world: World, dt: number, playerWrestling: boolean): 
   }
 
   world._npcRipId = npc.id;
-  world._npcRipPressure += dt / NPC_RIP_SUCCESS_SECONDS;
+  const ripSeconds = difficultyTuning(world.difficulty).opponentRipSeconds;
+  world._npcRipPressure += dt / ripSeconds;
   if (world._npcRipPressure < 1) return;
 
   popBallFree(world, npcRipDirection(world, npc), RIP_POP_SPEED, npc.id);
-  world._npcRipCooldownUntilTick = world.tick + NPC_RIP_COOLDOWN_TICKS;
+  world._npcRipCooldownUntilTick =
+    world.tick + difficultyTuning(world.difficulty).opponentRipCooldownTicks;
   resetNpcRip(world);
 }
 

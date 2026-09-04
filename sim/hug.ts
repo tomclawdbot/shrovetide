@@ -12,6 +12,39 @@ export const HUG_NEIGHBOR_RADIUS = 54;
 export const HUG_PACK_COUNT = 6;
 /** Residual shove when the hug is fully packed (attritional crawl). */
 export const HUG_MIN_SHOVE = 0.18;
+/**
+ * Packing only slows shove inside this radius of the contest (stone / carrier).
+ * Outside it the hug has broken — full shove so bodies peel toward the ball.
+ */
+export const HUG_ZONE_RADIUS = HUG_NEIGHBOR_RADIUS + 60;
+
+/** Stone, or the carrier holding it — the only place a hug should stick. */
+export function contestFocus(world: World): Vec2 {
+  const ownerId = world.ball.ownerId;
+  if (ownerId !== null) {
+    if (ownerId === world.player.id) return world.player.position;
+    const carrier = world.npcs.find((n) => n.id === ownerId);
+    if (carrier) return carrier.position;
+  }
+  return world.ball.position;
+}
+
+/** True when `pos` is close enough to the stone for pack shove to apply. */
+export function isInHugZone(world: World, pos: Vec2): boolean {
+  const focus = contestFocus(world);
+  const dx = pos.x - focus.x;
+  const dy = pos.y - focus.y;
+  return dx * dx + dy * dy <= HUG_ZONE_RADIUS * HUG_ZONE_RADIUS;
+}
+
+/**
+ * Packed-hug shove cut, but only while still on the stone.
+ * After a Rip pops the ball clear, leftover clusters regain full shove and disband.
+ */
+export function hugShoveAt(world: World, id: string, pos: Vec2): number {
+  if (!isInHugZone(world, pos)) return 1;
+  return hugShoveAuthority(countHugNeighbors(world, id, pos));
+}
 
 /** How many characters sit inside `radius` of `pos`, optionally skipping one id. */
 export function countBodiesNear(
