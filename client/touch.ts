@@ -97,15 +97,19 @@ export class TouchControls {
   /**
    * Shared Wriggle / Rip pad. Hidden while carrying or when the hug is not
    * live; label follows sim wrestleMode so one hold can wriggle in then rip.
+   * A live pointer hold is not cancelled if eligibility flickers for a frame.
    */
-  setWrestle(mode: 'rip' | 'wriggle' | 'none'): void {
+  setWrestle(mode: 'rip' | 'wriggle' | 'none', pressure = 0): void {
     this.wrestleLabel = mode;
     const btn = this.el('wrestle-btn');
     if (!btn) return;
-    const show = this.enabled && this.flow === 'playing' && mode !== 'none';
+    const holding = this.wrestleId !== null;
+    const show = this.enabled && this.flow === 'playing' && (mode !== 'none' || holding);
     btn.hidden = !show;
     btn.textContent = mode === 'wriggle' ? 'Wriggle' : 'Rip';
-    if (!show) {
+    btn.style.setProperty('--wrestle-pressure', String(Math.max(0, Math.min(1, pressure))));
+    btn.classList.toggle('charging', pressure > 0.02);
+    if (!show && !holding) {
       btn.classList.remove('held');
       this.wrestle = false;
       this.wrestleId = null;
