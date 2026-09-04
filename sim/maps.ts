@@ -32,7 +32,19 @@ export interface Circle {
   radius: number;
 }
 
-export type Obstacle = RectZone | Circle;
+/** High-street frontage — pubs and shops, not blank boxes. */
+export type BuildingKind = 'pub' | 'shop';
+
+export interface Building extends RectZone {
+  name: string;
+  kind: BuildingKind;
+}
+
+export type Obstacle = Building | Circle;
+
+export function isBuilding(o: Obstacle): o is Building {
+  return 'kind' in o && 'name' in o;
+}
 
 // ---------------------------------------------------------------------------
 // Map definition
@@ -93,8 +105,21 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
 
 /** Buildings move with the parish but do not become fortresses. */
 const BUILDING_SIZE = 1.25;
-function sbuilding(x: number, y: number, w: number, h: number): RectZone {
-  return { position: sxy(x, y), width: w * BUILDING_SIZE, height: h * BUILDING_SIZE };
+function sbuilding(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  name: string,
+  kind: BuildingKind,
+): Building {
+  return {
+    position: sxy(x, y),
+    width: w * BUILDING_SIZE,
+    height: h * BUILDING_SIZE,
+    name,
+    kind,
+  };
 }
 
 /**
@@ -183,21 +208,24 @@ export const ASHBOURNE_TOWN: TownMap = {
   width: sx(2400),
   height: sx(1600),
 
-  // Town core buildings — rectangles the NPCs / player / ball cannot pass.
+  // High street — named Ashbourne pubs/shops. Rectangles the bodies cannot pass.
   // Positions are center-of-rect, in the original 2400×1600 design space.
+  // Keep the turn-up corridor and millstone approaches open.
   obstacles: [
-    // Cluster north of river, around town center
-    sbuilding(1080, 600, 90, 90),
-    sbuilding(1220, 560, 110, 70),
-    sbuilding(1340, 620, 80, 80),
-    sbuilding(1160, 720, 100, 60),
-    // Cluster south of river (between turn-up bridge and Down'Ards half)
-    sbuilding(1080, 1080, 100, 80),
-    sbuilding(1260, 1140, 90, 90),
-    sbuilding(1380, 1080, 70, 110),
-    // A couple out on the open flanks
-    sbuilding(600, 1280, 90, 70),
-    sbuilding(1820, 320, 110, 80),
+    // North of the Henmore: town core / St John Street flavour
+    sbuilding(1080, 600, 90, 90, 'The Green Man', 'pub'),
+    sbuilding(1220, 560, 110, 70, 'Gingerbread Shop', 'shop'),
+    sbuilding(1340, 620, 80, 80, 'The Horns', 'pub'),
+    sbuilding(1160, 720, 100, 60, "Smith's Butcher", 'shop'),
+    sbuilding(920, 640, 84, 70, 'The George & Dragon', 'pub'),
+    sbuilding(1480, 680, 90, 64, 'Station Stores', 'shop'),
+    // South of the river (between turn-up bridge and Down'Ards half)
+    sbuilding(1080, 1080, 100, 80, 'The Vaults', 'pub'),
+    sbuilding(1260, 1140, 90, 90, 'The White Hart', 'pub'),
+    sbuilding(1380, 1080, 70, 110, 'Market Hall', 'shop'),
+    // Flank inns — readable from a millstone run, not blocking the stones
+    sbuilding(600, 1280, 90, 70, 'The Wheel', 'pub'),
+    sbuilding(1820, 320, 110, 80, 'The Coach & Horses', 'pub'),
   ],
 
   // OOB — players & ball physically can't enter (well, ball gets bounced back).

@@ -7,8 +7,15 @@
 
 import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, isWalkable, nearestLegalPoint } from './maps.js';
-import type { Role, Team } from './types.js';
+import type { NPC, Role, Team, Vec2 } from './types.js';
 import type { World } from './world.js';
+
+/** Chase bodies clustered on the stone at toss-up, per side. */
+export const TOSS_UP_PACK_PER_SIDE = 10;
+/** Distance from turn-up that counts as "at the ball" for packing asserts. */
+export const TOSS_UP_NEAR_RADIUS = 160;
+/** Beyond this, a body is a scattered starter — not in the hug. */
+export const TOSS_UP_SCATTER_MIN = 520;
 
 function pinBody(world: World, id: string, x: number, y: number): void {
   const body = world.physics.bodies.get(id);
@@ -88,95 +95,135 @@ export function isValidPlacement(world: World, x: number, y: number): boolean {
 }
 
 /**
- * Auto-place the full away squad. Chase pack sits near mid so kickoff
- * hugs; hold ranks sit deeper toward their millstone.
+ * How many of `team` (including the controlled player) sit within `radius`
+ * of the turn-up. Used by tests to lock toss-up packing.
  */
-export function autoPlaceOpponents(world: World): void {
-  const opponentTeam: Team = world.player.team === 0 ? 1 : 0;
-  const opponents = world.npcs.filter((n) => n.team === opponentTeam);
-  const w = world.map.width;
-  const h = world.map.height;
-  const flip = (ratio: number) => (world.player.team === 0 ? ratio : 1 - ratio);
+export function countSideNearTurnUp(world: World, team: Team, radius: number): number {
+  const tu = world.map.turnUp;
+  let n = 0;
+  if (world.player.team === team) {
+    if (Math.hypot(world.player.position.x - tu.x, world.player.position.y - tu.y) < radius) n += 1;
+  }
+  for (const npc of world.npcs) {
+    if (npc.team !== team) continue;
+    if (Math.hypot(npc.position.x - tu.x, npc.position.y - tu.y) < radius) n += 1;
+  }
+  return n;
+}
 
-  const chaseCount = Math.min(opponents.length, 9);
-  const holdCount = opponents.length - chaseCount;
-  const northChase = Math.ceil(chaseCount / 2);
-  const southChase = chaseCount - northChase;
-  const northHold = Math.ceil(holdCount / 2);
-  const southHold = holdCount - northHold;
+/** Interleaved rings around the turn-up so the hug packs instead of a 17v17 wall. */
+function tossUpPackSlots(
+  count: number,
+  team: Team,
+  turnUp: Vec2,
+  rng: () => number,
+): Vec2[] {
+  const innerCount = Math.ceil(count / 2);
+  const outerCount = count - innerCount;
+  const teamPhase = team === 0 ? 0 : Math.PI / Math.max(count, 1);
+  const slots: Vec2[] = [];
+  const ring = (n: number, radius: number, phase: number): void => {
+    for (let i = 0; i < n; i++) {
+      const a = phase + (i / n) * Math.PI * 2 + (rng() - 0.5) * 0.1;
+      const r = radius + (rng() - 0.5) * 8;
+      slots.push({
+        x: turnUp.x + Math.cos(a) * r,
+        y: turnUp.y + Math.sin(a) * r,
+      });
+    }
+  };
+  ring(innerCount, 62, teamPhase);
+  ring(outerCount, 96, teamPhase + Math.PI / Math.max(outerCount, 1));
+  return slots;
+}
 
-  const slots: { x: number; y: number; role: Role }[] = [
-    ...spreadRanks(northChase, [w * flip(0.52), w * flip(0.58)], h * 0.36, h * 0.48).map((s) => ({
-      ...s,
-      role: 'chase' as const,
-    })),
-    ...spreadRanks(southChase, [w * flip(0.53), w * flip(0.59)], h * 0.60, h * 0.72).map((s) => ({
-      ...s,
-      role: 'chase' as const,
-    })),
-    ...spreadRanks(northHold, [w * flip(0.70), w * flip(0.84)], h * 0.20, h * 0.46).map((s) => ({
-      ...s,
-      role: 'hold' as const,
-    })),
-    ...spreadRanks(southHold, [w * flip(0.72), w * flip(0.86)], h * 0.62, h * 0.82).map((s) => ({
-      ...s,
-      role: 'hold' as const,
-    })),
+/** Sparse hold spots on that team's half — not a second ring at mid. */
+function scatterSlots(count: number, team: Team, map: { width: number; height: number }): Vec2[] {
+  const w = map.width;
+  const h = map.height;
+  const xs = team === 0 ? [w * 0.16, w * 0.24, w * 0.32] : [w * 0.84, w * 0.76, w * 0.68];
+  const north = Math.ceil(count / 2);
+  const south = count - north;
+  return [
+    ...spreadRanks(north, xs.slice(0, 2), h * 0.18, h * 0.42),
+    ...spreadRanks(south, xs.slice(1), h * 0.62, h * 0.84),
   ];
+}
 
-  for (let i = 0; i < opponents.length; i++) {
-    const npc = opponents[i]!;
-    const slot = slots[i] ?? slots[slots.length - 1]!;
+function pinNpc(
+  world: World,
+  npc: NPC,
+  raw: Vec2,
+  role: Role,
+): void {
+  npc.position = nearestLegalPoint(raw, world.map);
+  npc.velocity = { x: 0, y: 0 };
+  npc.role = role;
+  npc.holdPosition = role === 'hold' ? { ...npc.position } : null;
+  pinBody(world, npc.id, npc.position.x, npc.position.y);
+}
+
+/**
+ * ~10 chase clustered on the stone, remainder sparse hold on that team's half.
+ * `includePlayer` puts the controlled body in the hug (home toss-up).
+ */
+function placeSide(
+  world: World,
+  npcs: NPC[],
+  team: Team,
+  includePlayer: boolean,
+): void {
+  const packBudget = Math.min(TOSS_UP_PACK_PER_SIDE, npcs.length + (includePlayer ? 1 : 0));
+  const packNpcCount = includePlayer ? Math.max(0, packBudget - 1) : packBudget;
+  const packNpcs = npcs.slice(0, packNpcCount);
+  const scatterNpcs = npcs.slice(packNpcCount);
+  const packSlots = tossUpPackSlots(packBudget, team, world.map.turnUp, world._rng);
+  const scattered = scatterSlots(scatterNpcs.length, team, world.map);
+
+  let packIndex = 0;
+  for (const npc of packNpcs) {
+    const slot = packSlots[packIndex++] ?? world.map.turnUp;
+    pinNpc(world, npc, slot, 'chase');
+  }
+  if (includePlayer) {
+    // Outer ring — in the hug, not overlapping the stone (avoids instant claim).
+    const slot = packSlots[packIndex++] ?? world.map.turnUp;
+    const next = nearestLegalPoint(slot, world.map);
+    world.player.position.x = next.x;
+    world.player.position.y = next.y;
+    world.player.velocity = { x: 0, y: 0 };
+    world.player.assignedRole = 'chase';
+    pinBody(world, world.player.id, next.x, next.y);
+  }
+  for (let i = 0; i < scatterNpcs.length; i++) {
+    const npc = scatterNpcs[i]!;
+    const slot = scattered[i] ?? scattered[scattered.length - 1] ?? world.map.turnUp;
     const raw = {
-      x: slot.x + (world._rng() - 0.5) * 36,
-      y: slot.y + (world._rng() - 0.5) * 36,
+      x: slot.x + (world._rng() - 0.5) * 40,
+      y: slot.y + (world._rng() - 0.5) * 40,
     };
-    npc.position = nearestLegalPoint(raw, world.map);
-    npc.velocity = { x: 0, y: 0 };
-    npc.role = slot.role;
-    npc.holdPosition = slot.role === 'hold' ? { ...npc.position } : null;
-    pinBody(world, npc.id, npc.position.x, npc.position.y);
+    pinNpc(world, npc, raw, 'hold');
   }
 }
 
 /**
- * Default placement for the player's home squad during strategy phase.
- * 1 controlled player + teammates spread north/south of the river, all CHASE
- * by default. Player can move + re-role them via placeTeammate/setTeammateRole.
+ * Auto-place the away squad: ~10 chase on the stone, a few hold scattered
+ * toward their millstone — not a full 17-body ring at toss-up.
+ */
+export function autoPlaceOpponents(world: World): void {
+  const opponentTeam: Team = world.player.team === 0 ? 1 : 0;
+  const opponents = world.npcs.filter((n) => n.team === opponentTeam);
+  placeSide(world, opponents, opponentTeam, false);
+}
+
+/**
+ * Default home placement: controlled player + teammates in the toss-up hug,
+ * remainder sparse hold. Player can still walk / re-role during strategy.
  */
 export function autoPlaceHome(world: World): void {
   const homeTeam: Team = world.player.team;
-  const homeChars: ({ position: { x: number; y: number }; id: string })[] = [];
-  homeChars.push({ id: world.player.id, position: world.player.position });
-  for (const npc of world.npcs) {
-    if (npc.team === homeTeam) homeChars.push({ id: npc.id, position: npc.position });
-  }
-  const w = world.map.width;
-  const h = world.map.height;
-  const towardMid = homeTeam === 0 ? 1 : -1;
-  const baseX = homeTeam === 0 ? w * 0.26 : w * 0.74;
-  const north = Math.ceil(homeChars.length / 2);
-  const south = homeChars.length - north;
-  const slots = [
-    ...spreadRanks(north, [baseX, baseX + towardMid * 80, baseX + towardMid * 160], h * 0.18, h * 0.46),
-    ...spreadRanks(south, [baseX + towardMid * 20, baseX + towardMid * 100, baseX + towardMid * 180], h * 0.62, h * 0.84),
-  ];
-
-  for (let i = 0; i < homeChars.length; i++) {
-    const target = homeChars[i]!;
-    const slot = slots[i] ?? slots[slots.length - 1]!;
-    const next = nearestLegalPoint(slot, world.map);
-    target.position.x = next.x;
-    target.position.y = next.y;
-    pinBody(world, target.id, next.x, next.y);
-  }
-  for (const npc of world.npcs) {
-    if (npc.team === homeTeam) {
-      npc.role = 'chase';
-      npc.holdPosition = null;
-    }
-  }
-  world.player.assignedRole = 'chase';
+  const teammates = world.npcs.filter((n) => n.team === homeTeam);
+  placeSide(world, teammates, homeTeam, true);
 }
 
 /** Default map export so the rest of sim can refer to it. */

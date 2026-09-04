@@ -9,6 +9,7 @@ import Phaser from 'phaser';
 import {
   createWorld,
   cycleTeammate,
+  isBuilding,
   isCarrierAtOpponentGoal,
   moveControlled,
   opponentGoalFor,
@@ -22,6 +23,7 @@ import {
   npcRipContest,
   wrestleMode,
   type Input,
+  type Obstacle,
   type Team,
   type World,
 } from '../sim/index.js';
@@ -57,6 +59,16 @@ const PALETTE = {
   building: 0x6a4c36,
   buildingRoof: 0x3b2418,
   buildingEdge: 0x1a100a,
+  pubTimber: 0x4a3020,
+  pubRoof: 0x2e1c14,
+  pubFascia: 0x6b2a22,
+  pubSign: 0xc4a35a,
+  shopBrick: 0x7a5340,
+  shopFascia: 0x8a6844,
+  shopAwning: 0x5a2a28,
+  shopAwningAlt: 0xd8c4a0,
+  window: 0x2a4050,
+  door: 0x2a1810,
   water: 0x2d4a5c,
   waterEdge: 0x1a3040,
   hedge: 0x1c3a16,
@@ -438,23 +450,24 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const o of map.obstacles) {
-      if ('radius' in o) {
-        this.mapGfx.fillStyle(PALETTE.buildingRoof, 1);
-        this.mapGfx.fillCircle(o.position.x + 4, o.position.y - 6, o.radius);
-        this.mapGfx.fillStyle(PALETTE.building, 1);
-        this.mapGfx.fillCircle(o.position.x, o.position.y, o.radius);
-        this.mapGfx.lineStyle(3, PALETTE.buildingEdge, 1);
-        this.mapGfx.strokeCircle(o.position.x, o.position.y, o.radius);
-      } else {
-        const ox = o.position.x - o.width / 2;
-        const oy = o.position.y - o.height / 2;
-        this.mapGfx.fillStyle(PALETTE.buildingRoof, 1);
-        this.mapGfx.fillRect(ox + 6, oy - 14, o.width, 18);
-        this.mapGfx.fillStyle(PALETTE.building, 1);
-        this.mapGfx.fillRect(ox, oy, o.width, o.height);
-        this.mapGfx.lineStyle(3, PALETTE.buildingEdge, 1);
-        this.mapGfx.strokeRect(ox, oy, o.width, o.height);
-      }
+      this.drawBuilding(o);
+    }
+
+    for (const o of map.obstacles) {
+      if (!isBuilding(o)) continue;
+      const oy = o.position.y - o.height / 2;
+      const label = this.add
+        .text(o.position.x, oy - 6, o.name, {
+          fontFamily: FONT,
+          fontSize: '13px',
+          color: '#e8d2a8',
+          stroke: '#1a100a',
+          strokeThickness: 4,
+          align: 'center',
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(1);
+      this.adoptWorld(label);
     }
 
     for (const g of map.goals) {
@@ -472,6 +485,60 @@ export class GameScene extends Phaser.Scene {
 
     this.mapGfx.lineStyle(3, 0x1a140c, 0.7);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
+  }
+
+  /** Timber pub or brick shop — named Ashbourne high-street flavour, not a blank box. */
+  private drawBuilding(o: Obstacle): void {
+    const g = this.mapGfx;
+    if ('radius' in o) {
+      g.fillStyle(PALETTE.buildingRoof, 1);
+      g.fillCircle(o.position.x + 4, o.position.y - 6, o.radius);
+      g.fillStyle(PALETTE.building, 1);
+      g.fillCircle(o.position.x, o.position.y, o.radius);
+      g.lineStyle(3, PALETTE.buildingEdge, 1);
+      g.strokeCircle(o.position.x, o.position.y, o.radius);
+      return;
+    }
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    const pub = isBuilding(o) && o.kind === 'pub';
+    g.fillStyle(pub ? PALETTE.pubRoof : PALETTE.buildingRoof, 1);
+    g.fillRect(ox + 6, oy - 16, o.width, 20);
+    g.fillStyle(pub ? PALETTE.pubTimber : PALETTE.shopBrick, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+
+    const fasciaH = Math.min(18, o.height * 0.22);
+    g.fillStyle(pub ? PALETTE.pubFascia : PALETTE.shopFascia, 1);
+    g.fillRect(ox + 4, oy + 4, o.width - 8, fasciaH);
+
+    const doorW = Math.min(22, o.width * 0.22);
+    const doorH = Math.min(32, o.height * 0.42);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - doorW / 2, oy + o.height - doorH - 2, doorW, doorH);
+
+    const winW = Math.min(18, o.width * 0.16);
+    const winH = Math.min(16, o.height * 0.22);
+    g.fillStyle(PALETTE.window, 0.92);
+    g.fillRect(ox + o.width * 0.18 - winW / 2, oy + o.height * 0.42, winW, winH);
+    g.fillRect(ox + o.width * 0.82 - winW / 2, oy + o.height * 0.42, winW, winH);
+
+    if (pub) {
+      g.lineStyle(2, PALETTE.buildingEdge, 1);
+      g.lineBetween(ox + o.width + 2, oy + 8, ox + o.width + 2, oy + 26);
+      g.fillStyle(PALETTE.pubSign, 1);
+      g.fillCircle(ox + o.width + 2, oy + 34, 8);
+      g.lineStyle(2, PALETTE.buildingEdge, 0.9);
+      g.strokeCircle(ox + o.width + 2, oy + 34, 8);
+    } else {
+      const awningY = oy + fasciaH + 4;
+      const stripe = (o.width - 12) / 6;
+      for (let i = 0; i < 6; i++) {
+        g.fillStyle(i % 2 === 0 ? PALETTE.shopAwning : PALETTE.shopAwningAlt, 0.9);
+        g.fillRect(ox + 6 + i * stripe, awningY, stripe, 8);
+      }
+    }
   }
 
   private createSprites(): void {
@@ -1243,6 +1310,20 @@ export class GameScene extends Phaser.Scene {
       MINIMAP_W,
       map.river.height * sy,
     );
+
+    g.fillStyle(PALETTE.building, 0.85);
+    for (const b of map.obstacles) {
+      if ('radius' in b) {
+        g.fillCircle(ox + b.position.x * sx, oy + b.position.y * sy, 2);
+        continue;
+      }
+      g.fillRect(
+        ox + (b.position.x - b.width / 2) * sx,
+        oy + (b.position.y - b.height / 2) * sy,
+        Math.max(1.5, b.width * sx),
+        Math.max(1.5, b.height * sy),
+      );
+    }
 
     for (const goal of map.goals) {
       g.fillStyle(PALETTE.millstone, 1);

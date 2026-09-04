@@ -46,16 +46,17 @@ export const SHEPHERD_RADIUS = 130;
  */
 export const CONTEST_STEER_RADIUS = 180;
 /** Lead past a loose stone toward the millstone that team scores at. */
-const SHEPHERD_LEAD = 110;
+const SHEPHERD_LEAD = 200;
 /** Lead ahead of a teammate carrier so chase support advances the right way. */
-const ESCORT_LEAD = 140;
+const ESCORT_LEAD = 180;
 /**
- * Extra steer while carrying / escorting so the scoring end still crawls.
- * Kept modest — 1.55 overshot the cap after physics and looked like a rocket.
+ * Extra steer while carrying / escorting so the scoring end actually moves.
+ * #19 clamped the rocket (Matter pair overlap); this is a nudge on top of
+ * the authored carry cap — keep it under NPC_VS_SPRINT_BUDGET in tests.
  */
-export const SCORE_DRIVE_FORCE_MULT = 1.18;
-/** Carrier cap stays at MOVEMENT.carrierSpeedMult; no extra open-field burst. */
-export const SCORE_DRIVE_SPEED_MULT = 1.0;
+export const SCORE_DRIVE_FORCE_MULT = 1.36;
+/** Tiny extra cap while carrying — still a defendable walk, not a burst. */
+export const SCORE_DRIVE_SPEED_MULT = 1.04;
 /**
  * Peak NPC open-field / carrier speed as a fraction of player Sprint
  * (`PLAYER_MAX_SPEED * SPRINT_SPEED_MULT`). Sprint must be able to contest
@@ -66,7 +67,7 @@ export const NPC_VS_SPRINT_BUDGET = 0.88;
  * Packed-hug shove floor while carrying. Lets a claimed stone keep crawling
  * toward the millstone instead of stalling on top of it.
  */
-export const CARRY_SHOVE_FLOOR = 0.40;
+export const CARRY_SHOVE_FLOOR = 0.46;
 /** Overlap with the stone — drive the millstone, do not stand on it. */
 const ON_STONE_RADIUS = 36;
 
@@ -247,7 +248,9 @@ export function isTurnUpSwarm(world: World): boolean {
 function isDrivingScoreEnd(npc: NPC, world: World, collapsing: boolean): boolean {
   if (collapsing) return false;
   if (world.ball.ownerId === npc.id) return true;
-  if (world.ball.ownerId === null) return false;
+  if (world.ball.ownerId === null) {
+    return npc.role === 'chase' && !isTurnUpSwarm(world) && isShepherding(npc, world);
+  }
   const carrier = findCharacter(world, world.ball.ownerId);
   return npc.role === 'chase' && carrier !== null && carrier.team === npc.team;
 }
