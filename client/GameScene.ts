@@ -19,6 +19,7 @@ import {
   stepWorld,
   switchControl,
   teammateAtPoint,
+  npcRipContest,
   wrestleMode,
   type Input,
   type Team,
@@ -1004,6 +1005,13 @@ export class GameScene extends Phaser.Scene {
         this.markerGfx.lineStyle(3, PALETTE.ball, 0.95);
         this.markerGfx.strokeCircle(c.x, c.y, c.radius + 8 + pulse);
       }
+
+      const rip = npcRipContest(this.world);
+      if (rip && rip.id === c.id) {
+        const pulse = 4 + Math.sin(this.now() / 90) * 2;
+        this.markerGfx.lineStyle(4, PALETTE.staminaLow, 0.7 + rip.pressure * 0.3);
+        this.markerGfx.strokeCircle(c.x, c.y, c.radius + 10 + pulse + rip.pressure * 8);
+      }
     }
 
     const b = this.world.ball;
@@ -1183,6 +1191,12 @@ export class GameScene extends Phaser.Scene {
           this.pipGfx.strokeCircle(cx + (i - 1) * 28, cy, 8);
         }
       }
+      return;
+    }
+
+    const rip = npcRipContest(this.world);
+    if (rip && this.world.player.hasBall) {
+      this.setCaption("They're ripping the stone");
       return;
     }
 

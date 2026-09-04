@@ -8,6 +8,7 @@ import Matter from 'matter-js';
 import {
   CONTEST_STEER_RADIUS,
   createWorld,
+  isTurnUpSwarm,
   npcSteerTarget,
   opponentGoalFor,
   SHEPHERD_RADIUS,
@@ -224,6 +225,56 @@ test('npc: turn-up swarm still aims at the stone, not a millstone', () => {
   const target = npcSteerTarget(hunter, world);
   assert.ok(target);
   assert.equal(target, world.ball.position);
+});
+
+test('npc: chase NPC picks up a loose stone and drives the scoring millstone', () => {
+  const world = createWorld({ seed: 6, playerTeam: 0 });
+  startMatch(world);
+  const field = openMid(world);
+  const hunter = npcOfTeam(world, 1);
+  isolate(world, hunter.id, field.x, field.y);
+  parkBall(world, field.x + 8, field.y);
+  world.ball.ownerId = null;
+  world.player.hasBall = false;
+  assert.equal(isTurnUpSwarm(world), false, 'setup is off the turn-up');
+
+  runTicks(world, IDLE, 8);
+  assert.equal(world.ball.ownerId, hunter.id, 'nearest chase NPC should claim the loose stone');
+  assert.equal(world.player.hasBall, false);
+
+  const goal = opponentGoalFor(hunter.team, world.map);
+  const target = npcSteerTarget(hunter, world);
+  assert.ok(target);
+  assert.equal(target!.x, goal.x);
+  assert.equal(target!.y, goal.y);
+  assertPointsAtScoringGoal(hunter, world, target!);
+
+  const x0 = hunter.position.x;
+  runTicks(world, IDLE, 90);
+  assert.equal(world.ball.ownerId, hunter.id, 'carrier should keep the stone');
+  assert.ok(
+    hunter.position.x < x0 - 40,
+    `team 1 carrier should run left after pickup, ${x0.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+  );
+});
+
+test('npc: turn-up hug does not auto-claim the stone', () => {
+  const world = createWorld({ seed: 3 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 1);
+  const tu = world.map.turnUp;
+  parkBall(world, tu.x, tu.y);
+  world.ball.ownerId = null;
+  world.player.hasBall = false;
+  isolate(world, hunter.id, tu.x + 6, tu.y);
+  assert.equal(isTurnUpSwarm(world), true);
+
+  runTicks(world, IDLE, 20);
+  assert.equal(world.ball.ownerId, null, 'kickoff hug should pack before anyone claims');
+  assert.ok(
+    Math.hypot(hunter.position.x - tu.x, hunter.position.y - tu.y) < TURN_UP_SWARM_RADIUS,
+    'chaser should stay on the turn-up stone',
+  );
 });
 
 test('npc: hold collapse still crashes the player, not the far millstone', () => {

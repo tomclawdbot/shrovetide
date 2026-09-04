@@ -39,16 +39,27 @@ export const GOAL_DEFEND_SPEED_MULT = 1.16;
  */
 export const TURN_UP_SWARM_RADIUS = 240;
 /** Close enough to a loose stone to shepherd it instead of only swarming. */
-export const SHEPHERD_RADIUS = 96;
+export const SHEPHERD_RADIUS = 130;
 /**
  * The single closest contesting body may start driving the scoring end
  * from a little farther out than contact — still on the stone, not mid-pitch.
  */
-export const CONTEST_STEER_RADIUS = 160;
+export const CONTEST_STEER_RADIUS = 180;
 /** Lead past a loose stone toward the millstone that team scores at. */
-const SHEPHERD_LEAD = 64;
+const SHEPHERD_LEAD = 220;
 /** Lead ahead of a teammate carrier so chase support advances the right way. */
-const ESCORT_LEAD = 100;
+const ESCORT_LEAD = 200;
+/** Extra steer while carrying / shepherding so the scoring end actually moves. */
+export const SCORE_DRIVE_FORCE_MULT = 1.55;
+/** Modest extra cap for an NPC carrier grinding upfield. */
+export const SCORE_DRIVE_SPEED_MULT = 1.12;
+/**
+ * Packed-hug shove floor while carrying. Lets a claimed stone keep crawling
+ * toward the millstone instead of stalling on top of it.
+ */
+export const CARRY_SHOVE_FLOOR = 0.40;
+/** Overlap with the stone — drive the millstone, do not stand on it. */
+const ON_STONE_RADIUS = 36;
 
 export function steerNPCs(world: World): void {
   const threatened = threatenedGoalTeam(world);
@@ -70,20 +81,25 @@ export function steerNPCs(world: World): void {
     const dirX = dx / dist;
     const dirY = dy / dist;
 
-    const shove = hugShoveAuthority(countHugNeighbors(world, npc.id, npc.position));
+    const carrying = world.ball.ownerId === npc.id;
+    const drivingScore = isDrivingScoreEnd(npc, world, collapsing);
+    let shove = hugShoveAuthority(countHugNeighbors(world, npc.id, npc.position));
+    if (carrying) shove = Math.max(shove, CARRY_SHOVE_FLOOR);
+    const forceMult = drivingScore ? SCORE_DRIVE_FORCE_MULT : 1;
     Matter.Body.applyForce(
       body,
       body.position,
-      { x: dirX * NPC_STEER_FORCE * shove, y: dirY * NPC_STEER_FORCE * shove },
+      { x: dirX * NPC_STEER_FORCE * shove * forceMult, y: dirY * NPC_STEER_FORCE * shove * forceMult },
     );
 
     const looseBoost =
       world.ball.ownerId === null && target === world.ball.position ? LOOSE_BALL_SPEED_MULT : 1;
-    const carryMult = world.ball.ownerId === npc.id ? MOVEMENT.carrierSpeedMult : 1;
+    const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
+    const driveBoost = carrying ? SCORE_DRIVE_SPEED_MULT : 1;
     const defendBoost = collapsing ? GOAL_DEFEND_SPEED_MULT : 1;
     const terrainMult = speedMultiplierAt(npc.position, world.map);
     const maxMatter =
-      npc.maxSpeed * looseBoost * terrainMult * carryMult * defendBoost * MATTER_VELOCITY_SCALE;
+      npc.maxSpeed * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * MATTER_VELOCITY_SCALE;
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.hypot(vx, vy);
@@ -154,7 +170,7 @@ function pickTarget(
   // Loose stone: swarm at the turn-up; once it squirts, shepherd the scoring end.
   if (npc.role === 'chase') {
     if (!isTurnUpSwarm(world) && isShepherding(npc, world)) {
-      return advanceToward(world.ball.position, scoreAt, SHEPHERD_LEAD);
+      return shepherdTarget(npc, world, scoreAt);
     }
     return world.ball.position;
   }
@@ -176,11 +192,31 @@ function holdTarget(npc: NPC, world: World): Vec2 {
   return npc.holdPosition;
 }
 
-function isTurnUpSwarm(world: World): boolean {
+export function isTurnUpSwarm(world: World): boolean {
   const tu = world.map.turnUp;
   const dx = world.ball.position.x - tu.x;
   const dy = world.ball.position.y - tu.y;
   return Math.hypot(dx, dy) < TURN_UP_SWARM_RADIUS;
+}
+
+function isDrivingScoreEnd(npc: NPC, world: World, collapsing: boolean): boolean {
+  if (collapsing) return false;
+  if (world.ball.ownerId === npc.id) return true;
+  if (world.ball.ownerId !== null) {
+    const carrier = findCharacter(world, world.ball.ownerId);
+    return npc.role === 'chase' && carrier !== null && carrier.team === npc.team;
+  }
+  return !isTurnUpSwarm(world) && isShepherding(npc, world);
+}
+
+function shepherdTarget(npc: NPC, world: World, scoreAt: { x: number; y: number }): Vec2 {
+  const dx = world.ball.position.x - npc.position.x;
+  const dy = world.ball.position.y - npc.position.y;
+  // Standing on the stone: run the millstone, do not park on it.
+  if (Math.hypot(dx, dy) < ON_STONE_RADIUS) {
+    return { x: scoreAt.x, y: scoreAt.y };
+  }
+  return advanceToward(world.ball.position, scoreAt, SHEPHERD_LEAD);
 }
 
 function isShepherding(npc: NPC, world: World): boolean {

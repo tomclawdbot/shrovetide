@@ -80,6 +80,9 @@ export function switchControl(world: World, targetId: string): boolean {
   world._ripPressure = 0;
   world._ripGraceTicks = 0;
   world._ripGhostUntilTick = 0;
+  world._npcRipId = null;
+  world._npcRipPressure = 0;
+  world._npcRipGraceTicks = 0;
 
   // Re-tag the physics body label so debug overlays stay readable.
   const demotedBody = world.physics.bodies.get(prev.id);
