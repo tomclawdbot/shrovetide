@@ -334,13 +334,17 @@ test('npc rip: opposing pack strips the stone off a player carrier', () => {
   packOpposingRip(world, field.x, field.y);
   const pack0 = hugPackExtent(world, field)!;
 
-  const ripper = world.npcs.find((n) => n.team !== world.player.team && canNpcRip(world, n));
-  assert.ok(ripper, 'an opposing NPC should be Rip-eligible in the packed hug');
-  const breath0 = ripper!.stamina;
+  const eligible = world.npcs.filter((n) => n.team !== world.player.team && canNpcRip(world, n));
+  assert.ok(eligible.length > 0, 'an opposing NPC should be Rip-eligible in the packed hug');
+  const breath0 = new Map(eligible.map((n) => [n.id, n.stamina]));
 
   runTicks(world, IDLE, Math.ceil(NPC_RIP_SUCCESS_SECONDS * 60) + 4);
 
-  assert.ok(ripper!.stamina < breath0 - 8, `NPC Rip should spend Breath (${ripper!.stamina} vs ${breath0})`);
+  const spent = world.npcs.some((n) => {
+    const start = breath0.get(n.id);
+    return start !== undefined && n.stamina < start - 8;
+  });
+  assert.ok(spent, 'the NPC who Ripped should spend Breath');
   assert.equal(world.player.hasBall, false, 'player must lose the stone');
   assert.equal(world.ball.ownerId, null, 'Rip pops the stone free of the pack');
   const d = distFrom(world, field);

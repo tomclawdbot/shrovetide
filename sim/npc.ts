@@ -202,11 +202,9 @@ export function isTurnUpSwarm(world: World): boolean {
 function isDrivingScoreEnd(npc: NPC, world: World, collapsing: boolean): boolean {
   if (collapsing) return false;
   if (world.ball.ownerId === npc.id) return true;
-  if (world.ball.ownerId !== null) {
-    const carrier = findCharacter(world, world.ball.ownerId);
-    return npc.role === 'chase' && carrier !== null && carrier.team === npc.team;
-  }
-  return !isTurnUpSwarm(world) && isShepherding(npc, world);
+  if (world.ball.ownerId === null) return false;
+  const carrier = findCharacter(world, world.ball.ownerId);
+  return npc.role === 'chase' && carrier !== null && carrier.team === npc.team;
 }
 
 function shepherdTarget(npc: NPC, world: World, scoreAt: { x: number; y: number }): Vec2 {
