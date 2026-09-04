@@ -1,6 +1,6 @@
 // test/npc.steer.test.ts — NPC scoring-end intelligence.
-// Up'Ards (team 0) score at the Down millstone (right).
-// Down'Ards (team 1) score at the Up millstone (left).
+// Up'Ards (team 0) score at Sturston (right).
+// Down'Ards (team 1) score at Clifton (left).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -122,7 +122,7 @@ function assertPointsAtScoringGoal(npc: NPC, world: World, target: { x: number; 
   );
 }
 
-test('npc: team 0 carrier preferred target is the Down millstone (right)', () => {
+test('npc: team 0 carrier preferred target is Sturston (right)', () => {
   const world = createWorld({ seed: 2, playerTeam: 0 });
   startMatch(world);
   const field = openMid(world);
@@ -139,7 +139,7 @@ test('npc: team 0 carrier preferred target is the Down millstone (right)', () =>
   assertPointsAtScoringGoal(carrier, world, target!);
 });
 
-test('npc: team 1 carrier preferred target is the Up millstone (left)', () => {
+test('npc: team 1 carrier preferred target is Clifton (left)', () => {
   const world = createWorld({ seed: 2, playerTeam: 0 });
   startMatch(world);
   const field = openMid(world);
@@ -156,7 +156,7 @@ test('npc: team 1 carrier preferred target is the Up millstone (left)', () => {
   assertPointsAtScoringGoal(carrier, world, target!);
 });
 
-test('npc: isolated team 0 carrier advances toward the Down millstone', () => {
+test('npc: isolated team 0 carrier advances toward Sturston', () => {
   const world = createWorld({ seed: 8, playerTeam: 0 });
   startMatch(world);
   const field = openMid(world);
@@ -178,7 +178,7 @@ test('npc: isolated team 0 carrier advances toward the Down millstone', () => {
   );
 });
 
-test('npc: isolated team 1 carrier advances toward the Up millstone', () => {
+test('npc: isolated team 1 carrier advances toward Clifton', () => {
   const world = createWorld({ seed: 8, playerTeam: 0 });
   startMatch(world);
   const field = openMid(world);
@@ -230,11 +230,11 @@ test('npc: closest contesting a loose stone biases toward the scoring millstone'
   const ballTo1 = { x: t1!.x - world.ball.position.x, y: t1!.y - world.ball.position.y };
   assert.ok(
     ballTo0.x * (goal0.x - world.ball.position.x) > 0,
-    'team 0 shepherd lead should point at the Down millstone',
+    'team 0 shepherd lead should point at Sturston',
   );
   assert.ok(
     ballTo1.x * (goal1.x - world.ball.position.x) > 0,
-    'team 1 shepherd lead should point at the Up millstone',
+    'team 1 shepherd lead should point at Clifton',
   );
 });
 
@@ -383,12 +383,12 @@ test('npc: claiming a loose overlapping stone does not rocket toward the millsto
   );
   assert.ok(
     hunter.position.x < p0.x - 55,
-    `team 1 carrier should still run toward the Up millstone, ${p0.x.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+    `team 1 carrier should still run toward Clifton, ${p0.x.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
   );
   const home = world.map.goals.find((g) => g.team === 1)!.position;
   assert.ok(
     hunter.position.x - p0.x < 0 && home.x - p0.x > 0,
-    'post-claim drive must not head for the Down (home) millstone',
+    'post-claim drive must not head for home Sturston',
   );
 });
 
@@ -456,7 +456,7 @@ test('npc: carrier at the scoring millstone auto-taps and goals without the play
   assert.equal(world.score[0], 0);
 });
 
-test('npc: team 0 carrier goals at the Down millstone, not home', () => {
+test('npc: team 0 carrier goals at Sturston, not home Clifton', () => {
   const world = createWorld({ seed: 7, playerTeam: 0 });
   startMatch(world);
   const hunter = npcOfTeam(world, 0);

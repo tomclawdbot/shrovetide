@@ -11,11 +11,13 @@ import {
   cycleTeammate,
   isBuilding,
   isCarrierAtOpponentGoal,
+  MILL_CLIFTON,
   moveControlled,
   opponentGoalFor,
   placeTeammate,
   quickSwitch,
   releasePass,
+  scoringGoalMarker,
   startMatch,
   stepWorld,
   switchControl,
@@ -91,7 +93,9 @@ const PALETTE = {
   millstone: 0xe4d4a8,
   millstoneEdge: 0x4a3a1c,
   teamUp: 0x3d6eaa,
-  teamDown: 0xb43c2e,
+  teamUpTrim: 0xf5d76e,
+  teamDown: 0x161616,
+  teamDownEdge: 0xe8dcc8,
   youRing: 0xfff6e8,
   ball: 0xf3ead4,
   ballEdge: 0x1a140c,
@@ -100,6 +104,36 @@ const PALETTE = {
   staminaGood: 0xc4a35a,
   staminaLow: 0xc44a32,
 } as const;
+
+const SKIN = [0xe8c4a0, 0xd4a07a, 0xc48a62, 0x8d5a3c] as const;
+const HAIR = [0x1a120c, 0x2a1a12, 0x3d2914, 0x5a3a22] as const;
+
+function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function kitFill(team: Team): number {
+  return team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
+}
+
+function fillCapsule(
+  g: Phaser.GameObjects.Graphics,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  width: number,
+  color: number,
+  alpha = 1,
+): void {
+  g.lineStyle(width, color, alpha);
+  g.lineBetween(x1, y1, x2, y2);
+  g.fillStyle(color, alpha);
+  g.fillCircle(x1, y1, width / 2);
+  g.fillCircle(x2, y2, width / 2);
+}
 
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
 
@@ -151,11 +185,12 @@ export class GameScene extends Phaser.Scene {
   private keys: KeyState | null = null;
   private touch: TouchControls | null = null;
   private hudPad = { l: 16, r: 16, t: 16, b: 16 };
-  private bodySprites = new Map<string, Phaser.GameObjects.Arc>();
   private shadowSprites = new Map<string, Phaser.GameObjects.Ellipse>();
+  private lastFacing = new Map<string, { x: number; y: number }>();
   private ballSprite!: Phaser.GameObjects.Arc;
   private ballShadow!: Phaser.GameObjects.Ellipse;
   private mapGfx!: Phaser.GameObjects.Graphics;
+  private peopleGfx!: Phaser.GameObjects.Graphics;
   private markerGfx!: Phaser.GameObjects.Graphics;
   private followZoom = CAMERA_BASE_ZOOM;
   private userZoom = 1;
@@ -181,6 +216,7 @@ export class GameScene extends Phaser.Scene {
   private promptText!: Phaser.GameObjects.Text;
   private titleCard!: Phaser.GameObjects.Text;
   private againBtn!: Phaser.GameObjects.Text;
+  private teamPickAbort: AbortController | null = null;
   private pipGfx!: Phaser.GameObjects.Graphics;
   private minimapBg!: Phaser.GameObjects.Rectangle;
   private minimapGfx!: Phaser.GameObjects.Graphics;
@@ -264,6 +300,10 @@ export class GameScene extends Phaser.Scene {
       kb.on('keydown-Q', this.handleQuickSwitch);
       kb.on('keydown-C', this.handleFollowToggle);
       kb.on('keydown-HOME', this.returnToFollow);
+      kb.on('keydown-U', () => this.chooseTeam(0));
+      kb.on('keydown-ONE', () => this.chooseTeam(0));
+      kb.on('keydown-TWO', () => this.chooseTeam(1));
+      kb.on('keydown-D', () => this.chooseTeam(1));
     }
 
     this.input.on('pointerdown', this.handlePointerDown);
@@ -283,6 +323,9 @@ export class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.layoutHud, this);
       window.visualViewport?.removeEventListener('resize', this.layoutHud);
+      this.teamPickAbort?.abort();
+      this.teamPickAbort = null;
+      this.setTeamPickVisible(false);
       this.touch?.dispose();
       this.touch = null;
     });
@@ -292,6 +335,8 @@ export class GameScene extends Phaser.Scene {
     this.drawMapStatic();
     this.createSprites();
     this.createHUD();
+    this.bindTeamPick();
+    this.setTeamPickVisible(true);
 
     this.bindCameras();
     this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
@@ -600,20 +645,51 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const g of map.goals) {
-      const tint = g.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
-      this.mapGfx.lineStyle(8, tint, 0.85);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 42);
-      this.mapGfx.fillStyle(PALETTE.millstone, 1);
-      this.mapGfx.fillCircle(g.position.x, g.position.y, 22);
-      this.mapGfx.lineStyle(4, PALETTE.millstoneEdge, 1);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 22);
-      this.mapGfx.strokeCircle(g.position.x, g.position.y, 12);
-      this.mapGfx.fillStyle(PALETTE.millstoneEdge, 1);
-      this.mapGfx.fillCircle(g.position.x, g.position.y, 4);
+      this.drawMillstone(g.position.x, g.position.y, g.name);
+      const label = this.add
+        .text(g.position.x, g.position.y + 58, g.name.toUpperCase(), {
+          fontFamily: FONT,
+          fontSize: '22px',
+          color: g.name === MILL_CLIFTON ? '#f3ead4' : '#f5d76e',
+          stroke: '#1a100a',
+          strokeThickness: 5,
+          align: 'center',
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(1);
+      this.adoptWorld(label);
     }
 
     this.mapGfx.lineStyle(3, 0x1a140c, 0.7);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
+  }
+
+  /** Sturston (Up goal) blue/yellow hoops; Clifton (Down goal) black. */
+  private drawMillstone(x: number, y: number, name: string): void {
+    const g = this.mapGfx;
+    if (name === MILL_CLIFTON) {
+      g.lineStyle(11, PALETTE.teamDownEdge, 0.95);
+      g.strokeCircle(x, y, 42);
+      g.lineStyle(8, PALETTE.teamDown, 1);
+      g.strokeCircle(x, y, 42);
+    } else {
+      const segs = 8;
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2 - Math.PI / 2;
+        const a1 = ((i + 1) / segs) * Math.PI * 2 - Math.PI / 2;
+        g.lineStyle(10, i % 2 === 0 ? PALETTE.teamUp : PALETTE.teamUpTrim, 0.95);
+        g.beginPath();
+        g.arc(x, y, 42, a0, a1, false);
+        g.strokePath();
+      }
+    }
+    g.fillStyle(PALETTE.millstone, 1);
+    g.fillCircle(x, y, 22);
+    g.lineStyle(4, PALETTE.millstoneEdge, 1);
+    g.strokeCircle(x, y, 22);
+    g.strokeCircle(x, y, 12);
+    g.fillStyle(PALETTE.millstoneEdge, 1);
+    g.fillCircle(x, y, 4);
   }
 
   /** Timber-framed pub or brick shopfront — Ashbourne high street, not a labeled box. */
@@ -774,16 +850,10 @@ export class GameScene extends Phaser.Scene {
   private createSprites(): void {
     for (const ch of this.collectCharacters()) {
       const shadow = this.add
-        .ellipse(ch.x, ch.y + ch.radius * 0.55, ch.radius * 2.1, ch.radius, PALETTE.shadow, 0.35)
+        .ellipse(ch.x, ch.y + ch.radius * 0.7, ch.radius * 1.8, ch.radius * 0.7, PALETTE.shadow, 0.32)
         .setDepth(1);
       this.shadowSprites.set(ch.id, shadow);
       this.adoptWorld(shadow);
-
-      const body = this.add.circle(ch.x, ch.y, ch.radius, PALETTE.teamUp);
-      body.setDepth(2);
-      body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
-      this.bodySprites.set(ch.id, body);
-      this.adoptWorld(body);
     }
 
     this.ballShadow = this.add
@@ -798,16 +868,19 @@ export class GameScene extends Phaser.Scene {
       .setDepth(3);
     this.adoptWorld(this.ballShadow);
 
-    this.ballSprite = this.add.circle(
-      this.world.ball.position.x,
-      this.world.ball.position.y,
-      this.world.ball.radius,
-      PALETTE.ball,
-    );
-    this.ballSprite.setStrokeStyle(3, PALETTE.ballEdge);
-    this.ballSprite.setDepth(4);
+    this.ballSprite = this.add
+      .circle(
+        this.world.ball.position.x,
+        this.world.ball.position.y,
+        this.world.ball.radius,
+        PALETTE.ball,
+      )
+      .setStrokeStyle(3, PALETTE.ballEdge)
+      .setDepth(4);
     this.adoptWorld(this.ballSprite);
 
+    this.peopleGfx = this.add.graphics().setDepth(2);
+    this.adoptWorld(this.peopleGfx);
     this.markerGfx = this.add.graphics().setDepth(5);
     this.adoptWorld(this.markerGfx);
   }
@@ -921,7 +994,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nUp'Ards  vs  Down'Ards\n\nUp play to the Down millstone (right).\nDown play the other way.\n\nSpace or tap — walk out",
+          "SHROVETIDE\n\nUp'Ards play to Sturston (right).\nDown'Ards play to Clifton (left).\n\nU / 1 — Up'Ards\nD / 2 — Down'Ards",
           {
             fontFamily: FONT,
             fontSize: '28px',
@@ -1020,7 +1093,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleSpace = (): void => {
     if (this.flow === 'title') {
-      this.beginPlacement();
+      this.chooseTeam(0);
       return;
     }
     if (this.flow === 'placing') return;
@@ -1072,10 +1145,7 @@ export class GameScene extends Phaser.Scene {
       this.eatPointer = false;
       return;
     }
-    if (this.flow === 'title') {
-      this.beginPlacement();
-      return;
-    }
+    if (this.flow === 'title') return;
     const evTarget = pointer.event?.target;
     if (evTarget instanceof Element && evTarget.closest('#touch-layer .pad-btn, #touch-layer #follow-btn')) {
       return;
@@ -1213,6 +1283,61 @@ export class GameScene extends Phaser.Scene {
     return Math.hypot(x - g.x, y - g.y) <= 80;
   }
 
+  private bindTeamPick(): void {
+    this.teamPickAbort?.abort();
+    this.teamPickAbort = new AbortController();
+    const { signal } = this.teamPickAbort;
+    const up = document.getElementById('pick-up');
+    const down = document.getElementById('pick-down');
+    up?.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.chooseTeam(0);
+      },
+      { signal },
+    );
+    down?.addEventListener(
+      'pointerdown',
+      (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.chooseTeam(1);
+      },
+      { signal },
+    );
+  }
+
+  private setTeamPickVisible(on: boolean): void {
+    const el = document.getElementById('team-pick');
+    if (el) el.hidden = !on;
+    this.titleCard?.setVisible(on && !el);
+  }
+
+  private chooseTeam = (team: Team): void => {
+    if (this.flow !== 'title') return;
+    void unlockAudio();
+    if (this.world.player.team !== team) this.rebuildWorld(team);
+    this.beginPlacement();
+  };
+
+  private rebuildWorld(team: Team): void {
+    for (const s of this.shadowSprites.values()) s.destroy();
+    this.shadowSprites.clear();
+    this.lastFacing.clear();
+    this.ballSprite?.destroy();
+    this.ballShadow?.destroy();
+    this.peopleGfx?.destroy();
+    this.markerGfx?.destroy();
+    this.worldObjs = this.worldObjs.filter((o) => o.active);
+    this.world = createWorld({ playerTeam: team });
+    this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
+    this.createSprites();
+    this.placeTargetId = this.world.npcs.find((n) => n.team === team)?.id ?? null;
+    this.pinCam(this.world.player.position.x, this.world.player.position.y, this.currentZoom);
+  }
+
   private beginPlacement(): void {
     if (this.flow !== 'title') return;
     this.flow = 'placing';
@@ -1220,7 +1345,7 @@ export class GameScene extends Phaser.Scene {
     this.lastWall = this.now();
     this.spaceReady = false;
     this.eatPointer = true;
-    this.titleCard.setVisible(false);
+    this.setTeamPickVisible(false);
     this.syncTouchFlow();
     this.layoutHud();
   }
@@ -1361,6 +1486,108 @@ export class GameScene extends Phaser.Scene {
     return isCarrierAtOpponentGoal(this.world);
   }
 
+  private facingOf(c: RenderChar): { x: number; y: number } {
+    if (c.controlled) {
+      const mx = this.inputState.move.x;
+      const my = this.inputState.move.y;
+      const ml = Math.hypot(mx, my);
+      if (ml > 0.15) {
+        const f = { x: mx / ml, y: my / ml };
+        this.lastFacing.set(c.id, f);
+        return f;
+      }
+    }
+    const sp = Math.hypot(c.vx, c.vy);
+    if (sp > 8) {
+      const f = { x: c.vx / sp, y: c.vy / sp };
+      this.lastFacing.set(c.id, f);
+      return f;
+    }
+    return this.lastFacing.get(c.id) ?? { x: c.team === 0 ? 1 : -1, y: 0 };
+  }
+
+  /**
+   * Top-down runner: head, kit torso, striding limbs.
+   * Up'Ards wear blue/yellow hoops; Down'Ards wear black. Sim radius unchanged.
+   */
+  private drawPerson(c: RenderChar): void {
+    const g = this.peopleGfx;
+    const h = hashId(c.id);
+    const skin = SKIN[h % SKIN.length]!;
+    const hair = HAIR[(h >>> 8) % HAIR.length]!;
+    const r = c.radius * (c.controlled ? 1.22 : 1);
+    const { x: ux, y: uy } = this.facingOf(c);
+    const px = -uy;
+    const py = ux;
+    const moving = Math.hypot(c.vx, c.vy) > 12;
+    const gait = this.now() / 85 + (h % 97) * 0.21;
+    const swing = Math.sin(gait) * r * (moving ? 0.44 : 0.07);
+    const kit = kitFill(c.team);
+    const hipX = c.x - ux * r * 0.48;
+    const hipY = c.y - uy * r * 0.48;
+    const chestX = c.x + ux * r * 0.22;
+    const chestY = c.y + uy * r * 0.22;
+    const torsoW = r * 0.72;
+    const legColor = c.team === 0 ? 0x24344c : 0x0a0a0a;
+
+    for (const side of [-1, 1] as const) {
+      const hx = hipX + px * r * 0.22 * side;
+      const hy = hipY + py * r * 0.22 * side;
+      const stride = swing * side;
+      fillCapsule(
+        g,
+        hx,
+        hy,
+        hx - ux * r * 0.7 + ux * stride,
+        hy - uy * r * 0.7 + uy * stride,
+        r * 0.3,
+        legColor,
+      );
+    }
+
+    if (c.team === 1) {
+      fillCapsule(g, hipX, hipY, chestX, chestY, torsoW + 2, PALETTE.teamDownEdge);
+    }
+    fillCapsule(g, hipX, hipY, chestX, chestY, torsoW, kit);
+
+    if (c.team === 0) {
+      const stripeW = r * 0.34;
+      g.lineStyle(Math.max(2.4, r * 0.16), PALETTE.teamUpTrim, 1);
+      for (const t of [0.18, 0.4, 0.62, 0.84]) {
+        const sx = hipX + (chestX - hipX) * t;
+        const sy = hipY + (chestY - hipY) * t;
+        g.lineBetween(sx - px * stripeW, sy - py * stripeW, sx + px * stripeW, sy + py * stripeW);
+      }
+    }
+
+    const shx = chestX - ux * r * 0.02;
+    const shy = chestY - uy * r * 0.02;
+    for (const side of [-1, 1] as const) {
+      const stride = -swing * side;
+      const ax0 = shx + px * r * 0.28 * side;
+      const ay0 = shy + py * r * 0.28 * side;
+      const ax1 = shx + px * r * 0.62 * side + ux * stride * 0.7;
+      const ay1 = shy + py * r * 0.62 * side + uy * stride * 0.7;
+      fillCapsule(g, ax0, ay0, ax1, ay1, r * 0.24, kit);
+    }
+
+    const headR = r * 0.5;
+    const headX = c.x + ux * r * 0.78;
+    const headY = c.y + uy * r * 0.78;
+    g.fillStyle(skin, 1);
+    g.fillCircle(headX, headY, headR);
+    g.fillStyle(hair, 1);
+    g.fillCircle(headX - ux * headR * 0.22, headY - uy * headR * 0.22, headR * 0.72);
+
+    if (c.controlled) {
+      this.markerGfx.lineStyle(3, PALETTE.youRing, 1);
+      this.markerGfx.strokeCircle(c.x, c.y, r * 1.32);
+      const ty = Math.min(c.y, headY) - headR - 12;
+      this.markerGfx.fillStyle(PALETTE.youRing, 1);
+      this.markerGfx.fillTriangle(c.x - 8, ty - 9, c.x + 8, ty - 9, c.x, ty);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
@@ -1387,45 +1614,20 @@ export class GameScene extends Phaser.Scene {
     this.hudCam.setScroll(0, 0);
     this.syncFollowHud();
 
+    this.peopleGfx.clear();
     this.markerGfx.clear();
 
-    for (const c of chars) {
-      const body = this.bodySprites.get(c.id);
+    const drawOrder = [...chars].sort((a, b) => {
+      if (a.controlled !== b.controlled) return a.controlled ? 1 : -1;
+      return a.y - b.y;
+    });
+    for (const c of drawOrder) {
       const shadow = this.shadowSprites.get(c.id);
-      if (!body || !shadow) continue;
+      if (shadow) shadow.setPosition(c.x, c.y + c.radius * 0.7);
+      this.drawPerson(c);
+    }
 
-      body.setPosition(c.x, c.y);
-      shadow.setPosition(c.x, c.y + c.radius * 0.55);
-
-      const teamColor = c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown;
-      body.setFillStyle(teamColor);
-
-      if (c.controlled) {
-        body.setRadius(c.radius * 1.5);
-        body.setStrokeStyle(6, PALETTE.youRing, 1);
-        body.setDepth(3);
-        const ty = c.y - c.radius * 1.5 - 16;
-        this.markerGfx.fillStyle(PALETTE.youRing, 1);
-        this.markerGfx.fillTriangle(c.x - 9, ty - 10, c.x + 9, ty - 10, c.x, ty);
-      } else {
-        body.setRadius(c.radius);
-        body.setStrokeStyle(3, PALETTE.buildingEdge, 1);
-        body.setDepth(2);
-      }
-
-      const speed = Math.hypot(c.vx, c.vy);
-      if (speed > 4) {
-        const ux = c.vx / speed;
-        const uy = c.vy / speed;
-        this.markerGfx.lineStyle(3, PALETTE.buildingEdge, 0.7);
-        this.markerGfx.lineBetween(
-          c.x + ux * c.radius * 0.2,
-          c.y + uy * c.radius * 0.2,
-          c.x + ux * (c.radius + 10),
-          c.y + uy * (c.radius + 10),
-        );
-      }
-
+    for (const c of chars) {
       if (carrierId !== null && carrierId === c.id) {
         const pulse = 3 + Math.sin(this.now() / 130) * 2;
         this.markerGfx.lineStyle(3, PALETTE.ball, 0.95);
@@ -1514,7 +1716,7 @@ export class GameScene extends Phaser.Scene {
   private renderHud(): void {
     const live = this.flow === 'playing';
     this.setMatchHud(live);
-    this.titleCard.setVisible(this.flow === 'title');
+    this.setTeamPickVisible(this.flow === 'title');
     this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
     this.touch?.setWrestle(
       live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none',
@@ -1595,8 +1797,9 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.kickoffLeft > 0) {
-      const label = this.world.player.team === 0 ? "YOU ARE UP" : "YOU ARE DOWN";
-      this.setCaption(`${label} — that way`);
+      const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
+      const side = this.world.player.team === 0 ? "YOU ARE UP'ARDS" : "YOU ARE DOWN'ARDS";
+      this.setCaption(`${side} — play to ${mill}`);
       return;
     }
     if (!this.camFollow && !this.atStone()) {
@@ -1641,12 +1844,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const touch = !!this.touch?.active;
+    const mill = scoringGoalMarker(this.world.player.team, this.world.map).name;
     const copy: Record<Teach, string> = {
       move: touch ? 'Stick — run' : 'WASD — run',
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
-      goal: touch ? 'At their millstone, tap Goal' : 'At their millstone, tap E',
+      goal: touch ? `At ${mill}, tap Goal` : `At ${mill}, tap E`,
       done: '',
     };
     this.setCaption(copy[this.teach]);
@@ -1695,14 +1899,34 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const goal of map.goals) {
-      g.fillStyle(PALETTE.millstone, 1);
-      g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3);
+      if (goal.name === MILL_CLIFTON) {
+        g.fillStyle(PALETTE.teamDownEdge, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.6);
+        g.fillStyle(PALETTE.teamDown, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 2.4);
+      } else {
+        g.fillStyle(PALETTE.teamUp, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 3.4);
+        g.fillStyle(PALETTE.teamUpTrim, 1);
+        g.fillCircle(ox + goal.position.x * sx, oy + goal.position.y * sy, 1.6);
+      }
     }
 
     for (const c of chars) {
       if (c.controlled) continue;
-      g.fillStyle(c.team === 0 ? PALETTE.teamUp : PALETTE.teamDown, 0.9);
-      g.fillCircle(ox + c.x * sx, oy + c.y * sy, 2.2);
+      const mx = ox + c.x * sx;
+      const my = oy + c.y * sy;
+      if (c.team === 0) {
+        g.fillStyle(PALETTE.teamUp, 0.95);
+        g.fillCircle(mx, my, 2.3);
+        g.fillStyle(PALETTE.teamUpTrim, 0.95);
+        g.fillCircle(mx, my, 1.1);
+      } else {
+        g.fillStyle(PALETTE.teamDownEdge, 0.9);
+        g.fillCircle(mx, my, 2.5);
+        g.fillStyle(PALETTE.teamDown, 0.95);
+        g.fillCircle(mx, my, 1.8);
+      }
     }
 
     const b = this.world.ball;

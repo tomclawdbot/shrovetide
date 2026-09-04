@@ -50,9 +50,21 @@ export function isBuilding(o: Obstacle): o is Building {
 // Map definition
 // ---------------------------------------------------------------------------
 
+/** Parish mill. Down'Ards score at Clifton (west); Up'Ards score at Sturston (east). */
+export type MillName = 'Clifton' | 'Sturston';
+
+export const MILL_CLIFTON: MillName = 'Clifton';
+export const MILL_STURSTON: MillName = 'Sturston';
+
 export interface GoalMarker {
+  /**
+   * Defending team for this millstone (home).
+   * Team 0 (Up'Ards) defend Clifton and score at Sturston.
+   * Team 1 (Down'Ards) defend Sturston and score at Clifton.
+   */
   team: 0 | 1;
   position: Vec2Like;
+  name: MillName;
 }
 
 export interface Bridge extends RectZone {}
@@ -263,9 +275,11 @@ export const ASHBOURNE_TOWN: TownMap = {
 
   // Millstones sit on the north bank (river spans design y 820–940), inland
   // of the sideline pad so a body can stand inside GOAL_REACH without wall-clamping.
+  // Clifton (west / left) is the Down'Ards scoring mill; Sturston (east / right)
+  // is the Up'Ards scoring mill — Ashbourne geography, not a colour invert.
   goals: [
-    { team: 0, position: sxy(140, 790) },
-    { team: 1, position: sxy(2260, 790) },
+    { team: 0, name: MILL_CLIFTON, position: sxy(140, 790) },
+    { team: 1, name: MILL_STURSTON, position: sxy(2260, 790) },
   ],
 
   turnUp: sxy(1200, 880),
@@ -367,16 +381,29 @@ export function speedMultiplierAt(p: Vec2Like, map: TownMap): number {
   return mult;
 }
 
-/** Goal position for a given team. */
-export function goalFor(team: 0 | 1, map: TownMap): Vec2Like {
+/** Home millstone for a given team (the one they defend). */
+export function goalMarkerFor(team: 0 | 1, map: TownMap): GoalMarker {
   const g = map.goals.find((m) => m.team === team);
   if (!g) throw new Error(`No goal for team ${team}`);
-  return g.position;
+  return g;
+}
+
+/** Goal position for a given team (home / defend). */
+export function goalFor(team: 0 | 1, map: TownMap): Vec2Like {
+  return goalMarkerFor(team, map).position;
+}
+
+/**
+ * Millstone this team tries to goal at.
+ * Up'Ards (0) → Sturston (east). Down'Ards (1) → Clifton (west).
+ */
+export function scoringGoalMarker(team: 0 | 1, map: TownMap): GoalMarker {
+  return goalMarkerFor(team === 0 ? 1 : 0, map);
 }
 
 /** Opposite team's goal — the one a carrier can score on. */
 export function opponentGoalFor(team: 0 | 1, map: TownMap): Vec2Like {
-  return goalFor(team === 0 ? 1 : 0, map);
+  return scoringGoalMarker(team, map).position;
 }
 
 /**
