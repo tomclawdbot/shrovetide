@@ -22,6 +22,7 @@ export {
   RIVER_SPEED_MULT,
   TOWN_SCALE,
   goalFor,
+  isBuilding,
   isInHedge,
   isInHedgeSlow,
   isInObstacle,
@@ -35,6 +36,8 @@ export {
   pointInRect,
   speedMultiplierAt,
   type Bridge,
+  type Building,
+  type BuildingKind,
   type Circle,
   type GoalMarker,
   type Obstacle,
@@ -143,7 +146,7 @@ export {
   GOAL_TAP_MAX_CHAIN_TICKS,
 } from './match.js';
 
-export { tapGoal, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
+export { tapGoal, tickNpcGoalTap, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
 
 // Squad placement (strategy phase)
 export {
@@ -153,6 +156,10 @@ export {
   isValidPlacement,
   autoPlaceOpponents,
   autoPlaceHome,
+  countSideNearTurnUp,
+  TOSS_UP_NEAR_RADIUS,
+  TOSS_UP_PACK_PER_SIDE,
+  TOSS_UP_SCATTER_MIN,
 } from './placement.js';
 
 // Switching

@@ -1,11 +1,11 @@
 // sim/goaling.ts — 3-tap goaling mechanic.
 //
 // Carrier must be ADJACENT to the opponent's millstone (within
-// GOAL_REACH_DISTANCE) and press interact 3 times with ≥0.5s spacing
+// GOAL_REACH_DISTANCE) and land 3 taps with ≥0.5s spacing
 // (per TICKET 002 spec). On third tap → score, match ends immediately.
 //
-// `tapGoal(world)` is called from the client whenever input.goalTap
-// fires (rising edge per tick). The sim owns the timing.
+// Player taps come from input.goalTap (rising edge). NPC carriers at the
+// correct millstone auto-hold the same contest so a drive can finish.
 
 import { goalFor } from './maps.js';
 import type { World } from './world.js';
@@ -49,10 +49,10 @@ function carrierAtOpponentGoal(world: World): { carrierId: string; goalX: number
 }
 
 /**
-** Register a single tap from the controlled character. Called once per
-** rising edge of input.goalTap. Idempotent — no-op if not in position,
-** if it's too soon since the last tap, or if the chain has gone stale.
-*/
+ * Register a single tap for the current carrier. Player rising-edge or
+ * NPC auto-contest both use this. No-op if not in position, too soon, or
+ * the chain has gone stale. Only the opponent millstone counts.
+ */
 export function tapGoal(world: World): void {
   if (world.matchState !== 'playing') return;
   const at = carrierAtOpponentGoal(world);
@@ -87,6 +87,18 @@ export function tapGoal(world: World): void {
   if (g.taps >= 3) {
     scoreGoal(world, at.carrierId);
   }
+}
+
+/**
+ * NPC carrier at the millstone they score at: hold the same 3-tap contest.
+ * Spacing / stale-chain rules live in tapGoal. Player carriers are skipped
+ * — they must press Goal.
+ */
+export function tickNpcGoalTap(world: World): void {
+  if (world.matchState !== 'playing') return;
+  const ownerId = world.ball.ownerId;
+  if (ownerId === null || ownerId === world.player.id) return;
+  tapGoal(world);
 }
 
 function scoreGoal(world: World, scorerId: string): void {

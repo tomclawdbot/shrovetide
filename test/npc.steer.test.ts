@@ -8,6 +8,7 @@ import Matter from 'matter-js';
 import {
   CONTEST_STEER_RADIUS,
   createWorld,
+  isCarrierAtOpponentGoal,
   isTurnUpSwarm,
   npcSteerTarget,
   opponentGoalFor,
@@ -159,9 +160,16 @@ test('npc: isolated team 0 carrier advances toward the Down millstone', () => {
   giveBallTo(world, carrier.id);
   const x0 = carrier.position.x;
   runTicks(world, IDLE, 90);
+  const dx = carrier.position.x - x0;
+  const goal = opponentGoalFor(0, world.map);
+  const home = world.map.goals.find((g) => g.team === 0)!.position;
   assert.ok(
-    carrier.position.x > x0 + 40,
+    dx > 55 && dx * (goal.x - x0) > 0,
     `team 0 carrier should run right, ${x0.toFixed(0)} → ${carrier.position.x.toFixed(0)}`,
+  );
+  assert.ok(
+    dx * (home.x - x0) < 0,
+    'team 0 displacement must not be toward the home millstone',
   );
 });
 
@@ -174,9 +182,16 @@ test('npc: isolated team 1 carrier advances toward the Up millstone', () => {
   giveBallTo(world, carrier.id);
   const x0 = carrier.position.x;
   runTicks(world, IDLE, 90);
+  const dx = carrier.position.x - x0;
+  const goal = opponentGoalFor(1, world.map);
+  const home = world.map.goals.find((g) => g.team === 1)!.position;
   assert.ok(
-    carrier.position.x < x0 - 40,
+    dx < -55 && dx * (goal.x - x0) > 0,
     `team 1 carrier should run left, ${x0.toFixed(0)} → ${carrier.position.x.toFixed(0)}`,
+  );
+  assert.ok(
+    dx * (home.x - x0) < 0,
+    'team 1 displacement must not be toward the home millstone',
   );
 });
 
@@ -259,9 +274,16 @@ test('npc: chase NPC picks up a loose stone and drives the scoring millstone', (
   const x0 = hunter.position.x;
   runTicks(world, IDLE, 90);
   assert.equal(world.ball.ownerId, hunter.id, 'carrier should keep the stone');
+  const goalX = opponentGoalFor(hunter.team, world.map).x;
+  const homeX = world.map.goals.find((g) => g.team === hunter.team)!.position.x;
+  const dx = hunter.position.x - x0;
   assert.ok(
-    hunter.position.x < x0 - 40,
-    `team 1 carrier should run left after pickup, ${x0.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+    dx * (goalX - x0) > 0 && Math.abs(dx) > 55,
+    `after claim, team ${hunter.team} must progress toward the scoring millstone, ${x0.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+  );
+  assert.ok(
+    dx * (homeX - x0) < 0,
+    `after claim, team ${hunter.team} must not run the home millstone`,
   );
 });
 
@@ -355,8 +377,13 @@ test('npc: claiming a loose overlapping stone does not rocket toward the millsto
     `post-claim drive ${mean.toFixed(1)} px/s must be contestable vs Sprint budget ${budget.toFixed(1)} (rocket was ~700)`,
   );
   assert.ok(
-    hunter.position.x < p0.x - 40,
+    hunter.position.x < p0.x - 55,
     `team 1 carrier should still run toward the Up millstone, ${p0.x.toFixed(0)} → ${hunter.position.x.toFixed(0)}`,
+  );
+  const home = world.map.goals.find((g) => g.team === 1)!.position;
+  assert.ok(
+    hunter.position.x - p0.x < 0 && home.x - p0.x > 0,
+    'post-claim drive must not head for the Down (home) millstone',
   );
 });
 
@@ -385,13 +412,69 @@ test('npc: player Sprint covers more ground than an NPC carrier in the same wind
   );
 });
 
-test('npc: SCORE_DRIVE force stays a nudge, not a rocket multiplier', () => {
+test('npc: SCORE_DRIVE force is a scoring nudge, not a rocket multiplier', () => {
   assert.ok(
-    SCORE_DRIVE_FORCE_MULT <= 1.25,
-    `SCORE_DRIVE_FORCE_MULT ${SCORE_DRIVE_FORCE_MULT} should stay near 1 so physics cannot overshoot the cap`,
+    SCORE_DRIVE_FORCE_MULT >= 1.28,
+    `SCORE_DRIVE_FORCE_MULT ${SCORE_DRIVE_FORCE_MULT} must be strong enough to progress after the #19 clamp`,
+  );
+  assert.ok(
+    SCORE_DRIVE_FORCE_MULT <= 1.45,
+    `SCORE_DRIVE_FORCE_MULT ${SCORE_DRIVE_FORCE_MULT} should stay a nudge so physics cannot overshoot the cap`,
   );
   assert.ok(
     SCORE_DRIVE_SPEED_MULT <= 1.05,
     `SCORE_DRIVE_SPEED_MULT ${SCORE_DRIVE_SPEED_MULT} must not raise NPC carriers above a defendable walk`,
   );
+});
+
+test('npc: carrier at the scoring millstone auto-taps and goals without the player', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 1);
+  const goal = opponentGoalFor(hunter.team, world.map);
+  isolate(world, hunter.id, goal.x, goal.y - 24);
+  giveBallTo(world, hunter.id);
+  assert.equal(isCarrierAtOpponentGoal(world), true, 'setup: NPC is in millstone reach');
+  assert.equal(world.player.hasBall, false);
+
+  runTicks(world, IDLE, 20);
+  assert.ok(world.goaling.taps >= 1, `first tap should land, taps=${world.goaling.taps}`);
+  assert.equal(world.goaling.carrierId, hunter.id);
+  assert.equal(world.matchState, 'playing', 'one tap is not a goal');
+
+  runTicks(world, IDLE, 100);
+  assert.equal(world.matchState, 'over', 'NPC 3-tap contest should finish the match');
+  assert.equal(world.winState?.reason, 'goal');
+  assert.equal(world.winState?.scorerId, hunter.id);
+  assert.equal(world.winState?.scorerTeam, 1);
+  assert.equal(world.score[1], 1);
+  assert.equal(world.score[0], 0);
+});
+
+test('npc: team 0 carrier goals at the Down millstone, not home', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 0);
+  const down = opponentGoalFor(0, world.map);
+  isolate(world, hunter.id, down.x, down.y - 24);
+  giveBallTo(world, hunter.id);
+  runTicks(world, IDLE, 120);
+  assert.equal(world.matchState, 'over');
+  assert.equal(world.winState?.scorerTeam, 0);
+  assert.equal(world.score[0], 1);
+});
+
+test('npc: carrier at the home millstone cannot score', () => {
+  const world = createWorld({ seed: 7, playerTeam: 0 });
+  startMatch(world);
+  const hunter = npcOfTeam(world, 1);
+  const home = world.map.goals.find((g) => g.team === hunter.team)!.position;
+  isolate(world, hunter.id, home.x, home.y - 24);
+  giveBallTo(world, hunter.id);
+  assert.equal(isCarrierAtOpponentGoal(world), false, 'home millstone is the wrong end');
+  runTicks(world, IDLE, 120);
+  assert.equal(world.matchState, 'playing', 'must not goal at the home stone');
+  assert.equal(world.score[0], 0);
+  assert.equal(world.score[1], 0);
+  assert.equal(world.goaling.taps, 0);
 });

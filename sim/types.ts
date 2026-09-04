@@ -13,8 +13,8 @@ export type Team = 0 | 1;
  * - hold: stay in their assigned zone, engage ball if it comes near
  * - chase: full commitment — join the hug scrum at the ball
  *
- * Opponents only ever use 'chase'. Teammates get whichever the player
- * assigned during the strategy phase.
+ * Opponents default to a toss-up chase pack plus a few hold on their half.
+ * Teammates get whichever the player assigned during the strategy phase.
  */
 export type Role = 'hold' | 'chase';
 

@@ -9,12 +9,14 @@ import Matter from 'matter-js';
 import {
   ASHBOURNE_TOWN,
   countHugNeighbors,
+  countSideNearTurnUp,
   createWorld,
   cycleTeammate,
   GOAL_CONTEST_RADIUS,
   HEDGE_SPEED_MULT,
   HUG_MIN_SHOVE,
   hugShoveAuthority,
+  isBuilding,
   isCarrierAtOpponentGoal,
   isInHedgeSlow,
   isInWater,
@@ -31,6 +33,9 @@ import {
   stepWorld,
   switchControl,
   threatenedGoalTeam,
+  TOSS_UP_NEAR_RADIUS,
+  TOSS_UP_PACK_PER_SIDE,
+  TOSS_UP_SCATTER_MIN,
   TOWN_SCALE,
   type Input,
   type World,
@@ -591,9 +596,31 @@ test('feel: kickoff packs bodies around the turn-up', () => {
     const d = Math.hypot(n.position.x - world.ball.position.x, n.position.y - world.ball.position.y);
     return d < 500;
   }).length;
-  // Same-size bodies on a 2× parish: the kernel still packs; the next rank is a longer run.
-  assert.ok(near >= 5, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
-  assert.ok(wave >= 6, `expected a second wave in range, got ${wave} NPCs within 500px`);
+  assert.ok(near >= 12, `expected a scrum at the turn-up, got ${near} NPCs within 300px`);
+  assert.ok(wave >= 14, `expected a second wave in range, got ${wave} NPCs within 500px`);
+});
+
+test('toss-up: ~10 per side hug the stone; only a few start scattered', () => {
+  const world = createWorld({ seed: 3 });
+  for (const team of [0, 1] as const) {
+    const near = countSideNearTurnUp(world, team, TOSS_UP_NEAR_RADIUS);
+    const far = countSideNearTurnUp(world, team, 1e9) - countSideNearTurnUp(world, team, TOSS_UP_SCATTER_MIN);
+    assert.ok(
+      near >= TOSS_UP_PACK_PER_SIDE - 1 && near <= TOSS_UP_PACK_PER_SIDE + 1,
+      `team ${team} should pack ~${TOSS_UP_PACK_PER_SIDE} at the ball, got ${near}`,
+    );
+    assert.ok(
+      far >= 5 && far <= 8,
+      `team ${team} should leave a few scattered on the map, got ${far} beyond ${TOSS_UP_SCATTER_MIN}px`,
+    );
+  }
+  startMatch(world);
+  runTicks(world, IDLE, 90);
+  assert.equal(world.ball.ownerId, null, 'kickoff hug should pack for a few seconds before anyone claims');
+  for (const team of [0, 1] as const) {
+    const near = countSideNearTurnUp(world, team, 300);
+    assert.ok(near >= 8, `team ${team} should still hug the stone after 1.5s, got ${near}`);
+  }
 });
 
 test('squad: each side has 10 more bodies than the old 7v7', () => {
@@ -709,6 +736,22 @@ test('map: millstones sit farther apart on the scaled town', () => {
   const span = Math.hypot(b.x - a.x, b.y - a.y);
   assert.ok(span > 2120 * 1.4, `millstones should be farther than the old town (${span})`);
   assert.equal(span, 2120 * TOWN_SCALE);
+});
+
+test('map: buildings read as named Ashbourne pubs and shops', () => {
+  const buildings = ASHBOURNE_TOWN.obstacles.filter(isBuilding);
+  assert.ok(buildings.length >= 9, `expected a dressed high street, got ${buildings.length}`);
+  const names = buildings.map((b) => b.name);
+  assert.equal(new Set(names).size, names.length, 'building names should be unique');
+  const pubs = buildings.filter((b) => b.kind === 'pub');
+  const shops = buildings.filter((b) => b.kind === 'shop');
+  assert.ok(pubs.length >= 5, `expected several pubs, got ${pubs.length}`);
+  assert.ok(shops.length >= 3, `expected several shops, got ${shops.length}`);
+  assert.ok(names.includes('The Green Man'), 'Green Man should mark the town');
+  assert.ok(names.includes('Gingerbread Shop'), 'Ashbourne gingerbread shop should be on the map');
+  for (const b of buildings) {
+    assert.ok(b.name.length >= 4 && b.name.length <= 24, `${b.name} should be a short readable sign`);
+  }
 });
 
 test('map: 17v17 placement stays out of walls and OOB', () => {
