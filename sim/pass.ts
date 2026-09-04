@@ -12,7 +12,7 @@ import { toMatterVelocity } from './physics.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
-const PICKUP_PADDING = 10;
+export const PICKUP_PADDING = 10;
 /** Extra gap past pickup range so the kicker does not re-grab on the next tick. */
 const RELEASE_CLEARANCE = 8;
 const MIN_CHARGE_SECONDS = 0.2;
@@ -22,28 +22,54 @@ const MAX_PASS_SPEED = 340;
 /** ~0.3s at 60 Hz — covers the first kick's pickup bubble. */
 export const PASS_PICKUP_IMMUNITY_TICKS = 18;
 
+export function pickupReach(radius: number, ballRadius: number): number {
+  return radius + ballRadius + PICKUP_PADDING;
+}
+
+function isPickupImmune(world: World, id: string): boolean {
+  return world.passImmuneId === id && world.tick < world.passImmuneUntilTick;
+}
+
 /**
- * If the ball is loose and the controlled character is close enough, pick it up.
+ * If the ball is loose, the nearest in-range body claims it.
+ * Chase NPCs compete with the player using the same reach rule; the player
+ * wins an exact-distance tie. `includeNpcs` is false at the turn-up so the
+ * kickoff hug can pack before anyone claims.
  */
-export function tryPickupBall(world: World): void {
+export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}): void {
   const { ball, player } = world;
   if (ball.ownerId !== null) return;
-  if (
-    world.passImmuneId === player.id &&
-    world.tick < world.passImmuneUntilTick
-  ) {
-    return;
+  if (world.tick < world._ripGhostUntilTick) return;
+
+  const includeNpcs = opts.includeNpcs !== false;
+  let bestId: string | null = null;
+  let bestDist = Infinity;
+  let bestIsPlayer = false;
+
+  const consider = (id: string, pos: { x: number; y: number }, radius: number, isPlayer: boolean): void => {
+    if (isPickupImmune(world, id)) return;
+    const dx = ball.position.x - pos.x;
+    const dy = ball.position.y - pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > pickupReach(radius, ball.radius)) return;
+    if (dist < bestDist || (dist === bestDist && isPlayer && !bestIsPlayer)) {
+      bestDist = dist;
+      bestId = id;
+      bestIsPlayer = isPlayer;
+    }
+  };
+
+  consider(player.id, player.position, player.radius, true);
+  if (includeNpcs) {
+    for (const npc of world.npcs) {
+      if (npc.role !== 'chase') continue;
+      consider(npc.id, npc.position, npc.radius, false);
+    }
   }
 
-  const dx = ball.position.x - player.position.x;
-  const dy = ball.position.y - player.position.y;
-  const dist = Math.hypot(dx, dy);
-  const pickupRadius = player.radius + ball.radius + PICKUP_PADDING;
-
-  if (dist <= pickupRadius) {
-    ball.ownerId = player.id;
-    player.hasBall = true;
-  }
+  if (bestId === null) return;
+  ball.ownerId = bestId;
+  player.hasBall = bestId === player.id;
 }
 
 /**

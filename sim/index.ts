@@ -68,7 +68,7 @@ export {
   type World,
 } from './world.js';
 
-export { releasePass, PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
+export { releasePass, pickupReach, tryPickupBall, PASS_PICKUP_IMMUNITY_TICKS, PICKUP_PADDING } from './pass.js';
 export {
   STAMINA_REGEN_RATE,
   STAMINA_MOVE_DRAIN,
@@ -82,15 +82,22 @@ export {
 
 export {
   applyWriggleProgress,
+  canNpcRip,
   canRip,
   canWriggle,
   clearPopPose,
+  inNpcRipContest,
   inRipContest,
+  npcRipContest,
   popBallFree,
+  resetNpcRip,
   ripClearDistance,
   setWriggleFriction,
+  tickNpcRip,
   tickWrestle,
   wrestleMode,
+  NPC_RIP_COOLDOWN_TICKS,
+  NPC_RIP_SUCCESS_SECONDS,
   RIP_CLEAR_PADDING,
   RIP_GHOST_TICKS,
   RIP_GRACE_TICKS,
@@ -110,11 +117,15 @@ export {
 } from './wrestle.js';
 
 export {
+  CARRY_SHOVE_FLOOR,
   CONTEST_STEER_RADIUS,
   GOAL_CONTEST_RADIUS,
   GOAL_DEFEND_SPEED_MULT,
+  SCORE_DRIVE_FORCE_MULT,
+  SCORE_DRIVE_SPEED_MULT,
   SHEPHERD_RADIUS,
   TURN_UP_SWARM_RADIUS,
+  isTurnUpSwarm,
   npcSteerTarget,
   threatenedGoalTeam,
 } from './npc.js';

@@ -4,12 +4,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Matter from 'matter-js';
 import {
+  canNpcRip,
   canRip,
   canWriggle,
   countHugNeighbors,
   createWorld,
   hugPackExtent,
   inRipContest,
+  NPC_RIP_SUCCESS_SECONDS,
+  npcRipContest,
   popBallFree,
   RIP_REACH,
   RIP_SUCCESS_SECONDS,
@@ -297,6 +300,84 @@ test('wriggle: hold makes measurable progress into a packed hug', () => {
   );
   assert.ok(d0 - dWriggle < 80, `must not teleport through the scrum (closed ${(d0 - dWriggle).toFixed(0)}px)`);
   assert.ok(burrow.player.stamina < idle.player.stamina - 8, 'Wriggle should cost extra Breath');
+});
+
+/** Pack opposing chase NPCs around the player so they can Rip a carrier. */
+function packOpposingRip(world: World, x: number, y: number, count = 8, radius = 34): void {
+  teleportId(world, world.player.id, x, y);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  world._controlVel.x = 0;
+  world._controlVel.y = 0;
+  Matter.Body.setPosition(world.physics.ballBody, { x, y });
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+  world.ball.position = { x, y };
+  world.ball.velocity = { x: 0, y: 0 };
+
+  let packed = 0;
+  for (let i = 0; i < world.npcs.length; i++) {
+    const npc = world.npcs[i]!;
+    if (npc.team !== world.player.team && packed < count) {
+      const angle = (packed / count) * Math.PI * 2;
+      teleportId(world, npc.id, x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+      packed += 1;
+    } else {
+      teleportId(world, npc.id, 80 + ((i * 47) % 400), 80 + ((i * 31) % 300));
+    }
+  }
+}
+
+test('npc rip: opposing pack strips the stone off a player carrier', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packOpposingRip(world, field.x, field.y);
+  const pack0 = hugPackExtent(world, field)!;
+
+  const eligible = world.npcs.filter((n) => n.team !== world.player.team && canNpcRip(world, n));
+  assert.ok(eligible.length > 0, 'an opposing NPC should be Rip-eligible in the packed hug');
+  const breath0 = new Map(eligible.map((n) => [n.id, n.stamina]));
+
+  runTicks(world, IDLE, Math.ceil(NPC_RIP_SUCCESS_SECONDS * 60) + 4);
+
+  const spent = world.npcs.some((n) => {
+    const start = breath0.get(n.id);
+    return start !== undefined && n.stamina < start - 8;
+  });
+  assert.ok(spent, 'the NPC who Ripped should spend Breath');
+  assert.equal(world.player.hasBall, false, 'player must lose the stone');
+  assert.equal(world.ball.ownerId, null, 'Rip pops the stone free of the pack');
+  const d = distFrom(world, field);
+  assert.ok(
+    d > pack0.radius,
+    `stone must pop clear of the packed hug, d=${d.toFixed(1)} packR=${pack0.radius.toFixed(1)}`,
+  );
+});
+
+test('npc rip: contest is visible and rate-limited after a strip', () => {
+  const world = createWorld({ seed: 4 });
+  startMatch(world);
+  const field = openField(world);
+  packOpposingRip(world, field.x, field.y);
+
+  runTicks(world, IDLE, 10);
+  const live = npcRipContest(world);
+  assert.ok(live, 'HUD should see an NPC Rip contest while it builds');
+  assert.ok(live!.pressure > 0 && live!.pressure < 1);
+
+  runTicks(world, IDLE, Math.ceil(NPC_RIP_SUCCESS_SECONDS * 60) + 4);
+  assert.equal(world.ball.ownerId, null);
+  assert.equal(npcRipContest(world), null, 'contest clears after the pop');
+  assert.ok(world._npcRipCooldownUntilTick > world.tick, 'successful NPC Rip starts a cooldown');
+
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  Matter.Body.setPosition(world.physics.ballBody, world.player.position);
+  world.ball.position = { ...world.player.position };
+  const cooldownLeft = world._npcRipCooldownUntilTick - world.tick;
+  runTicks(world, IDLE, Math.min(20, cooldownLeft));
+  assert.equal(world.ball.ownerId, world.player.id, 'cooldown must block instant re-steal');
+  assert.equal(world.player.hasBall, true);
 });
 
 test('tap: teammateAtPoint hits a nearby mate and ignores empty grass', () => {

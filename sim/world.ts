@@ -24,7 +24,7 @@ import Matter from 'matter-js';
 import { ASHBOURNE_TOWN, TownMap, isInObstacle, isInWater, isOutOfBounds, nearestLegalPoint, speedMultiplierAt } from './maps.js';
 import { createPhysicsWorld, stepPhysics, toMatterVelocity, MATTER_VELOCITY_SCALE, type PhysicsWorldHandle } from './physics.js';
 import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamina.js';
-import { steerNPCs } from './npc.js';
+import { isTurnUpSwarm, steerNPCs } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal } from './goaling.js';
@@ -33,6 +33,7 @@ import { countHugNeighbors, hugShoveAuthority } from './hug.js';
 import {
   applyWriggleProgress,
   setWriggleFriction,
+  tickNpcRip,
   tickWrestle,
   WRIGGLE_INWARD_SPEED,
   WRIGGLE_SHOVE_FLOOR,
@@ -124,6 +125,14 @@ export interface World extends SimState {
   _ripGraceTicks: number;
   /** While `tick < this`, the popped stone is a sensor so it cannot re-glue. */
   _ripGhostUntilTick: number;
+  /** NPC currently holding Rip on a carrier, or null. */
+  _npcRipId: string | null;
+  /** 0..1 NPC Rip contest. */
+  _npcRipPressure: number;
+  /** Ticks of NPC Rip grace left after a jostle. */
+  _npcRipGraceTicks: number;
+  /** Next tick an NPC may start a new Rip (rate-limit). */
+  _npcRipCooldownUntilTick: number;
 }
 
 export interface CreateWorldOptions {
@@ -292,6 +301,10 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     _ripPressure: 0,
     _ripGraceTicks: 0,
     _ripGhostUntilTick: 0,
+    _npcRipId: null,
+    _npcRipPressure: 0,
+    _npcRipGraceTicks: 0,
+    _npcRipCooldownUntilTick: 0,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -424,7 +437,7 @@ function pinOnPitch(
  *
  * Order of operations (matters for determinism):
  *   1. Tick match state machine (timer + end-on-expiry).
- *   2. Update controlled character stamina (walk / Sprint / Rip / Wriggle).
+ *   2. Update wrestle (player Rip / Wriggle, then NPC Rip) and stamina.
  *   3. Lock carried ball to carrier.
  *   4. Integrate + apply controlled character velocity (Wriggle adds inward).
  *   5. Steer NPCs (role-based AI).
@@ -451,6 +464,7 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // 2. Wrestle mode (Rip / Wriggle) then stamina.
   // Rip may pop the stone here so physics carries the squirt this tick.
   const wrestle = tickWrestle(world, input, dt);
+  tickNpcRip(world, dt, wrestle.mode !== 'none');
   const moving =
     Math.hypot(input.move.x, input.move.y) > MOVEMENT.inputDeadzone;
   updateStamina(
@@ -566,7 +580,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   if (wrestle.wriggleDir && player.stamina > 0) {
     applyWriggleProgress(world, wrestle.wriggleDir, wriggleDistBefore);
   }
-  if (!wrestle.suppressPickup) tryPickupBall(world);
+  if (!wrestle.suppressPickup) {
+    tryPickupBall(world, { includeNpcs: !isTurnUpSwarm(world) });
+  }
 
   // 10. Goal tap (rising-edge driven by input.goalTap).
   if (input.goalTap) tapGoal(world);

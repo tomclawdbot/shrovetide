@@ -22,7 +22,9 @@ import {
   hugPackExtent,
   HUG_NEIGHBOR_RADIUS,
 } from './hug.js';
-import type { Input, Vec2 } from './types.js';
+import { opponentGoalFor } from './maps.js';
+import { STAMINA_RIP_DRAIN } from './stamina.js';
+import type { Input, NPC, Team, Vec2 } from './types.js';
 import type { World } from './world.js';
 
 /** Matches MOVEMENT.inputDeadzone — avoid importing world.ts (cycle). */
@@ -47,6 +49,10 @@ export const RIP_GHOST_TICKS = 12;
 export const RIP_CLEAR_PADDING = 26;
 /** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
 export const RIP_GRACE_TICKS = 18;
+/** After an NPC pops the stone, nobody NPC-rips again until this many ticks. */
+export const NPC_RIP_COOLDOWN_TICKS = 210;
+/** Same hold as the player — contested, not an instant strip. */
+export const NPC_RIP_SUCCESS_SECONDS = RIP_SUCCESS_SECONDS;
 
 /** Touching this many bodies counts as “in contact with the hug”. */
 export const WRIGGLE_CONTACT_NEIGHBORS = 2;
@@ -212,15 +218,16 @@ export function ripClearDistance(world: World, around: Vec2 = world.ball.positio
 }
 
 /** Squirt the stone free along `dir` (unit) — placed outside the packed scrum. */
-export function popBallFree(world: World, dir: Vec2, speed: number): void {
+export function popBallFree(world: World, dir: Vec2, speed: number, ripperId?: string): void {
   const { ball, physics } = world;
   const pack = hugPackExtent(world, ball.position);
   const centroid = pack?.centroid ?? { ...ball.position };
   const dist = ripClearDistance(world, ball.position);
   const pose = clearPopPose(world, centroid, dir, dist);
 
+  const ripper = ripperId ?? world.player.id;
   clearBallOwner(world);
-  world.passImmuneId = world.player.id;
+  world.passImmuneId = ripper;
   world.passImmuneUntilTick = world.tick + RIP_IMMUNITY_TICKS;
   world._ripGhostUntilTick = world.tick + RIP_GHOST_TICKS;
 
@@ -288,6 +295,127 @@ export function tickWrestle(world: World, input: Input, dt: number): WrestleTick
     suppressPickup: held && distToBall(world) <= WRIGGLE_APPROACH_RADIUS,
     wriggleDir,
   };
+}
+
+function charPose(world: World, id: string): { position: Vec2; team: Team } | null {
+  if (id === world.player.id) return world.player;
+  return world.npcs.find((n) => n.id === id) ?? null;
+}
+
+function distIdToBall(world: World, id: string): number {
+  const body = charPose(world, id);
+  if (!body) return Infinity;
+  const dx = world.ball.position.x - body.position.x;
+  const dy = world.ball.position.y - body.position.y;
+  return Math.hypot(dx, dy);
+}
+
+/** Opposing NPC in a dense hug on a carrier — same reach/pack bar as player Rip. */
+export function canNpcRip(world: World, npc: NPC): boolean {
+  const ownerId = world.ball.ownerId;
+  if (ownerId === null || ownerId === npc.id) return false;
+  if (npc.stamina <= 0) return false;
+  const carrier = charPose(world, ownerId);
+  if (!carrier || carrier.team === npc.team) return false;
+  if (distIdToBall(world, npc.id) > RIP_REACH) return false;
+  return countHugNeighbors(world, npc.id, npc.position) >= RIP_MIN_NEIGHBORS;
+}
+
+/** Still on the carrier's scrum — used to keep a live NPC contest through a jostle. */
+export function inNpcRipContest(world: World, npc: NPC): boolean {
+  const ownerId = world.ball.ownerId;
+  if (ownerId === null || ownerId === npc.id) return false;
+  const carrier = charPose(world, ownerId);
+  if (!carrier || carrier.team === npc.team) return false;
+  if (distIdToBall(world, npc.id) > WRIGGLE_APPROACH_RADIUS) return false;
+  if (countHugNeighbors(world, npc.id, npc.position) >= 1) return true;
+  return countBodiesNear(world, world.ball.position, HUG_NEIGHBOR_RADIUS) >= WRIGGLE_PACK_AROUND_BALL;
+}
+
+export function npcRipContest(world: World): { id: string; pressure: number } | null {
+  if (!world._npcRipId || world._npcRipPressure <= 0) return null;
+  return { id: world._npcRipId, pressure: Math.min(1, world._npcRipPressure) };
+}
+
+export function resetNpcRip(world: World): void {
+  world._npcRipId = null;
+  world._npcRipPressure = 0;
+  world._npcRipGraceTicks = 0;
+}
+
+function pickNpcRipper(world: World): NPC | null {
+  if (world.tick < world._npcRipCooldownUntilTick) return null;
+  if (world.ball.ownerId === null) return null;
+  let best: NPC | null = null;
+  let bestD = Infinity;
+  for (const npc of world.npcs) {
+    if (!canNpcRip(world, npc)) continue;
+    const d = distIdToBall(world, npc.id);
+    if (d < bestD || (d === bestD && best !== null && npc.id < best.id)) {
+      bestD = d;
+      best = npc;
+    }
+  }
+  return best;
+}
+
+function npcRipDirection(world: World, npc: NPC): Vec2 {
+  const scoreAt = opponentGoalFor(npc.team, world.map);
+  const toGoal = toward(world.ball.position, { x: scoreAt.x, y: scoreAt.y });
+  if (toGoal) return toGoal;
+  const pack = hugPackExtent(world, world.ball.position);
+  const centroid = pack?.centroid ?? world.ball.position;
+  const through = toward(centroid, npc.position);
+  if (through) return through;
+  return { x: 1, y: 0 };
+}
+
+/**
+ * Nearest eligible opposing NPC holds Rip on a player-team (or any enemy)
+ * carrier. Rate-limited so a packed hug is a contest, not steal spam.
+ * Player Rip wins if the controlled body is already in a wrestle.
+ */
+export function tickNpcRip(world: World, dt: number, playerWrestling: boolean): void {
+  if (playerWrestling) {
+    resetNpcRip(world);
+    return;
+  }
+
+  let npc: NPC | null = null;
+  if (world._npcRipId) {
+    npc = world.npcs.find((n) => n.id === world._npcRipId) ?? null;
+  }
+
+  let ripping = false;
+  if (npc && npc.stamina > 0 && (canNpcRip(world, npc) || (world._npcRipPressure > 0 && inNpcRipContest(world, npc)))) {
+    ripping = true;
+    world._npcRipGraceTicks = RIP_GRACE_TICKS;
+  } else if (npc && npc.stamina > 0 && world._npcRipPressure > 0 && world._npcRipGraceTicks > 0) {
+    ripping = true;
+    world._npcRipGraceTicks -= 1;
+  } else {
+    resetNpcRip(world);
+    npc = pickNpcRipper(world);
+    ripping = npc !== null;
+    if (npc) {
+      world._npcRipId = npc.id;
+      world._npcRipGraceTicks = RIP_GRACE_TICKS;
+    }
+  }
+
+  if (!npc || !ripping) {
+    resetNpcRip(world);
+    return;
+  }
+
+  world._npcRipId = npc.id;
+  world._npcRipPressure += dt / NPC_RIP_SUCCESS_SECONDS;
+  npc.stamina = Math.max(0, npc.stamina - STAMINA_RIP_DRAIN * dt);
+  if (world._npcRipPressure < 1) return;
+
+  popBallFree(world, npcRipDirection(world, npc), RIP_POP_SPEED, npc.id);
+  world._npcRipCooldownUntilTick = world.tick + NPC_RIP_COOLDOWN_TICKS;
+  resetNpcRip(world);
 }
 
 /** Slippery while wriggling so grabby bodies do not pin you on the rim. */
