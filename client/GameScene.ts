@@ -1089,15 +1089,7 @@ export class GameScene extends Phaser.Scene {
       this.handleGoalTap();
       return;
     }
-    const tappedMate = teammateAtPoint(this.world, worldPt.x, worldPt.y);
-    if (tappedMate && (this.flow === 'placing' || this.flow === 'playing')) {
-      if (switchControl(this.world, tappedMate)) {
-        this.clearPassCharge();
-        this.retargetPlace();
-        this.punchCamera();
-      }
-      return;
-    }
+    if (this.trySelectTeammate(worldPt.x, worldPt.y)) return;
     this.panPointerId = pointer.id;
     this.panLast.x = pointer.x;
     this.panLast.y = pointer.y;
@@ -1147,10 +1139,29 @@ export class GameScene extends Phaser.Scene {
     this.panPointerId = null;
     this.panDragging = false;
     this.eatPointer = false;
-    if (dragged || this.flow !== 'placing' || !this.placeTargetId) return;
+    if (dragged) return;
     const worldPt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    if (this.trySelectTeammate(worldPt.x, worldPt.y)) return;
+    if (this.flow !== 'placing' || !this.placeTargetId) return;
     placeTeammate(this.world, this.placeTargetId, worldPt.x, worldPt.y);
   };
+
+  /** Screen-stable hit size so zoomed-out look view can still tap a mate. */
+  private tapSlop(): number {
+    const z = Math.max(CAMERA_ZOOM_MIN, this.cameras.main.zoom);
+    return Math.max(56, 52 / z);
+  }
+
+  private trySelectTeammate(x: number, y: number): boolean {
+    if (this.flow !== 'placing' && this.flow !== 'playing') return false;
+    const tappedMate = teammateAtPoint(this.world, x, y, this.tapSlop());
+    if (!tappedMate) return false;
+    if (!switchControl(this.world, tappedMate)) return false;
+    this.clearPassCharge();
+    this.retargetPlace();
+    this.punchCamera();
+    return true;
+  }
 
   private handleWheel = (
     pointer: Phaser.Input.Pointer,
