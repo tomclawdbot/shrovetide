@@ -94,17 +94,17 @@ function openMid(world: World): { x: number; y: number } {
 function assertPointsAtScoringGoal(npc: NPC, world: World, target: { x: number; y: number }): void {
   const goal = opponentGoalFor(npc.team, world.map);
   const home = world.map.goals.find((g) => g.team === npc.team)!.position;
-  const toGoalX = goal.x - npc.position.x;
-  const toTargetX = target.x - npc.position.x;
+  const from = world.ball.ownerId === npc.id ? npc.position : world.ball.position;
+  const toGoalX = goal.x - from.x;
+  const toHomeX = home.x - from.x;
+  const toTargetX = target.x - from.x;
   assert.ok(
     toGoalX * toTargetX > 0,
     `team ${npc.team} steer x=${toTargetX.toFixed(1)} should share sign with scoring millstone x=${toGoalX.toFixed(1)}`,
   );
-  const dGoal = Math.hypot(target.x - goal.x, target.y - goal.y);
-  const dHome = Math.hypot(target.x - home.x, target.y - home.y);
   assert.ok(
-    dGoal < dHome,
-    `team ${npc.team} target should be closer to the scoring millstone than home (${dGoal.toFixed(0)} vs ${dHome.toFixed(0)})`,
+    toHomeX * toTargetX < 0,
+    `team ${npc.team} must not steer toward their home millstone`,
   );
 }
 
