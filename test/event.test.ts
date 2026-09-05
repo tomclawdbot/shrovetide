@@ -103,32 +103,39 @@ test('event: early goal scores, tosses up, keeps remaining day time', () => {
   assert.equal(isEarlyGoalWindow(world), true);
 });
 
-test('event: late goal on day 1 rolls into day 2 with a fresh clock', () => {
+test('event: late goal on day 1 rolls into day 2 placement', () => {
   const world = createWorld();
   startMatch(world);
   world.matchTimeRemaining = 90; // 3:30 elapsed — past early window
   threeTapGoal(world);
 
-  assert.equal(world.matchState, 'playing');
+  assert.equal(world.matchState, 'placement', 'day 1 late goal returns to placement');
   assert.equal(world.eventDay, 2, 'day 1 late goal starts day 2');
   assert.equal(world.score[world.player.team], 1);
   assert.equal(world.winState, null);
-  assert.ok(world.matchTimeRemaining > 290, 'day 2 gets a fresh ~5:00');
+  assert.equal(world.matchTimeRemaining, 0);
   assert.equal(world.ball.ownerId, null);
+
+  startMatch(world);
+  assert.equal(world.matchState, 'playing');
+  assert.ok(world.matchTimeRemaining > 290, 'day 2 kickoff gets a fresh ~5:00');
 });
 
-test('event: day 1 timer expiry starts day 2 without a goal', () => {
+test('event: day 1 timer expiry starts day 2 placement without a goal', () => {
   const world = createWorld();
   startMatch(world);
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
-  assert.equal(world.matchState, 'playing');
+  assert.equal(world.matchState, 'placement');
   assert.equal(world.eventDay, 2);
   assert.equal(world.score[0], 0);
   assert.equal(world.score[1], 0);
-  assert.ok(world.matchTimeRemaining > 290);
   assert.equal(world.winState, null);
+
+  startMatch(world);
+  assert.equal(world.matchState, 'playing');
+  assert.ok(world.matchTimeRemaining > 290);
 });
 
 test('event: late goal on day 2 ends the event with aggregate winner', () => {
