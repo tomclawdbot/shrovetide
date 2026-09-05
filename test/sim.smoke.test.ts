@@ -27,7 +27,9 @@ import {
   moveControlled,
   opponentGoalFor,
   PASS_PICKUP_IMMUNITY_TICKS,
+  PLAYER_RADIUS,
   quickSwitch,
+  radiusMultForBuild,
   releasePass,
   RIVER_SPEED_MULT,
   scoringGoalMarker,
@@ -147,7 +149,12 @@ test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN
   const away = world.npcs.filter((n) => n.team !== world.player.team).length;
   assert.equal(home, SQUAD_SIZE, 'home roster is 17');
   assert.equal(away, SQUAD_SIZE, 'away roster is 17');
-  assert.equal(world.player.radius, 16, 'controlled player has expected radius');
+  assert.equal(world.player.build, 'runner', 'slot 1 is a runner');
+  assert.equal(
+    world.player.radius,
+    PLAYER_RADIUS * radiusMultForBuild('runner'),
+    'controlled player radius matches build scale',
+  );
   // Map is a clear scale-up of the TICKET 002 2400×1600 town.
   assert.equal(world.map.width, ASHBOURNE_TOWN.width);
   assert.equal(world.map.height, ASHBOURNE_TOWN.height);

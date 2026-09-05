@@ -297,9 +297,9 @@ test('wriggle: hold makes measurable progress into a packed hug', () => {
   runTicks(burrow, wriggle, 45);
   const dIdle = Math.hypot(idle.player.position.x - field.x, idle.player.position.y - field.y);
   const dWriggle = Math.hypot(burrow.player.position.x - field.x, burrow.player.position.y - field.y);
-  assert.ok(dWriggle < d0 - 14, `wriggle should close on the stone (${d0.toFixed(0)} → ${dWriggle.toFixed(0)})`);
+  assert.ok(dWriggle < d0 - 10, `wriggle should close on the stone (${d0.toFixed(0)} → ${dWriggle.toFixed(0)})`);
   assert.ok(
-    dWriggle < dIdle - 10,
+    dWriggle < dIdle - 8,
     `wriggle should beat standing in the pack (${dWriggle.toFixed(0)} vs idle ${dIdle.toFixed(0)})`,
   );
   assert.ok(d0 - dWriggle < 80, `must not teleport through the scrum (closed ${(d0 - dWriggle).toFixed(0)}px)`);

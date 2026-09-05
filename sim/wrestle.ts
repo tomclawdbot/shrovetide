@@ -32,6 +32,8 @@ const AIM_DEADZONE = 0.15;
 
 /** Must be this close to the stone to start Rip (hug-neighbour distance). */
 export const RIP_REACH = HUG_NEIGHBOR_RADIUS;
+/** Minimum Breath required to start a Rip contest. */
+export const RIP_MIN_STAMINA = 25;
 /** Several bodies nearby — a real scrum, not a 1v1. */
 export const RIP_MIN_NEIGHBORS = 3;
 /** Packed hug around an opposing carrier: 2 neighbours is enough to start the strip. */
@@ -100,6 +102,7 @@ function toward(from: Vec2, to: Vec2): Vec2 | null {
 }
 
 export function canRip(world: World): boolean {
+  if (world.player.stamina < RIP_MIN_STAMINA) return false;
   if (world.player.hasBall) return false;
   if (world.ball.ownerId === world.player.id) return false;
   if (distToBall(world) > RIP_REACH) return false;
@@ -324,7 +327,7 @@ function distIdToBall(world: World, id: string): number {
 export function canNpcRip(world: World, npc: NPC): boolean {
   const ownerId = world.ball.ownerId;
   if (ownerId === null || ownerId === npc.id) return false;
-  if (npc.stamina <= 0) return false;
+  if (npc.stamina < RIP_MIN_STAMINA) return false;
   const carrier = charPose(world, ownerId);
   if (!carrier || carrier.team === npc.team) return false;
   if (distIdToBall(world, npc.id) > RIP_REACH) return false;
