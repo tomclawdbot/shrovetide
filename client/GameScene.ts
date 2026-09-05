@@ -20,6 +20,7 @@ import {
   placeTeammate,
   quickSwitch,
   releasePass,
+  RIP_MIN_STAMINA,
   scoringGoalMarker,
   startMatch,
   stepWorld,
@@ -899,14 +900,6 @@ export class GameScene extends Phaser.Scene {
     this.adoptWorld(this.peopleGfx);
     this.markerGfx = this.add.graphics().setDepth(5);
     this.adoptWorld(this.markerGfx);
-
-    // Full-screen dusk veil on the world camera (HUD stays readable).
-    this.nightOverlay = this.add
-      .rectangle(0, 0, VIEW_W, VIEW_H, 0x060a18, 0)
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(6);
-    this.adoptWorld(this.nightOverlay);
   }
 
   private collectCharacters(): RenderChar[] {
@@ -1073,6 +1066,15 @@ export class GameScene extends Phaser.Scene {
 
     this.vignetteGfx = this.adoptHud(this.add.graphics().setScrollFactor(0).setDepth(9));
     this.drawVignette();
+
+    // Full-viewport night veil on the HUD camera so zoom never breaks it.
+    this.nightOverlay = this.adoptHud(
+      this.add
+        .rectangle(0, 0, VIEW_W, VIEW_H, 0x050814, 0)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(8),
+    );
   }
 
   private drawVignette(): void {
@@ -1785,9 +1787,14 @@ export class GameScene extends Phaser.Scene {
     this.setMatchHud(live);
     this.setTeamPickVisible(this.flow === 'title');
     this.touch?.setAtStone(live && this.world.matchState === 'playing' && this.atStone());
+    const mode =
+      live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none';
+    const ripReady =
+      mode === 'rip' && this.world.player.stamina >= RIP_MIN_STAMINA;
     this.touch?.setWrestle(
-      live && this.world.matchState === 'playing' ? wrestleMode(this.world) : 'none',
+      mode,
       live ? this.world._ripPressure : 0,
+      ripReady || mode === 'wriggle',
     );
 
     if (!live) {
@@ -1852,16 +1859,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Darken the pitch as the day clock runs toward 10pm. HUD stays clear. */
+  /** Darken the pitch as the day clock runs toward 10pm. Timer/score stay above. */
   private updateNightfall(): void {
-    const live = this.flow === 'playing' || this.flow === 'placing';
+    const live = this.flow === 'playing';
     const amount = live ? nightfallAmount(this.world) : 0;
     this.nightOverlay.setAlpha(amount);
     this.nightOverlay.setVisible(amount > 0.01);
     // Cool the clear-color behind the map so edges don't flash daylight.
     const dayBg = PALETTE.bg;
-    const nightBg = 0x05070f;
-    const mix = amount / 0.72;
+    const nightBg = 0x02040a;
+    const mix = Math.min(1, amount / 0.88);
     const lerp = (a: number, b: number): number => Math.round(a + (b - a) * mix);
     const r = lerp((dayBg >> 16) & 0xff, (nightBg >> 16) & 0xff);
     const g = lerp((dayBg >> 8) & 0xff, (nightBg >> 8) & 0xff);
@@ -1869,25 +1876,55 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor((r << 16) | (g << 8) | b);
   }
 
-  /** Early-goal toss-up and Day 2 start — juice without ending the event. */
+  /** Enter Day 2 placement — same walk-them-out beat as Day 1. */
+  private beginDay2Placement(): void {
+    this.flow = 'placing';
+    this.placeLeft = PLACE_SECONDS;
+    this.lastWall = this.now();
+    this.spaceReady = false;
+    this.eatPointer = true;
+    this.kickoffLeft = 0;
+    this.hitStopLeft = 0;
+    this.teach = 'move';
+    this.scoredJuice = false;
+    this.lastScore = [...this.world.score];
+    this.lastEventDay = 2;
+    this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
+    this.flash('Day 2 — place your people');
+    this.syncTouchFlow();
+    this.layoutHud();
+  }
+
+  /** Early-goal recovery + Day 2 placement handoff. */
   private noteEventBeats(): void {
+    // Day 1 ended → sim returned to placement for Day 2.
+    if (
+      this.world.matchState === 'placement' &&
+      this.world.eventDay === 2 &&
+      this.lastEventDay === 1 &&
+      this.flow === 'playing'
+    ) {
+      this.beginDay2Placement();
+      return;
+    }
+
     if (this.world.matchState !== 'playing') {
       this.lastScore = [...this.world.score];
       this.lastEventDay = this.world.eventDay;
       return;
     }
+
     const scored =
       this.world.score[0] > this.lastScore[0] || this.world.score[1] > this.lastScore[1];
-    const dayRolled = this.world.eventDay === 2 && this.lastEventDay === 1;
-    if (scored && !dayRolled) {
+    if (scored) {
       this.hitStopLeft = Math.max(this.hitStopLeft, 0.2);
       const up = this.world.score[0] > this.lastScore[0];
       const side = up ? "Up'Ards" : "Down'Ards";
-      this.flash(`${side} goal — toss-up`);
-    }
-    if (dayRolled) {
-      this.kickoffLeft = Math.max(this.kickoffLeft, 1.6);
-      this.flash('Day 2 — toss-up');
+      if (this.world.recoveryTimeRemaining > 0) {
+        this.flash(`${side} goal — 10s to get back`);
+      } else {
+        this.flash(`${side} goal`);
+      }
     }
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
@@ -1910,13 +1947,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.kickoffLeft > 0) {
-      if (this.world.eventDay === 2 && this.now() - this.playStartedAt > 2000) {
-        this.setCaption('DAY 2 — ball up at the turn-up');
-        return;
-      }
       const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
+      const day = this.world.eventDay === 2 ? 'DAY 2 — ' : '';
       const side = this.world.player.team === 0 ? "YOU ARE UP'ARDS" : "YOU ARE DOWN'ARDS";
-      this.setCaption(`${side} — play to ${mill}`);
+      this.setCaption(`${day}${side} — play to ${mill}`);
+      return;
+    }
+    if (this.world.recoveryTimeRemaining > 0) {
+      const secs = Math.max(1, Math.ceil(this.world.recoveryTimeRemaining));
+      this.setCaption(`Toss-up — get back in · ${secs}s`);
       return;
     }
     if (!this.camFollow && !this.atStone()) {
