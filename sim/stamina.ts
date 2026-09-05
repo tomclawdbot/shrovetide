@@ -31,6 +31,11 @@ export interface StaminaTick {
   carrying: boolean;
   ripping?: boolean;
   wriggling?: boolean;
+  /**
+   * Extra drain multiplier while packed on the stone (build-dependent).
+   * Only applied when draining, never when regenerating. Default 1.
+   */
+  hugDrainMult?: number;
 }
 
 /**
@@ -54,6 +59,9 @@ export function updateStamina(entity: StaminaEntity, tick: StaminaTick, dt: numb
     delta = entity.stamina > 0 ? -(STAMINA_MOVE_DRAIN + extra) * dt : 0;
   } else {
     delta = STAMINA_REGEN_RATE * dt;
+  }
+  if (delta < 0) {
+    delta *= tick.hugDrainMult ?? 1;
   }
   entity.stamina = Math.max(0, Math.min(entity.maxStamina, entity.stamina + delta));
 }

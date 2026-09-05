@@ -29,7 +29,7 @@ import { tryPickupBall, syncCarriedBall } from './pass.js';
 import { tickMatch } from './match.js';
 import { tapGoal, tickNpcGoalTap } from './goaling.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
-import { hugShoveAt } from './hug.js';
+import { hugShoveAt, isInHugZone } from './hug.js';
 import {
   applyWriggleProgress,
   setWriggleFriction,
@@ -38,6 +38,12 @@ import {
   WRIGGLE_INWARD_SPEED,
   WRIGGLE_SHOVE_FLOOR,
 } from './wrestle.js';
+import {
+  buildForSlot,
+  hugStaminaMultForBuild,
+  radiusMultForBuild,
+  speedMultForBuild,
+} from './builds.js';
 import type { Ball, Input, NPC, Player, SimState, Team, Vec2 } from './types.js';
 import { DEFAULT_DIFFICULTY, type Difficulty } from './difficulty.js';
 
@@ -187,15 +193,17 @@ function buildCharacters(
     ? { x: map.width * 0.20, y: map.height * 0.50 }
     : { x: map.width * 0.80, y: map.height * 0.50 };
 
+  const playerBuild = buildForSlot(1);
   const player: Player = {
     id: controlledId,
     kind: 'player',
     team: playerTeam,
     assignedRole: 'chase',
+    build: playerBuild,
     position: { ...controlledSpawn },
     velocity: { x: 0, y: 0 },
-    radius: PLAYER_RADIUS,
-    maxSpeed: PLAYER_MAX_SPEED,
+    radius: PLAYER_RADIUS * radiusMultForBuild(playerBuild),
+    maxSpeed: PLAYER_MAX_SPEED * speedMultForBuild(playerBuild),
     stamina: 100,
     maxStamina: 100,
     hasBall: false,
@@ -206,6 +214,7 @@ function buildCharacters(
   // Home teammates: up-2..up-N or down-2..down-N.
   for (let i = 2; i <= SQUAD_SIZE; i++) {
     const id = `${playerTeam === 0 ? 'up' : 'down'}-${i}`;
+    const build = buildForSlot(i);
     const angle = (i / SQUAD_SIZE) * Math.PI;
     const r = map.height * 0.25;
     const cx = playerTeam === 0 ? map.width * 0.30 : map.width * 0.70;
@@ -219,11 +228,12 @@ function buildCharacters(
       kind: 'npc',
       team: playerTeam,
       role: 'chase',
+      build,
       holdPosition: null,
       position: { ...nearestLegalPoint(raw, map) },
       velocity: { x: 0, y: 0 },
-      radius: NPC_RADIUS,
-      maxSpeed: NPC_MAX_SPEED,
+      radius: NPC_RADIUS * radiusMultForBuild(build),
+      maxSpeed: NPC_MAX_SPEED * speedMultForBuild(build),
       stamina: 100,
       maxStamina: 100,
     });
@@ -232,6 +242,7 @@ function buildCharacters(
   // Opponent team: full squad on the other half.
   for (let i = 1; i <= SQUAD_SIZE; i++) {
     const id = `${opponentTeam === 0 ? 'up' : 'down'}-${i}`;
+    const build = buildForSlot(i);
     const angle = ((i + 0.5) / SQUAD_SIZE) * Math.PI;
     const r = map.height * 0.25;
     const cx = opponentTeam === 0 ? map.width * 0.30 : map.width * 0.70;
@@ -245,11 +256,12 @@ function buildCharacters(
       kind: 'npc',
       team: opponentTeam,
       role: 'chase',
+      build,
       holdPosition: null,
       position: { ...nearestLegalPoint(raw, map) },
       velocity: { x: 0, y: 0 },
-      radius: NPC_RADIUS,
-      maxSpeed: NPC_MAX_SPEED,
+      radius: NPC_RADIUS * radiusMultForBuild(build),
+      maxSpeed: NPC_MAX_SPEED * speedMultForBuild(build),
       stamina: 100,
       maxStamina: 100,
     });
@@ -305,6 +317,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
       maxChainTicks: 180,
     },
     winState: null,
+    recoveryTimeRemaining: 0,
     physics,
     _rng: rng,
     _controlVel: { x: 0, y: 0 },
@@ -481,14 +494,21 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   tickNpcRip(world, dt, wrestle.mode !== 'none');
   const moving =
     Math.hypot(input.move.x, input.move.y) > MOVEMENT.inputDeadzone;
+  const ripping = wrestle.mode === 'rip';
+  const wriggling = wrestle.mode === 'wriggle';
+  const hugActive =
+    moving || input.sprint || player.hasBall || ripping || wriggling;
   updateStamina(
     player,
     {
       sprinting: input.sprint,
       moving,
       carrying: player.hasBall,
-      ripping: wrestle.mode === 'rip',
-      wriggling: wrestle.mode === 'wriggle',
+      ripping,
+      wriggling,
+      ...(isInHugZone(world, player.position) && hugActive
+        ? { hugDrainMult: hugStaminaMultForBuild(player.build) }
+        : {}),
     },
     dt,
   );

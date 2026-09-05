@@ -11,7 +11,9 @@
 // Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
+import { hugStaminaMultForBuild } from './builds.js';
 import { difficultyTuning } from './difficulty.js';
+import { isInHugZone } from './hug.js';
 import { goalFor, opponentGoalFor, speedMultiplierAt } from './maps.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
@@ -31,8 +33,6 @@ export const HOLD_LOOSE_ENGAGE_DISTANCE = 1200;
 export const HOLD_RECLAIM_COUNT = 2;
 /** Closest hold bodies who help swarm a loose stone from anywhere. */
 export const HOLD_LOOSE_HELP_COUNT = 3;
-/** Speed above this counts as moving for NPC Breath (px/s). */
-const NPC_MOVE_SPEED = 18;
 /** Extra speed while the ball is free so either side can contest the turn-up. */
 export const LOOSE_BALL_SPEED_MULT = 1.22;
 /**
@@ -129,14 +129,19 @@ export function tickNpcStamina(world: World, dt: number): void {
     const carrying = world.ball.ownerId === npc.id;
     const ripping = world._npcRipId === npc.id && world._npcRipPressure > 0;
     const bursting = npcIsBursting(npc, world, collapsing);
-    const moving = Math.hypot(npc.velocity.x, npc.velocity.y) > NPC_MOVE_SPEED;
+    // Only intentional activity drains Breath. Shove-induced velocity alone
+    // must not count as moving — otherwise unselected bodies never regen.
+    const draining = bursting || carrying || ripping;
     updateStamina(
       npc,
       {
         sprinting: bursting,
-        moving,
+        moving: carrying && !bursting && !ripping,
         carrying,
         ripping,
+        ...(isInHugZone(world, npc.position) && draining
+          ? { hugDrainMult: hugStaminaMultForBuild(npc.build) }
+          : {}),
       },
       dt,
     );

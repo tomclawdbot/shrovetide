@@ -67,15 +67,15 @@ test('event: day clock reads 1pm at kickoff and 10pm at expiry', () => {
   assert.equal(formatDayClock(world), '1:00 PM');
   assert.equal(nightfallAmount(world), 0, 'midday is still bright');
 
-  // 7:00 PM — dusk well underway (daylight holds until ~4pm).
+  // 7:00 PM — dusk well underway (dusk begins ~3pm).
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS / 3;
   assert.equal(formatDayClock(world), '7:00 PM');
-  assert.ok(nightfallAmount(world) > 0.3, 'evening has darkened the pitch');
-  assert.ok(nightfallAmount(world) < 0.6, 'not full night at 7pm');
+  assert.ok(nightfallAmount(world) > 0.45, 'evening has clearly darkened the pitch');
+  assert.ok(nightfallAmount(world) < 0.7, 'not full night at 7pm');
 
   world.matchTimeRemaining = 0;
   assert.equal(formatDayClock(world), '10:00 PM');
-  assert.ok(nightfallAmount(world) > 0.65, '10pm is deep night');
+  assert.ok(nightfallAmount(world) >= 0.85, '10pm is near-black');
 });
 
 test('event: early goal scores, tosses up, keeps remaining day time', () => {
@@ -101,34 +101,64 @@ test('event: early goal scores, tosses up, keeps remaining day time', () => {
   );
   assert.ok(world.matchTimeRemaining > 200, 'most of the remaining time is left');
   assert.equal(isEarlyGoalWindow(world), true);
+  assert.ok(
+    world.recoveryTimeRemaining > 9,
+    'early goal opens a ~10s get-back window',
+  );
+
+  const clockAtRecovery = world.matchTimeRemaining;
+  for (let i = 0; i < 60; i++) stepWorld(world, IDLE, 1 / 60);
+  assert.ok(
+    Math.abs(world.matchTimeRemaining - clockAtRecovery) < 1e-6,
+    'day clock pauses during recovery',
+  );
+  assert.ok(world.recoveryTimeRemaining < 9.5, 'recovery counts down');
 });
 
-test('event: late goal on day 1 rolls into day 2 with a fresh clock', () => {
+test('event: nightfall is obvious by mid-evening', () => {
+  const world = createWorld();
+  startMatch(world);
+  // ~5:00 PM — dusk should have started (dusk begins ~3pm).
+  world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS * (5 / 9);
+  assert.equal(formatDayClock(world), '5:00 PM');
+  assert.ok(nightfallAmount(world) > 0.1, '5pm is past dusk start');
+  world.matchTimeRemaining = 0;
+  assert.ok(nightfallAmount(world) >= 0.85, '10pm is near-black');
+});
+
+test('event: late goal on day 1 rolls into day 2 placement', () => {
   const world = createWorld();
   startMatch(world);
   world.matchTimeRemaining = 90; // 3:30 elapsed — past early window
   threeTapGoal(world);
 
-  assert.equal(world.matchState, 'playing');
+  assert.equal(world.matchState, 'placement', 'day 1 late goal returns to placement');
   assert.equal(world.eventDay, 2, 'day 1 late goal starts day 2');
   assert.equal(world.score[world.player.team], 1);
   assert.equal(world.winState, null);
-  assert.ok(world.matchTimeRemaining > 290, 'day 2 gets a fresh ~5:00');
+  assert.equal(world.matchTimeRemaining, 0);
   assert.equal(world.ball.ownerId, null);
+
+  startMatch(world);
+  assert.equal(world.matchState, 'playing');
+  assert.ok(world.matchTimeRemaining > 290, 'day 2 kickoff gets a fresh ~5:00');
 });
 
-test('event: day 1 timer expiry starts day 2 without a goal', () => {
+test('event: day 1 timer expiry starts day 2 placement without a goal', () => {
   const world = createWorld();
   startMatch(world);
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
-  assert.equal(world.matchState, 'playing');
+  assert.equal(world.matchState, 'placement');
   assert.equal(world.eventDay, 2);
   assert.equal(world.score[0], 0);
   assert.equal(world.score[1], 0);
-  assert.ok(world.matchTimeRemaining > 290);
   assert.equal(world.winState, null);
+
+  startMatch(world);
+  assert.equal(world.matchState, 'playing');
+  assert.ok(world.matchTimeRemaining > 290);
 });
 
 test('event: late goal on day 2 ends the event with aggregate winner', () => {

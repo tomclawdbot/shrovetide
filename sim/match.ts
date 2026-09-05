@@ -1,9 +1,9 @@
 // sim/match.ts — two-day event state machine + scorekeeping + timer.
 //
 // State machine:
-//   placement ──confirmMatchStart()──▶ playing (Day 1)
-//     early goal (<3 min elapsed) ──▶ toss-up, same day clock continues
-//     late goal / timer expiry ──▶ Day 2 (fresh 5:00, toss-up)
+//   placement ──startMatch()──▶ playing (Day 1)
+//     early goal (<3 min) ──▶ toss-up + 10s recovery (clock paused)
+//     late goal / timer expiry ──▶ Day 2 placement (full reset like Day 1)
 //     Day 2 late goal / timer expiry ──▶ over (aggregate score / draw)
 //
 // Pure functions over World state — no callbacks, no events.
@@ -12,6 +12,7 @@
 
 import Matter from 'matter-js';
 import { setBallSensor } from './physics.js';
+import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
 import type { Team } from './types.js';
 import type { World } from './world.js';
 
@@ -23,6 +24,12 @@ export const DEFAULT_MATCH_DURATION_SECONDS = 5 * 60;
  * Goals at or after this mark end the day.
  */
 export const EARLY_GOAL_WINDOW_SECONDS = 3 * 60;
+
+/**
+ * After an early-goal toss-up, sides get this long to run back into place.
+ * The day clock pauses and the stone cannot be claimed until it ends.
+ */
+export const TOSS_UP_RECOVERY_SECONDS = 10;
 
 /** In-world hour the day starts (1pm). */
 export const DAY_CLOCK_START_HOUR = 13;
@@ -41,7 +48,7 @@ export function dayElapsedSeconds(world: World): number {
 
 /**
  * 0 at kickoff (1pm) → 1 at day end (10pm).
- * Placement / idle worlds with no clock read as midday start.
+ * Placement / recovery worlds with no active day clock read as midday start.
  */
 export function dayProgress(world: World): number {
   if (world.matchState === 'placement') return 0;
@@ -69,19 +76,19 @@ export function formatDayClock(world: World): string {
 }
 
 /**
- * How dark the pitch should look (0 midday → ~0.72 at 10pm).
- * Stays bright through early afternoon, then deepens into night.
+ * How dark the pitch should look (0 midday → ~0.88 at 10pm).
+ * Dusk begins ~3pm so nightfall is obvious well before the day ends.
  */
 export function nightfallAmount(world: World): number {
   if (world.matchState !== 'playing' && world.matchState !== 'over') return 0;
   const p = dayProgress(world);
-  // Hold daylight until ~4pm (progress ≈ 3/9), then ramp to night.
-  const duskStart = 3 / 9;
+  // Hold daylight until ~3pm (progress ≈ 2/9), then ramp hard into night.
+  const duskStart = 2 / 9;
   if (p <= duskStart) return 0;
   const t = (p - duskStart) / (1 - duskStart);
-  // Smoothstep for a natural dusk curve.
+  // Ease-in so late evening really blacks out.
   const s = t * t * (3 - 2 * t);
-  return s * 0.72;
+  return s * 0.88;
 }
 
 /** True when a goal should toss-up and continue the day (not end it). */
@@ -112,18 +119,29 @@ export function tossUpBall(world: World): void {
   setBallSensor(world.physics, false);
 }
 
+function restoreSquadBreath(world: World): void {
+  world.player.stamina = world.player.maxStamina;
+  for (const npc of world.npcs) npc.stamina = npc.maxStamina;
+}
+
 export function startMatch(world: World): void {
   if (world.matchState !== 'placement') return;
   world.matchState = 'playing';
-  world.eventDay = 1;
-  world.winState = null;
+  // Keep eventDay (Day 2 placement already set it to 2).
+  if (world.eventDay !== 1 && world.eventDay !== 2) world.eventDay = 1;
+  if (world.eventDay === 1) world.winState = null;
   tossUpBall(world);
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
+  world.recoveryTimeRemaining = 0;
 }
 
-/** Per-frame match tick. Decrements timer, ends the day on expiry. */
+/** Per-frame match tick. Recovery pauses the day clock; else ends day on expiry. */
 export function tickMatch(world: World, dt: number): void {
   if (world.matchState !== 'playing') return;
+  if (world.recoveryTimeRemaining > 0) {
+    world.recoveryTimeRemaining = Math.max(0, world.recoveryTimeRemaining - dt);
+    return;
+  }
   world.matchTimeRemaining = Math.max(0, world.matchTimeRemaining - dt);
   if (world.matchTimeRemaining <= 0) {
     endDay(world, null, null, 'time');
@@ -132,19 +150,20 @@ export function tickMatch(world: World, dt: number): void {
 
 /**
  * Record a goal. Early goals toss the ball up again with remaining day
- * time; late goals end the day (or the whole event on Day 2).
+ * time and a short recovery window; late goals end the day (or the event).
  */
 export function scoreGoal(world: World, scorerId: string, scorerTeam: Team): void {
   if (world.matchState !== 'playing') return;
   world.score[scorerTeam] += 1;
   if (isEarlyGoalWindow(world)) {
     tossUpBall(world);
+    world.recoveryTimeRemaining = TOSS_UP_RECOVERY_SECONDS;
     return;
   }
   endDay(world, scorerId, scorerTeam, 'goal');
 }
 
-/** End the current day — advance to Day 2, or finish the event. */
+/** End the current day — return to Day 2 placement, or finish the event. */
 export function endDay(
   world: World,
   scorerId: string | null,
@@ -153,15 +172,27 @@ export function endDay(
 ): void {
   if (world.matchState !== 'playing') return;
   if (world.eventDay === 1) {
-    startDay2(world);
+    beginDay2Placement(world);
     return;
   }
   endEvent(world, scorerId, scorerTeam, reason);
 }
 
-function startDay2(world: World): void {
+/**
+ * Day 2 starts like Day 1: placement phase, auto-reset squads to toss-up
+ * shape, fresh Breath, stone on the turn-up. Score is kept.
+ */
+export function beginDay2Placement(world: World): void {
   world.eventDay = 2;
-  world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
+  world.matchState = 'placement';
+  world.matchTimeRemaining = 0;
+  world.recoveryTimeRemaining = 0;
+  world.goaling.carrierId = null;
+  world.goaling.taps = 0;
+  world.goaling.lastTapTick = 0;
+  restoreSquadBreath(world);
+  autoPlaceHome(world);
+  autoPlaceOpponents(world);
   tossUpBall(world);
 }
 
@@ -177,6 +208,7 @@ export function endEvent(
 ): void {
   if (world.matchState === 'over') return;
   world.matchState = 'over';
+  world.recoveryTimeRemaining = 0;
   const winner: Team | null =
     world.score[0] > world.score[1] ? 0 : world.score[1] > world.score[0] ? 1 : null;
   world.winState = { winner, reason, scorerId, scorerTeam };

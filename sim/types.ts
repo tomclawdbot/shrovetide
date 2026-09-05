@@ -18,6 +18,13 @@ export type Team = 0 | 1;
  */
 export type Role = 'hold' | 'chase';
 
+/**
+ * Body build — equal counts on both teams.
+ * - runner: quick in the open, Breath burns faster in a hug
+ * - hugger: slower, holds Breath in the scrum, shoves the pack harder
+ */
+export type Build = 'runner' | 'hugger';
+
 /** Match state machine. */
 export type MatchState = 'placement' | 'playing' | 'over';
 
@@ -41,6 +48,8 @@ export interface Player extends Body {
   readonly team: Team;
   /** Role to fall back to when control switches away. */
   assignedRole: Role;
+  /** Runner or hugger — fixed for the character's life. */
+  build: Build;
   maxSpeed: number;
   stamina: number;
   maxStamina: number;
@@ -53,6 +62,8 @@ export interface NPC extends Body {
   readonly kind: 'npc';
   readonly team: Team;
   role: Role;
+  /** Runner or hugger — fixed for the character's life. */
+  build: Build;
   /**
    * For hold-role NPCs on the player's team: the position they should defend.
    * For chase-role NPCs: ignored.
@@ -138,6 +149,11 @@ export interface SimState {
   eventDay: 1 | 2;
   /** Seconds remaining on the current day's clock. */
   matchTimeRemaining: number;
+  /**
+   * After an early-goal toss-up: seconds left before the stone can be claimed.
+   * Day clock is paused while this is > 0 so sides can run back into place.
+   */
+  recoveryTimeRemaining: number;
   /** Aggregate [team0Score, team1Score] across both days. */
   score: [number, number];
   /** Goaling tap-progress state. */
