@@ -1,5 +1,6 @@
 // sim/hug.ts — pack-density helpers shared by shove, Rip, and Wriggle.
 
+import { shoveMultForBuild } from './builds.js';
 import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
@@ -43,7 +44,13 @@ export function isInHugZone(world: World, pos: Vec2): boolean {
  */
 export function hugShoveAt(world: World, id: string, pos: Vec2): number {
   if (!isInHugZone(world, pos)) return 1;
-  return hugShoveAuthority(countHugNeighbors(world, id, pos));
+  let authority = hugShoveAuthority(countHugNeighbors(world, id, pos));
+  const build =
+    id === world.player.id
+      ? world.player.build
+      : world.npcs.find((n) => n.id === id)?.build;
+  if (build) authority *= shoveMultForBuild(build);
+  return Math.max(0.08, Math.min(1, authority));
 }
 
 /** How many characters sit inside `radius` of `pos`, optionally skipping one id. */

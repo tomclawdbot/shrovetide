@@ -54,6 +54,7 @@ function carrierAtOpponentGoal(world: World): { carrierId: string; goalX: number
  */
 export function tapGoal(world: World): void {
   if (world.matchState !== 'playing') return;
+  if (world.recoveryTimeRemaining > 0) return;
   const at = carrierAtOpponentGoal(world);
   if (!at) {
     // Missed the stone — do not wipe the chain; only GOAL_TAP_MAX_CHAIN_TICKS does.

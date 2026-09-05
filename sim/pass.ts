@@ -39,6 +39,7 @@ function isPickupImmune(world: World, id: string): boolean {
 export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}): void {
   const { ball, player } = world;
   if (ball.ownerId !== null) return;
+  if (world.recoveryTimeRemaining > 0) return;
   if (world.tick < world._ripGhostUntilTick) return;
 
   const includeNpcs = opts.includeNpcs !== false;

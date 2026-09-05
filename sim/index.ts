@@ -4,6 +4,7 @@
 export type {
   Ball,
   Body,
+  Build,
   GoalTapState,
   Input,
   MatchState,
@@ -87,6 +88,22 @@ export {
   type DifficultyTuning,
 } from './difficulty.js';
 
+export {
+  buildForSlot,
+  hugStaminaMultForBuild,
+  radiusMultForBuild,
+  shoveMultForBuild,
+  speedMultForBuild,
+  HUGGER_HUG_STAMINA_MULT,
+  HUGGER_RADIUS_MULT,
+  HUGGER_SHOVE_MULT,
+  HUGGER_SPEED_MULT,
+  RUNNER_HUG_STAMINA_MULT,
+  RUNNER_RADIUS_MULT,
+  RUNNER_SHOVE_MULT,
+  RUNNER_SPEED_MULT,
+} from './builds.js';
+
 export { releasePass, pickupReach, tryPickupBall, PASS_PICKUP_IMMUNITY_TICKS, PICKUP_PADDING } from './pass.js';
 export {
   STAMINA_REGEN_RATE,
@@ -125,6 +142,7 @@ export {
   RIP_GRACE_TICKS,
   RIP_IMMUNITY_TICKS,
   RIP_MIN_NEIGHBORS,
+  RIP_MIN_STAMINA,
   RIP_POP_SPEED,
   RIP_REACH,
   RIP_SUCCESS_SECONDS,
@@ -169,6 +187,7 @@ export {
   endMatch,
   endDay,
   endEvent,
+  beginDay2Placement,
   scoreGoal,
   tossUpBall,
   tickMatch,
@@ -180,6 +199,7 @@ export {
   isEarlyGoalWindow,
   DEFAULT_MATCH_DURATION_SECONDS,
   EARLY_GOAL_WINDOW_SECONDS,
+  TOSS_UP_RECOVERY_SECONDS,
   DAY_CLOCK_START_HOUR,
   DAY_CLOCK_END_HOUR,
   GOAL_TAP_SPACING_TICKS,
