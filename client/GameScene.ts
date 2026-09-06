@@ -230,6 +230,8 @@ export class GameScene extends Phaser.Scene {
   private vignetteGfx!: Phaser.GameObjects.Graphics;
   private nightOverlay!: Phaser.GameObjects.Rectangle;
   private windedOverlay!: Phaser.GameObjects.Rectangle;
+  private feelBanner!: Phaser.GameObjects.Text;
+  private kickLabel!: Phaser.GameObjects.Text;
   private followBtn!: Phaser.GameObjects.Text;
 
   private flow: Flow = 'title';
@@ -254,6 +256,7 @@ export class GameScene extends Phaser.Scene {
   private nightfallShownDay = 0;
   private kickJuiceUntil = 0;
   private kickJuice = { x: 0, y: 0, ux: 1, uy: 0, power: 0 };
+  private feelBannerUntil = 0;
 
   constructor() {
     super('GameScene');
@@ -394,6 +397,7 @@ export class GameScene extends Phaser.Scene {
     this.staminaBg?.setPosition(l, t);
     this.staminaFill?.setPosition(l + 2, t + 2);
     this.staminaLabel?.setPosition(l, t + 26);
+    this.kickLabel?.setPosition(l + 248, t + 44);
     this.timerText?.setPosition(VIEW_W / 2, t);
     this.scoreText?.setPosition(VIEW_W / 2, t + 30);
     this.minimapBg?.setPosition(
@@ -1094,6 +1098,23 @@ export class GameScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(8),
     );
+    this.feelBanner = this.adoptHud(
+      this.add
+        .text(VIEW_W / 2, VIEW_H * 0.34, '', {
+          fontFamily: FONT,
+          fontSize: '40px',
+          color: '#f3ead4',
+          align: 'center',
+          backgroundColor: '#140e0add',
+          padding: { x: 28, y: 14 },
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(13)
+        .setVisible(false),
+    );
+    this.kickLabel = this.hudText(16, 56, 'Kick', '14px', '#f3ead4');
+    this.kickLabel.setVisible(false);
   }
 
   private drawVignette(): void {
@@ -1166,7 +1187,7 @@ export class GameScene extends Phaser.Scene {
         uy: aim.y / aimLen,
         power: passChargeRatio(chargeSeconds),
       };
-      this.kickJuiceUntil = this.now() + 320;
+      this.kickJuiceUntil = this.now() + 480;
       this.hitStopLeft = Math.max(this.hitStopLeft, 0.055);
     }
     releasePass(this.world, aim, chargeSeconds);
@@ -1456,6 +1477,7 @@ export class GameScene extends Phaser.Scene {
     this.nightfallShownDay = 0;
     this.windedUntil = 0;
     this.kickJuiceUntil = 0;
+    this.feelBannerUntil = 0;
     this.scoredJuice = false;
     this.syncTouchFlow();
     this.layoutHud();
@@ -1466,15 +1488,25 @@ export class GameScene extends Phaser.Scene {
     this.feedbackUntil = this.now() + ms;
   }
 
-  /** One-shot feel banners yield to kickoff, recovery, climax, and a live flash. */
-  private flashUnlessBusy(msg: string, ms: number): boolean {
+  /** One-shot center banner. Yields to kickoff, recovery, climax, and match over. */
+  private showFeelBanner(msg: string, ms: number): boolean {
     if (this.world.matchState === 'over') return false;
     if (this.kickoffLeft > 0) return false;
     if (this.world.recoveryTimeRemaining > 0) return false;
     if (this.millstoneClimax()) return false;
-    if (this.now() < this.feedbackUntil) return false;
-    this.flash(msg, ms);
+    this.feelBanner.setText(msg);
+    this.feelBanner.setVisible(true);
+    this.feelBannerUntil = this.now() + ms;
     return true;
+  }
+
+  private syncFeelBanner(): void {
+    const show =
+      this.flow === 'playing' &&
+      this.world.matchState === 'playing' &&
+      !this.millstoneClimax() &&
+      this.now() < this.feelBannerUntil;
+    this.feelBanner.setVisible(show);
   }
 
   private setCaption(text: string, pips: number | null = null): void {
@@ -1754,7 +1786,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawKickRelease(): void {
-    const life = 320;
+    const life = 480;
     const t = 1 - Math.max(0, (this.kickJuiceUntil - this.now()) / life);
     const { x, y, ux, uy, power } = this.kickJuice;
     const fade = 1 - t;
@@ -1876,6 +1908,8 @@ export class GameScene extends Phaser.Scene {
       this.nightOverlay.setVisible(false);
       this.windedOverlay.setAlpha(0);
       this.windedOverlay.setVisible(false);
+      this.feelBanner.setVisible(false);
+      this.kickLabel.setVisible(false);
       this.cameras.main.setBackgroundColor(PALETTE.bg);
     }
   }
@@ -1929,6 +1963,7 @@ export class GameScene extends Phaser.Scene {
 
     this.noteEventBeats();
     this.noteFeelBeats();
+    this.syncFeelBanner();
 
     this.pipGfx.clear();
     this.drawKickMeter();
@@ -1963,18 +1998,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawKickMeter(): void {
-    if (!this.isPassing || !this.world.player.hasBall) return;
+    const charging = this.isPassing && this.world.player.hasBall;
+    this.kickLabel.setVisible(charging);
+    if (!charging) return;
     const { l, t } = this.hudPad;
     const ratio = passChargeRatio((this.now() - this.passChargeStartedAt) / 1000);
     const x = l;
     const y = t + 46;
     const w = 240;
-    const h = 8;
+    const h = 10;
     this.pipGfx.fillStyle(0x1a120c, 0.92);
     this.pipGfx.fillRect(x, y, w, h);
     this.pipGfx.fillStyle(ratio > 0.72 ? PALETTE.pubSign : PALETTE.youRing, 0.95);
-    this.pipGfx.fillRect(x, y, Math.max(8, w * ratio), h);
-    this.pipGfx.lineStyle(1, 0xf3ead4, 0.55);
+    this.pipGfx.fillRect(x, y, Math.max(10, w * ratio), h);
+    this.pipGfx.lineStyle(1, 0xf3ead4, 0.7);
     this.pipGfx.strokeRect(x, y, w, h);
   }
 
@@ -2073,13 +2110,13 @@ export class GameScene extends Phaser.Scene {
 
     const stamina = this.world.player.stamina;
     if (this.lastStamina > 0 && stamina <= 0) {
-      this.windedUntil = this.now() + 700;
-      this.flashUnlessBusy('Winded — stand still', 1400);
+      this.windedUntil = this.now() + 800;
+      this.showFeelBanner('Winded — stand still', 2200);
     }
     this.lastStamina = stamina;
 
     if (isNightfall(this.world) && this.nightfallShownDay !== this.world.eventDay) {
-      if (this.flashUnlessBusy('Nightfall', 1600)) {
+      if (this.showFeelBanner('Nightfall\nThe day is closing', 2400)) {
         this.nightfallShownDay = this.world.eventDay;
       }
     }
