@@ -1187,7 +1187,7 @@ export class GameScene extends Phaser.Scene {
         uy: aim.y / aimLen,
         power: passChargeRatio(chargeSeconds),
       };
-      this.kickJuiceUntil = this.now() + 480;
+      this.kickJuiceUntil = this.now() + 650;
       this.hitStopLeft = Math.max(this.hitStopLeft, 0.055);
     }
     releasePass(this.world, aim, chargeSeconds);
@@ -1786,7 +1786,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawKickRelease(): void {
-    const life = 480;
+    const life = 650;
     const t = 1 - Math.max(0, (this.kickJuiceUntil - this.now()) / life);
     const { x, y, ux, uy, power } = this.kickJuice;
     const fade = 1 - t;
@@ -2111,12 +2111,12 @@ export class GameScene extends Phaser.Scene {
     const stamina = this.world.player.stamina;
     if (this.lastStamina > 0 && stamina <= 0) {
       this.windedUntil = this.now() + 800;
-      this.showFeelBanner('Winded — stand still', 2200);
+      this.showFeelBanner('Winded — stand still', 3200);
     }
     this.lastStamina = stamina;
 
     if (isNightfall(this.world) && this.nightfallShownDay !== this.world.eventDay) {
-      if (this.showFeelBanner('Nightfall\nThe day is closing', 2400)) {
+      if (this.showFeelBanner('Nightfall\nThe day is closing', 3200)) {
         this.nightfallShownDay = this.world.eventDay;
       }
     }
