@@ -9,6 +9,8 @@ import {
   EARLY_GOAL_WINDOW_SECONDS,
   formatDayClock,
   isEarlyGoalWindow,
+  isNightfall,
+  NIGHTFALL_BEAT_AMOUNT,
   nightfallAmount,
   startMatch,
   stepWorld,
@@ -113,6 +115,26 @@ test('event: early goal scores, tosses up, keeps remaining day time', () => {
     'day clock pauses during recovery',
   );
   assert.ok(world.recoveryTimeRemaining < 9.5, 'recovery counts down');
+});
+
+test('event: Nightfall beat is once-evening, not midday or dusk-start', () => {
+  const world = createWorld();
+  startMatch(world);
+  assert.equal(isNightfall(world), false, '1pm is not Nightfall');
+  assert.ok(NIGHTFALL_BEAT_AMOUNT > 0.4 && NIGHTFALL_BEAT_AMOUNT < 0.5);
+
+  world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS * (5 / 9);
+  assert.equal(formatDayClock(world), '5:00 PM');
+  assert.ok(nightfallAmount(world) > 0.1, '5pm is dusk');
+  assert.equal(isNightfall(world), false, '5pm dusk is not the Nightfall beat');
+
+  world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS / 3;
+  assert.equal(formatDayClock(world), '7:00 PM');
+  assert.ok(nightfallAmount(world) >= NIGHTFALL_BEAT_AMOUNT);
+  assert.equal(isNightfall(world), true, '7pm fires the Nightfall beat');
+
+  world.matchTimeRemaining = 0;
+  assert.equal(isNightfall(world), true, '10pm stays Nightfall');
 });
 
 test('event: nightfall is obvious by mid-evening', () => {

@@ -30,6 +30,7 @@ import {
   PLAYER_RADIUS,
   quickSwitch,
   radiusMultForBuild,
+  passChargeRatio,
   releasePass,
   RIVER_SPEED_MULT,
   scoringGoalMarker,
@@ -531,6 +532,34 @@ test('goal: millstone reach is false until the carrier is next to the stone', ()
   world.player.hasBall = true;
   world.ball.ownerId = world.player.id;
   assert.equal(isCarrierAtOpponentGoal(world), false, 'carrying mid-field is not a goal');
+});
+
+test('pass: charge ratio is 0 at a tap and 1 at a full hold', () => {
+  assert.equal(passChargeRatio(0), 0);
+  assert.equal(passChargeRatio(0.2), 0);
+  assert.equal(passChargeRatio(1.5), 1);
+  assert.equal(passChargeRatio(3), 1);
+  assert.ok(Math.abs(passChargeRatio(0.85) - 0.5) < 1e-9);
+});
+
+test('pass: a full charge sends the stone farther than a tap', () => {
+  const tap = createWorld({ seed: 11 });
+  const held = createWorld({ seed: 11 });
+  startMatch(tap);
+  startMatch(held);
+  const field = parkOpen(tap);
+  parkIsolated(held, field.x, field.y);
+  tap.player.hasBall = true;
+  tap.ball.ownerId = tap.player.id;
+  held.player.hasBall = true;
+  held.ball.ownerId = held.player.id;
+  assert.equal(releasePass(tap, { x: 1, y: 0 }, 0.2), true);
+  assert.equal(releasePass(held, { x: 1, y: 0 }, 1.5), true);
+  runTicks(tap, IDLE, 18);
+  runTicks(held, IDLE, 18);
+  const dxTap = tap.ball.position.x - field.x;
+  const dxHeld = held.ball.position.x - field.x;
+  assert.ok(dxHeld > dxTap + 40, `full charge should outrun a tap (${dxHeld.toFixed(0)} vs ${dxTap.toFixed(0)})`);
 });
 
 test('pass: kicker cannot instantly re-grab the ball', () => {

@@ -15,10 +15,17 @@ import type { World } from './world.js';
 export const PICKUP_PADDING = 10;
 /** Extra gap past pickup range so the kicker does not re-grab on the next tick. */
 const RELEASE_CLEARANCE = 8;
-const MIN_CHARGE_SECONDS = 0.2;
-const MAX_CHARGE_SECONDS = 1.5;
+export const MIN_CHARGE_SECONDS = 0.2;
+export const MAX_CHARGE_SECONDS = 1.5;
 const MIN_PASS_SPEED = 120;
 const MAX_PASS_SPEED = 340;
+
+/** 0 at a tap / min hold, 1 at a full hold. Same curve `releasePass` uses. */
+export function passChargeRatio(chargeSeconds: number): number {
+  const clamped = Math.max(MIN_CHARGE_SECONDS, Math.min(MAX_CHARGE_SECONDS, chargeSeconds));
+  return (clamped - MIN_CHARGE_SECONDS) / (MAX_CHARGE_SECONDS - MIN_CHARGE_SECONDS);
+}
+
 /** ~0.3s at 60 Hz — covers the first kick's pickup bubble. */
 export const PASS_PICKUP_IMMUNITY_TICKS = 18;
 
@@ -127,8 +134,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   const dirX = aim.x / len;
   const dirY = aim.y / len;
 
-  const clampedCharge = Math.max(MIN_CHARGE_SECONDS, Math.min(MAX_CHARGE_SECONDS, chargeSeconds));
-  const chargeRatio = (clampedCharge - MIN_CHARGE_SECONDS) / (MAX_CHARGE_SECONDS - MIN_CHARGE_SECONDS);
+  const chargeRatio = passChargeRatio(chargeSeconds);
   const speed = MIN_PASS_SPEED + chargeRatio * (MAX_PASS_SPEED - MIN_PASS_SPEED);
 
   const inaccuracyRad = (0.10 * (1 - chargeRatio) + 0.02) * (_rng() - 0.5) * 2;

@@ -104,7 +104,16 @@ export {
   RUNNER_SPEED_MULT,
 } from './builds.js';
 
-export { releasePass, pickupReach, tryPickupBall, PASS_PICKUP_IMMUNITY_TICKS, PICKUP_PADDING } from './pass.js';
+export {
+  releasePass,
+  pickupReach,
+  tryPickupBall,
+  passChargeRatio,
+  PASS_PICKUP_IMMUNITY_TICKS,
+  PICKUP_PADDING,
+  MIN_CHARGE_SECONDS,
+  MAX_CHARGE_SECONDS,
+} from './pass.js';
 export {
   STAMINA_REGEN_RATE,
   STAMINA_MOVE_DRAIN,
@@ -196,6 +205,8 @@ export {
   dayClockMinutes,
   formatDayClock,
   nightfallAmount,
+  isNightfall,
+  NIGHTFALL_BEAT_AMOUNT,
   isEarlyGoalWindow,
   DEFAULT_MATCH_DURATION_SECONDS,
   EARLY_GOAL_WINDOW_SECONDS,
