@@ -13,10 +13,12 @@ import {
   formatDayClock,
   isBuilding,
   isCarrierAtOpponentGoal,
+  isNightfall,
   MILL_CLIFTON,
   moveControlled,
   nightfallAmount,
   opponentGoalFor,
+  passChargeRatio,
   placeTeammate,
   quickSwitch,
   releasePass,
@@ -227,6 +229,9 @@ export class GameScene extends Phaser.Scene {
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private vignetteGfx!: Phaser.GameObjects.Graphics;
   private nightOverlay!: Phaser.GameObjects.Rectangle;
+  private windedOverlay!: Phaser.GameObjects.Rectangle;
+  private feelBanner!: Phaser.GameObjects.Text;
+  private kickLabel!: Phaser.GameObjects.Text;
   private followBtn!: Phaser.GameObjects.Text;
 
   private flow: Flow = 'title';
@@ -246,6 +251,12 @@ export class GameScene extends Phaser.Scene {
   private lastWall = 0;
   private lastScore: [number, number] = [0, 0];
   private lastEventDay: 1 | 2 = 1;
+  private lastStamina = 100;
+  private windedUntil = 0;
+  private nightfallShownDay = 0;
+  private kickJuiceUntil = 0;
+  private kickJuice = { x: 0, y: 0, ux: 1, uy: 0, power: 0 };
+  private feelBannerUntil = 0;
 
   constructor() {
     super('GameScene');
@@ -274,6 +285,10 @@ export class GameScene extends Phaser.Scene {
     this.lastGoalingTaps = 0;
     this.lastScore = [0, 0];
     this.lastEventDay = 1;
+    this.lastStamina = 100;
+    this.nightfallShownDay = 0;
+    this.windedUntil = 0;
+    this.kickJuiceUntil = 0;
     this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
 
     this.cameras.main.setBackgroundColor(PALETTE.bg);
@@ -382,6 +397,7 @@ export class GameScene extends Phaser.Scene {
     this.staminaBg?.setPosition(l, t);
     this.staminaFill?.setPosition(l + 2, t + 2);
     this.staminaLabel?.setPosition(l, t + 26);
+    this.kickLabel?.setPosition(l + 248, t + 44);
     this.timerText?.setPosition(VIEW_W / 2, t);
     this.scoreText?.setPosition(VIEW_W / 2, t + 30);
     this.minimapBg?.setPosition(
@@ -1075,6 +1091,30 @@ export class GameScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(8),
     );
+    this.windedOverlay = this.adoptHud(
+      this.add
+        .rectangle(0, 0, VIEW_W, VIEW_H, 0x3a0808, 0)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(8),
+    );
+    this.feelBanner = this.adoptHud(
+      this.add
+        .text(VIEW_W / 2, VIEW_H * 0.34, '', {
+          fontFamily: FONT,
+          fontSize: '40px',
+          color: '#f3ead4',
+          align: 'center',
+          backgroundColor: '#140e0add',
+          padding: { x: 28, y: 14 },
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(13)
+        .setVisible(false),
+    );
+    this.kickLabel = this.hudText(16, 56, 'Kick', '14px', '#f3ead4');
+    this.kickLabel.setVisible(false);
   }
 
   private drawVignette(): void {
@@ -1114,6 +1154,9 @@ export class GameScene extends Phaser.Scene {
     this.isPassing = true;
     this.passChargeStartedAt = this.now();
     this.inputState.charging = true;
+    const aimLen = Math.hypot(this.lastAim.x, this.lastAim.y);
+    this.inputState.passAim =
+      aimLen > 0 ? { x: this.lastAim.x / aimLen, y: this.lastAim.y / aimLen } : { x: 1, y: 0 };
     if (this.teach === 'kick') this.teach = 'sprint';
   }
 
@@ -1135,6 +1178,18 @@ export class GameScene extends Phaser.Scene {
     const chargeSeconds = (this.now() - this.passChargeStartedAt) / 1000;
     const moving = this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
     const aim = moving ? { ...this.inputState.move } : { ...this.lastAim };
+    const aimLen = Math.hypot(aim.x, aim.y);
+    if (aimLen > 0) {
+      this.kickJuice = {
+        x: this.world.player.position.x,
+        y: this.world.player.position.y,
+        ux: aim.x / aimLen,
+        uy: aim.y / aimLen,
+        power: passChargeRatio(chargeSeconds),
+      };
+      this.kickJuiceUntil = this.now() + 650;
+      this.hitStopLeft = Math.max(this.hitStopLeft, 0.055);
+    }
     releasePass(this.world, aim, chargeSeconds);
     this.clearPassCharge();
     this.trackPlayer(true);
@@ -1418,14 +1473,40 @@ export class GameScene extends Phaser.Scene {
     this.kickoffLeft = KICKOFF_SECONDS;
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
+    this.lastStamina = this.world.player.stamina;
+    this.nightfallShownDay = 0;
+    this.windedUntil = 0;
+    this.kickJuiceUntil = 0;
+    this.feelBannerUntil = 0;
     this.scoredJuice = false;
     this.syncTouchFlow();
     this.layoutHud();
   }
 
-  private flash(msg: string): void {
+  private flash(msg: string, ms = 900): void {
     this.setCaption(msg);
-    this.feedbackUntil = this.now() + 900;
+    this.feedbackUntil = this.now() + ms;
+  }
+
+  /** One-shot center banner. Yields to kickoff, recovery, climax, and match over. */
+  private showFeelBanner(msg: string, ms: number): boolean {
+    if (this.world.matchState === 'over') return false;
+    if (this.kickoffLeft > 0) return false;
+    if (this.world.recoveryTimeRemaining > 0) return false;
+    if (this.millstoneClimax()) return false;
+    this.feelBanner.setText(msg);
+    this.feelBanner.setVisible(true);
+    this.feelBannerUntil = this.now() + ms;
+    return true;
+  }
+
+  private syncFeelBanner(): void {
+    const show =
+      this.flow === 'playing' &&
+      this.world.matchState === 'playing' &&
+      !this.millstoneClimax() &&
+      this.now() < this.feelBannerUntil;
+    this.feelBanner.setVisible(show);
   }
 
   private setCaption(text: string, pips: number | null = null): void {
@@ -1584,8 +1665,9 @@ export class GameScene extends Phaser.Scene {
     const px = -uy;
     const py = ux;
     const moving = Math.hypot(c.vx, c.vy) > 12;
-    const gait = this.now() / 85 + (h % 97) * 0.21;
-    const swing = Math.sin(gait) * r * (moving ? 0.44 : 0.07);
+    const winded = c.controlled && this.world.player.stamina <= 0;
+    const gait = this.now() / (winded ? 170 : 85) + (h % 97) * 0.21;
+    const swing = Math.sin(gait) * r * (moving ? (winded ? 0.2 : 0.44) : 0.07);
     const kit = kitFill(c.team);
     const hipX = c.x - ux * r * 0.48;
     const hipY = c.y - uy * r * 0.48;
@@ -1644,12 +1726,74 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(headX - ux * headR * 0.22, headY - uy * headR * 0.22, headR * 0.72);
 
     if (c.controlled) {
-      this.markerGfx.lineStyle(3, PALETTE.youRing, 1);
+      const ring = winded ? PALETTE.staminaLow : PALETTE.youRing;
+      this.markerGfx.lineStyle(3, ring, 1);
       this.markerGfx.strokeCircle(c.x, c.y, r * 1.32);
       const ty = Math.min(c.y, headY) - headR - 12;
-      this.markerGfx.fillStyle(PALETTE.youRing, 1);
+      this.markerGfx.fillStyle(ring, 1);
       this.markerGfx.fillTriangle(c.x - 8, ty - 9, c.x + 8, ty - 9, c.x, ty);
     }
+  }
+
+  private kickAimUnit(): { x: number; y: number } {
+    const a = this.inputState.passAim;
+    const len = Math.hypot(a.x, a.y);
+    if (len > 0.01) return { x: a.x / len, y: a.y / len };
+    const l = this.lastAim;
+    const ll = Math.hypot(l.x, l.y) || 1;
+    return { x: l.x / ll, y: l.y / ll };
+  }
+
+  private drawAimArrow(
+    x: number,
+    y: number,
+    ux: number,
+    uy: number,
+    length: number,
+    color: number,
+    alpha: number,
+    width = 6,
+  ): void {
+    const x1 = x + ux * 28;
+    const y1 = y + uy * 28;
+    const x2 = x + ux * length;
+    const y2 = y + uy * length;
+    this.markerGfx.lineStyle(width, color, alpha);
+    this.markerGfx.lineBetween(x1, y1, x2, y2);
+    const head = 14 + width;
+    this.markerGfx.fillStyle(color, alpha);
+    this.markerGfx.fillTriangle(
+      x2 + ux * head * 0.7,
+      y2 + uy * head * 0.7,
+      x2 - uy * (head * 0.45),
+      y2 + ux * (head * 0.45),
+      x2 + uy * (head * 0.45),
+      y2 - ux * (head * 0.45),
+    );
+  }
+
+  private drawKickCharge(x: number, y: number, radius: number): void {
+    const charge = passChargeRatio((this.now() - this.passChargeStartedAt) / 1000);
+    const { x: ux, y: uy } = this.kickAimUnit();
+    const color = charge > 0.72 ? PALETTE.pubSign : PALETTE.youRing;
+    const minR = radius * 1.45;
+    const span = 34;
+    this.markerGfx.lineStyle(2, PALETTE.youRing, 0.28);
+    this.markerGfx.strokeCircle(x, y, minR + span);
+    this.markerGfx.lineStyle(5, color, 0.92);
+    this.markerGfx.strokeCircle(x, y, minR + charge * span);
+    this.drawAimArrow(x, y, ux, uy, 58 + charge * 86, color, 0.96, 5);
+  }
+
+  private drawKickRelease(): void {
+    const life = 650;
+    const t = 1 - Math.max(0, (this.kickJuiceUntil - this.now()) / life);
+    const { x, y, ux, uy, power } = this.kickJuice;
+    const fade = 1 - t;
+    const color = power > 0.72 ? PALETTE.pubSign : PALETTE.youRing;
+    this.markerGfx.lineStyle(4, color, 0.75 * fade);
+    this.markerGfx.strokeCircle(x, y, 18 + t * (36 + power * 28));
+    this.drawAimArrow(x, y, ux, uy, 70 + power * 70 + t * 40, color, 0.85 * fade, 7);
   }
 
   // -------------------------------------------------------------------------
@@ -1716,33 +1860,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.isPassing && p.hasBall) {
-      const charge = Math.min(1, (this.now() - this.passChargeStartedAt) / 900);
-      this.markerGfx.lineStyle(4, PALETTE.youRing, 0.9);
-      this.markerGfx.strokeCircle(p.position.x, p.position.y, p.radius * 1.4 + charge * 28);
-    }
-
-    if (this.flow === 'playing' && this.kickoffLeft > 0) {
+      this.drawKickCharge(p.position.x, p.position.y, p.radius);
+    } else if (this.flow === 'playing' && this.kickoffLeft > 0) {
       const goal = opponentGoalFor(p.team, this.world.map);
       const dx = goal.x - p.position.x;
       const dy = goal.y - p.position.y;
       const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len;
-      const uy = dy / len;
-      const x1 = p.position.x + ux * 36;
-      const y1 = p.position.y + uy * 36;
-      const x2 = p.position.x + ux * 110;
-      const y2 = p.position.y + uy * 110;
-      this.markerGfx.lineStyle(6, PALETTE.youRing, 0.95);
-      this.markerGfx.lineBetween(x1, y1, x2, y2);
-      this.markerGfx.fillStyle(PALETTE.youRing, 1);
-      this.markerGfx.fillTriangle(
-        x2 + ux * 18,
-        y2 + uy * 18,
-        x2 - uy * 12,
-        y2 + ux * 12,
-        x2 + uy * 12,
-        y2 - ux * 12,
-      );
+      this.drawAimArrow(p.position.x, p.position.y, dx / len, dy / len, 110, PALETTE.youRing, 0.95, 6);
+    }
+
+    if (this.now() < this.kickJuiceUntil) {
+      this.drawKickRelease();
     }
 
     if (this.flow === 'playing') {
@@ -1778,6 +1906,10 @@ export class GameScene extends Phaser.Scene {
     if (!on) {
       this.nightOverlay.setAlpha(0);
       this.nightOverlay.setVisible(false);
+      this.windedOverlay.setAlpha(0);
+      this.windedOverlay.setVisible(false);
+      this.feelBanner.setVisible(false);
+      this.kickLabel.setVisible(false);
       this.cameras.main.setBackgroundColor(PALETTE.bg);
     }
   }
@@ -1816,19 +1948,25 @@ export class GameScene extends Phaser.Scene {
       this.staminaLabel.setAlpha(pulse);
       this.staminaLabel.setColor('#ff6a4a');
       this.staminaLabel.setText('SPENT');
+      this.staminaBg.setFillStyle(PALETTE.staminaLow, 0.55 + 0.35 * pulse);
     } else {
       this.staminaLabel.setAlpha(1);
       this.staminaLabel.setColor('#f3ead4');
       this.staminaLabel.setText('Breath');
+      this.staminaBg.setFillStyle(PALETTE.staminaBg, 1);
     }
+    this.updateWindedVeil(exhausted);
 
     this.timerText.setText(`Day ${this.world.eventDay} · ${formatDayClock(this.world)}`);
     this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
     this.updateNightfall();
 
     this.noteEventBeats();
+    this.noteFeelBeats();
+    this.syncFeelBanner();
 
     this.pipGfx.clear();
+    this.drawKickMeter();
     const over = this.world.matchState === 'over' && this.world.winState;
     if (over) {
       const ws = this.world.winState!;
@@ -1857,6 +1995,36 @@ export class GameScene extends Phaser.Scene {
       this.againBtn.setVisible(false);
       this.drawPrompts();
     }
+  }
+
+  private drawKickMeter(): void {
+    const charging = this.isPassing && this.world.player.hasBall;
+    this.kickLabel.setVisible(charging);
+    if (!charging) return;
+    const { l, t } = this.hudPad;
+    const ratio = passChargeRatio((this.now() - this.passChargeStartedAt) / 1000);
+    const x = l;
+    const y = t + 46;
+    const w = 240;
+    const h = 10;
+    this.pipGfx.fillStyle(0x1a120c, 0.92);
+    this.pipGfx.fillRect(x, y, w, h);
+    this.pipGfx.fillStyle(ratio > 0.72 ? PALETTE.pubSign : PALETTE.youRing, 0.95);
+    this.pipGfx.fillRect(x, y, Math.max(10, w * ratio), h);
+    this.pipGfx.lineStyle(1, 0xf3ead4, 0.7);
+    this.pipGfx.strokeRect(x, y, w, h);
+  }
+
+  private updateWindedVeil(exhausted: boolean): void {
+    if (!exhausted) {
+      this.windedOverlay.setAlpha(0);
+      this.windedOverlay.setVisible(false);
+      return;
+    }
+    const punch = this.now() < this.windedUntil ? 0.2 : 0;
+    const pulse = 0.1 + 0.08 * Math.abs(Math.sin(this.now() / 140));
+    this.windedOverlay.setVisible(true);
+    this.windedOverlay.setAlpha(pulse + punch);
   }
 
   /** Darken the pitch as the day clock runs toward 10pm. Timer/score stay above. */
@@ -1889,6 +2057,9 @@ export class GameScene extends Phaser.Scene {
     this.scoredJuice = false;
     this.lastScore = [...this.world.score];
     this.lastEventDay = 2;
+    this.lastStamina = this.world.player.stamina;
+    this.nightfallShownDay = 0;
+    this.windedUntil = 0;
     this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
     this.flash('Day 2 — place your people');
     this.syncTouchFlow();
@@ -1928,6 +2099,27 @@ export class GameScene extends Phaser.Scene {
     }
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
+  }
+
+  /** Winded crawl + Nightfall — once each, never over a climax banner. */
+  private noteFeelBeats(): void {
+    if (this.flow !== 'playing' || this.world.matchState !== 'playing') {
+      this.lastStamina = this.world.player.stamina;
+      return;
+    }
+
+    const stamina = this.world.player.stamina;
+    if (this.lastStamina > 0 && stamina <= 0) {
+      this.windedUntil = this.now() + 800;
+      this.showFeelBanner('Winded — stand still', 3200);
+    }
+    this.lastStamina = stamina;
+
+    if (isNightfall(this.world) && this.nightfallShownDay !== this.world.eventDay) {
+      if (this.showFeelBanner('Nightfall\nThe day is closing', 3200)) {
+        this.nightfallShownDay = this.world.eventDay;
+      }
+    }
   }
 
   private placeCountdown(): string {

@@ -91,6 +91,17 @@ export function nightfallAmount(world: World): number {
   return s * 0.88;
 }
 
+/**
+ * Darkness at which the client fires the once-per-day Nightfall banner.
+ * Matches the existing 7pm "evening has clearly darkened" check (~0.53).
+ */
+export const NIGHTFALL_BEAT_AMOUNT = 0.45;
+
+/** True once the pitch is evening-dark — the Nightfall teach beat. */
+export function isNightfall(world: World): boolean {
+  return nightfallAmount(world) >= NIGHTFALL_BEAT_AMOUNT;
+}
+
 /** True when a goal should toss-up and continue the day (not end it). */
 export function isEarlyGoalWindow(world: World): boolean {
   return dayElapsedSeconds(world) < EARLY_GOAL_WINDOW_SECONDS && world.matchTimeRemaining > 0;
