@@ -2,6 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- viewport-fit=cover + env(safe-area-inset-*) (below) keep HUD/pads off
+         notched iPhones (Chrome, Safari A2HS, Capacitor WKWebView). Desktop
+         browsers resolve those env() values to 0px, so layout is unchanged. -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"

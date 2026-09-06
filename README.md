@@ -100,6 +100,9 @@ shrovetide/
 ├── package.json
 ├── tsconfig.json              # strict mode
 ├── vite.config.ts
+├── capacitor.config.ts        # Capacitor iOS shell (webDir=dist)
+├── ios/                       # Xcode project (SPM). Web assets via cap:sync
+├── IOS.md                     # Mac / Xcode steps to run on iPhone
 └── README.md
 ```
 
@@ -227,7 +230,16 @@ npm run build        # tsc --noEmit && vite build → dist/
 npm run preview      # serve dist/ at http://localhost:4173
 npm run test:sim     # node --test, runs the sim smoke tests
 npm run typecheck    # tsc --noEmit
+npm run cap:sync     # build + copy dist/ into the Capacitor iOS project
+npm run cap:ios      # cap:sync then open Xcode (Mac only)
 ```
+
+### iPhone app (Capacitor)
+
+Touch already works in Chrome on iPhone (`client/touch.ts`). The native shell
+is Capacitor iOS (`app.shrovetide.game`). On a Mac: `npm run cap:ios`, pick a
+simulator or your device in Xcode, Run. IPA / App Store need a Mac and are
+not set up here. Full steps: **[IOS.md](IOS.md)**.
 
 ---
 

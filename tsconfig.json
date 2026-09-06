@@ -20,5 +20,5 @@
     "verbatimModuleSyntax": false,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["client/**/*.ts", "sim/**/*.ts", "test/**/*.ts", "vite.config.ts"]
+  "include": ["client/**/*.ts", "sim/**/*.ts", "test/**/*.ts", "vite.config.ts", "capacitor.config.ts"]
 }
