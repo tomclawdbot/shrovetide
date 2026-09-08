@@ -14,15 +14,20 @@ import {
   cycleTeammate,
   GOAL_CONTEST_RADIUS,
   groundBall,
+  GOAL_REACH_DISTANCE,
   HEDGE_SPEED_MULT,
   hugShoveAt,
   HUG_MIN_SHOVE,
   hugShoveAuthority,
   isBuilding,
   isCarrierAtOpponentGoal,
+  isInHedge,
   isInHedgeSlow,
+  isInObstacle,
   isInWater,
+  isNearRoad,
   isOnBridge,
+  isOnRoad,
   isWalkable,
   MILL_CLIFTON,
   MILL_STURSTON,
@@ -171,6 +176,8 @@ test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN
   assert.ok(world.map.outOfBounds.length > 0, 'town map has OOB zones');
   assert.ok(world.map.bridges.length >= 2, 'town map has at least 2 bridges');
   assert.ok(world.map.hedges.length >= 4, 'town map has hedges');
+  assert.ok(world.map.roads.length >= 4, 'town map has roads between buildings');
+  assert.ok(world.map.streetLights.length >= 8, 'town map has street lights');
   assert.equal(world.map.goals.length, 2, 'two millstone goals');
 
   // Start the match so stepWorld ticks.
@@ -878,6 +885,70 @@ test('world: Down player spawns east and scores at Clifton', () => {
   const clifton = scoringGoalMarker(1, world.map);
   assert.equal(clifton.name, MILL_CLIFTON);
   assert.ok(clifton.position.x < world.player.position.x, 'Clifton is west of a Down spawn');
+});
+
+test('map: roads link the high street and stay soft (fields stay playable)', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.ok(map.roads.some((r) => r.kind === 'street'), 'town cobble streets');
+  assert.ok(map.roads.some((r) => r.kind === 'lane'), 'millstone / bank lanes');
+
+  const northStreet = { x: 1200 * TOWN_SCALE, y: 660 * TOWN_SCALE };
+  const southStreet = { x: 1230 * TOWN_SCALE, y: 1110 * TOWN_SCALE };
+  assert.equal(isOnRoad(northStreet, map), true, 'north pubs sit on a street');
+  assert.equal(isOnRoad(southStreet, map), true, 'south pubs sit on a street');
+  assert.equal(isInObstacle(northStreet, map), false, 'street runs between footprints');
+  assert.equal(isInObstacle(southStreet, map), false, 'south street is not inside a pub');
+
+  for (const b of map.obstacles.filter(isBuilding)) {
+    assert.ok(isNearRoad(b.position, map, 90), `${b.name} should front a road`);
+  }
+
+  // Roads are not collision and do not slow — hug can leave onto the fields.
+  assert.equal(speedMultiplierAt(northStreet, map), 1, 'street is full pace');
+  const field = { x: map.width * 0.7, y: map.height * 0.82 };
+  assert.equal(isOnRoad(field, map), false, 'SE field is off the tarmac');
+  assert.equal(isWalkable(field, map), true, 'fields stay part of the game');
+  assert.equal(speedMultiplierAt(field, map), 1);
+});
+
+test('map: street lights sit on the road network', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.ok(map.streetLights.length >= 12, 'enough lamps to read at Nightfall');
+  for (const lamp of map.streetLights) {
+    assert.ok(isNearRoad(lamp.position, map, 28), 'lamp should hug a road verge');
+    assert.equal(isInWater(lamp.position, map), false, 'no lamps in the Henmore');
+    for (const goal of map.goals) {
+      const d = Math.hypot(lamp.position.x - goal.position.x, lamp.position.y - goal.position.y);
+      assert.ok(d > 40, 'lamp must not sit on a millstone');
+    }
+  }
+});
+
+test('map: both millstone approaches are hedge-flanked roads', () => {
+  const map = ASHBOURNE_TOWN;
+  const samples = [
+    { name: 'Clifton', x: 320 * TOWN_SCALE, y: 790 * TOWN_SCALE },
+    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 790 * TOWN_SCALE },
+  ];
+  for (const s of samples) {
+    assert.equal(isOnRoad(s, map), true, `${s.name} approach is a road`);
+    const north = { x: s.x, y: 754 * TOWN_SCALE };
+    const south = { x: s.x, y: 826 * TOWN_SCALE };
+    assert.equal(isInHedge(north, map), true, `${s.name} road has a north hedge`);
+    assert.equal(isInHedge(south, map), true, `${s.name} road has a south hedge`);
+  }
+  for (const goal of map.goals) {
+    assert.equal(isInHedgeSlow(goal.position, map), false, `${goal.name} stone is not in a hedge`);
+    assert.ok(isWalkable(goal.position, map), `${goal.name} stone stays standable`);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const p = {
+        x: goal.position.x + Math.cos(a) * (GOAL_REACH_DISTANCE * 0.7),
+        y: goal.position.y + Math.sin(a) * (GOAL_REACH_DISTANCE * 0.7),
+      };
+      assert.equal(isInHedgeSlow(p, map), false, `${goal.name} reach must stay clear of hedge crawl`);
+    }
+  }
 });
 
 test('map: buildings read as named Ashbourne pubs and shops', () => {

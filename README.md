@@ -119,6 +119,8 @@ export interface TownMap {
   river: RectZone;          // water — 50% speed
   bridges: RectZone[];      // walkable crossings over the river
   hedges: RectZone[];       // crawl — slower than river (~0.22×)
+  roads: RoadSegment[];     // soft streets / lanes — visual, no collision
+  streetLights: StreetLight[]; // lamp posts; client glows them at Nightfall
   goals: { team: 0 | 1; position: Vec2 }[]; // millstones
   turnUp: Vec2;             // ball spawn point (centre of map)
 }
@@ -126,8 +128,10 @@ export interface TownMap {
 
 `ASHBOURNE_TOWN` is the default: 4800×3200 (2× the TICKET 002 town), two
 millstones (one per team), horizontal river through the middle with
-three bridges, hedgerows that crawl slower than water, nine town-core
-building obstacles, two OOB zones (churchyard + memorial).
+three bridges, hedgerows that crawl slower than water, roads linking
+the pubs/shops and hedge-flanked lanes at both millstones, street
+lights that read at Nightfall, eleven town-core building obstacles,
+two OOB zones (churchyard + memorial).
 
 ### Zone helpers (pure functions in `sim/maps.ts`)
 
@@ -137,6 +141,7 @@ building obstacles, two OOB zones (churchyard + memorial).
 | `isInRiver(p, map)` / `isOnBridge` | water vs walkable crossing |
 | `isInWater(p, map)`             | in river but NOT on bridge → 50% speed |
 | `isOutOfBounds(p, map)`         | churchyard / memorial — no entry |
+| `isOnRoad(p, map)`              | on a street or lane (soft — no slow) |
 | `isWalkable(p, map)`            | walkable for players/NPCs |
 | `speedMultiplierAt(p, map)`     | 0.22 in hedge, 0.5 in water, 1.0 elsewhere |
 | `goalFor(team, map)`            | millstone position |
