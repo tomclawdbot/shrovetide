@@ -69,11 +69,16 @@ export interface GoalMarker {
 
 export interface Bridge extends RectZone {}
 
-/** Town cobble vs millstone-approach track. Visual / later landmarks — not collision. */
+/** Town street vs millstone-approach track. Visual / later landmarks — not collision. */
 export type RoadKind = 'street' | 'lane';
 
-export interface RoadSegment extends RectZone {
+/** Soft winding strip — polyline of short segments, not an axis-aligned slab. */
+export interface RoadSegment {
   kind: RoadKind;
+  /** Full width of the strip in sim px. */
+  width: number;
+  /** Vertices in sim space. */
+  points: Vec2Like[];
 }
 
 /** Lamp post along a road. Client lights the lantern at dusk / Nightfall. */
@@ -153,12 +158,66 @@ function sbuilding(
   };
 }
 
-function sroad(x: number, y: number, w: number, h: number, kind: RoadKind): RoadSegment {
-  return { ...srect(x, y, w, h), kind };
-}
-
 function slight(x: number, y: number): StreetLight {
   return { position: sxy(x, y) };
+}
+
+/** Chaikin corner-cut — turns a few waypoints into a windy UK lane. */
+function chaikin(pts: Vec2Like[], rounds: number): Vec2Like[] {
+  let cur = pts;
+  for (let r = 0; r < rounds; r++) {
+    if (cur.length < 2) break;
+    const next: Vec2Like[] = [{ x: cur[0]!.x, y: cur[0]!.y }];
+    for (let i = 0; i < cur.length - 1; i++) {
+      const a = cur[i]!;
+      const b = cur[i + 1]!;
+      next.push(
+        { x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 },
+        { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 },
+      );
+    }
+    next.push({ x: cur[cur.length - 1]!.x, y: cur[cur.length - 1]!.y });
+    cur = next;
+  }
+  return cur;
+}
+
+function sroad(
+  kind: RoadKind,
+  width: number,
+  waypoints: ReadonlyArray<readonly [number, number]>,
+  smooth = 2,
+): RoadSegment {
+  return {
+    kind,
+    width: sx(width),
+    points: chaikin(
+      waypoints.map(([x, y]) => sxy(x, y)),
+      smooth,
+    ),
+  };
+}
+
+/** Distance from `p` to the closest point on segment `a`–`b`. */
+export function distToSegment(p: Vec2Like, a: Vec2Like, b: Vec2Like): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-8) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** Distance from `p` to the nearest road centreline. */
+export function distanceToRoad(p: Vec2Like, map: TownMap): number {
+  let best = Infinity;
+  for (const r of map.roads) {
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const d = distToSegment(p, r.points[i]!, r.points[i + 1]!);
+      if (d < best) best = d;
+    }
+  }
+  return best;
 }
 
 /**
@@ -303,55 +362,139 @@ export const ASHBOURNE_TOWN: TownMap = {
     srect(2100, 980, 200, 28),
   ],
 
-  // Soft streets. Buildings sit on the frontage; bodies can leave onto fields.
+  // Winding market-town lanes. Pubs/shops ↔ bridges ↔ millstones ↔ turn-up.
+  // Soft — no collision. Hedge-flanked approaches stay straight so the stones read.
   roads: [
-    sroad(1200, 800, 2320, 48, 'lane'),
-    sroad(1200, 960, 2320, 44, 'lane'),
-    sroad(1200, 660, 720, 52, 'street'),
-    sroad(1220, 630, 56, 80, 'street'),
-    sroad(1200, 730, 56, 90, 'street'),
-    sroad(1230, 1110, 420, 52, 'street'),
-    sroad(1200, 1035, 56, 90, 'street'),
-    sroad(840, 1280, 500, 44, 'lane'),
-    sroad(1080, 1200, 48, 160, 'lane'),
-    sroad(1820, 560, 48, 480, 'lane'),
-    sroad(320, 790, 380, 52, 'lane'),
-    sroad(2080, 790, 380, 52, 'lane'),
+    // St John flavour — north high street through the pubs, hook at Gingerbread.
+    sroad('street', 48, [
+      [900, 680],
+      [1000, 648],
+      [1080, 658],
+      [1160, 672],
+      [1200, 660],
+      [1224, 598],
+      [1288, 638],
+      [1348, 668],
+      [1420, 692],
+      [1500, 708],
+    ]),
+    // Butcher yard down to the turn-up bridge.
+    sroad('street', 44, [
+      [1160, 672],
+      [1168, 736],
+      [1192, 808],
+      [1200, 868],
+    ]),
+    // Centre bridge deck — high street meets south market at the plinth.
+    sroad('street', 46, [
+      [1200, 848],
+      [1200, 880],
+      [1200, 912],
+    ], 0),
+    // South market — Vaults, White Hart, Market Hall.
+    sroad('street', 48, [
+      [1040, 1098],
+      [1140, 1122],
+      [1230, 1110],
+      [1272, 1160],
+      [1348, 1124],
+      [1408, 1094],
+    ]),
+    // South market up to the turn-up bridge.
+    sroad('street', 44, [
+      [1230, 1110],
+      [1208, 1036],
+      [1214, 978],
+      [1200, 918],
+    ]),
+    // Clifton millstone → west bridge (hedge corridor — keep straight).
+    sroad('lane', 48, [
+      [150, 790],
+      [250, 790],
+      [320, 790],
+      [400, 790],
+      [400, 880],
+    ], 0),
+    // West bridge up into the high street at the George.
+    sroad('lane', 42, [
+      [400, 848],
+      [508, 758],
+      [668, 712],
+      [808, 692],
+      [900, 680],
+    ]),
+    // West bridge down to The Wheel.
+    sroad('lane', 42, [
+      [400, 912],
+      [458, 1024],
+      [528, 1148],
+      [584, 1244],
+      [600, 1280],
+    ]),
+    // The Wheel along to the south market.
+    sroad('lane', 42, [
+      [600, 1280],
+      [728, 1222],
+      [888, 1158],
+      [1040, 1098],
+    ]),
+    // Sturston millstone → east bridge (hedge corridor — keep straight).
+    sroad('lane', 48, [
+      [2250, 790],
+      [2168, 790],
+      [2080, 790],
+      [2000, 790],
+      [2000, 880],
+    ], 0),
+    // Coach & Horses down to Station Stores (no stub into empty grass).
+    sroad('lane', 42, [
+      [1820, 338],
+      [1764, 418],
+      [1684, 528],
+      [1584, 628],
+      [1500, 708],
+    ]),
+    // Station Stores along to the east bridge / Sturston approach.
+    sroad('lane', 42, [
+      [1500, 708],
+      [1624, 724],
+      [1768, 756],
+      [1912, 778],
+      [2000, 828],
+      [2000, 880],
+    ]),
   ],
 
-  // Verge lamps — not in the Henmore, not on the millstones.
+  // Verge lamps — sit on the new lanes, not in the Henmore, not on the stones.
   streetLights: [
-    slight(900, 696),
-    slight(1020, 696),
-    slight(1140, 696),
-    slight(1244, 618),
-    slight(1260, 696),
-    slight(1380, 696),
-    slight(1500, 696),
-    slight(1080, 1076),
-    slight(1200, 1076),
-    slight(1320, 1076),
-    slight(1400, 1076),
+    slight(900, 700),
+    slight(1080, 678),
+    slight(1210, 640),
+    slight(1348, 688),
+    slight(1488, 728),
+    slight(1180, 760),
+    slight(1220, 828),
+    slight(1060, 1118),
+    slight(1236, 1132),
+    slight(1388, 1112),
+    slight(1210, 1020),
     slight(280, 766),
-    slight(440, 766),
-    slight(720, 766),
-    slight(1000, 766),
-    slight(1400, 766),
-    slight(1680, 766),
-    slight(1960, 766),
+    slight(400, 766),
+    slight(520, 742),
+    slight(760, 704),
+    slight(460, 1028),
+    slight(568, 1212),
+    slight(792, 1196),
     slight(2200, 766),
-    slight(400, 992),
-    slight(800, 992),
-    slight(1200, 992),
-    slight(1600, 992),
-    slight(2000, 992),
-    slight(700, 1304),
-    slight(900, 1304),
-    slight(1844, 400),
-    slight(1844, 560),
-    slight(1844, 700),
-    slight(1228, 730),
-    slight(1228, 1035),
+    slight(2000, 766),
+    slight(1820, 404),
+    slight(1688, 536),
+    slight(1704, 740),
+    slight(1916, 792),
+    slight(1200, 808),
+    slight(1200, 952),
+    slight(400, 996),
+    slight(2000, 996),
   ],
 
   // Millstones sit on the north bank (river spans design y 820–940), inland
@@ -419,20 +562,24 @@ export function isInHedge(p: Vec2Like, map: TownMap): boolean {
   return map.hedges.some((h) => pointInRect(p, h));
 }
 
-/** True iff the point sits on a road segment. Roads do not block or slow. */
+/** True iff the point sits on a road strip. Roads do not block or slow. */
 export function isOnRoad(p: Vec2Like, map: TownMap): boolean {
-  return map.roads.some((r) => pointInRect(p, r));
+  for (const r of map.roads) {
+    const half = r.width / 2;
+    for (let i = 0; i < r.points.length - 1; i++) {
+      if (distToSegment(p, r.points[i]!, r.points[i + 1]!) <= half) return true;
+    }
+  }
+  return false;
 }
 
 /** True iff the point is on or within `pad` px of a road (verge lamps). */
 export function isNearRoad(p: Vec2Like, map: TownMap, pad = 24): boolean {
   for (const r of map.roads) {
-    const grown: RectZone = {
-      position: r.position,
-      width: r.width + pad * 2,
-      height: r.height + pad * 2,
-    };
-    if (pointInRect(p, grown)) return true;
+    const reach = r.width / 2 + pad;
+    for (let i = 0; i < r.points.length - 1; i++) {
+      if (distToSegment(p, r.points[i]!, r.points[i + 1]!) <= reach) return true;
+    }
   }
   return false;
 }

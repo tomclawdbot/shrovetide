@@ -89,6 +89,11 @@ const PALETTE = {
   chimney: 0x4a3028,
   cobble: 0x6a5a48,
   cobbleEdge: 0x4a3e30,
+  /** Packed grit / worn tarmac — not Lego cobble, not white seams. */
+  tarmac: 0x4a4640,
+  tarmacWear: 0x3c3934,
+  grit: 0x5a5348,
+  verge: 0x3a3c28,
   lampPole: 0x2a2218,
   lampHead: 0x3a3428,
   lampGlass: 0x6a5a40,
@@ -118,7 +123,7 @@ const PALETTE = {
   /** Cream/ivory jersey — Down'ards kit, distinct from black trousers and hair. */
   teamDownKit: 0xe8dcc8,
   youRing: 0xfff6e8,
-  /** Cream kit cue — sash/cap (runner) vs belt (hugger). Reads on both kits. */
+  /** Foot-mark fill — chevron (runner) vs block (hugger). Not a body bar. */
   kitCue: 0xf3ead4,
   ball: 0xf3ead4,
   ballEdge: 0x1a140c,
@@ -651,8 +656,6 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
 
-    this.drawRoads(rand);
-
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
       const y = z.position.y - z.height / 2;
@@ -702,6 +705,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // After river + decks so lanes continue over the bridges, not under the Henmore.
+    this.drawRoads(rand);
+
     for (const o of map.obstacles) {
       this.drawBuilding(o);
     }
@@ -747,40 +753,70 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  /** Cobble streets + mud lanes from map data. Soft — no collision. */
+  /** Soft tarmac / packed grit strips. No cobble seams, no white edges. */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
     for (const road of this.world.map.roads) {
-      const x = road.position.x - road.width / 2;
-      const y = road.position.y - road.height / 2;
-      if (road.kind === 'street') {
-        g.fillStyle(PALETTE.cobble, 0.88);
-        g.fillRect(x, y, road.width, road.height);
-        g.lineStyle(2, PALETTE.cobbleEdge, 0.45);
-        g.strokeRect(x, y, road.width, road.height);
-        const seam = road.width >= road.height ? road.width : road.height;
-        const steps = Math.max(3, Math.floor(seam / 28));
-        g.fillStyle(PALETTE.cobbleEdge, 0.28);
-        for (let i = 0; i < steps; i++) {
-          const t = (i + 0.5) / steps;
-          if (road.width >= road.height) {
-            g.fillRect(x + t * road.width - 1, y + 2, 2, road.height - 4);
-          } else {
-            g.fillRect(x + 2, y + t * road.height - 1, road.width - 4, 2);
-          }
-        }
-      } else {
-        g.fillStyle(PALETTE.mud, 0.72);
-        g.fillRect(x, y, road.width, road.height);
-        g.fillStyle(PALETTE.mudDark, 0.35);
-        const along = Math.max(road.width, road.height);
-        const n = Math.max(2, Math.floor(along / 40));
-        for (let i = 0; i < n; i++) {
-          const t = (i + rand()) / (n + 1);
-          const px = x + (road.width >= road.height ? t * road.width : road.width * 0.5);
-          const py = y + (road.height > road.width ? t * road.height : road.height * 0.5);
-          g.fillEllipse(px, py, 16 + rand() * 22, 6 + rand() * 8);
-        }
+      const street = road.kind === 'street';
+      this.drawRoadStrip(g, road.points, road.width + 14, PALETTE.verge, 0.55);
+      this.drawRoadStrip(g, road.points, road.width, street ? PALETTE.tarmac : PALETTE.grit, 0.92);
+      this.drawRoadStrip(g, road.points, road.width * 0.38, PALETTE.tarmacWear, street ? 0.22 : 0.16);
+      this.stippleRoad(g, road.points, road.width, rand);
+    }
+  }
+
+  /** Filled polyline strip with round joints — reads as a lane, not a Manhattan slab. */
+  private drawRoadStrip(
+    g: Phaser.GameObjects.Graphics,
+    points: { x: number; y: number }[],
+    width: number,
+    color: number,
+    alpha: number,
+  ): void {
+    if (points.length < 2 || width <= 0) return;
+    const hw = width / 2;
+    g.fillStyle(color, alpha);
+    g.fillCircle(points[0]!.x, points[0]!.y, hw);
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.5) continue;
+      const nx = (-dy / len) * hw;
+      const ny = (dx / len) * hw;
+      g.beginPath();
+      g.moveTo(a.x + nx, a.y + ny);
+      g.lineTo(b.x + nx, b.y + ny);
+      g.lineTo(b.x - nx, b.y - ny);
+      g.lineTo(a.x - nx, a.y - ny);
+      g.closePath();
+      g.fillPath();
+      g.fillCircle(b.x, b.y, hw);
+    }
+  }
+
+  /** Sparse grit — texture without a grid of seams. */
+  private stippleRoad(
+    g: Phaser.GameObjects.Graphics,
+    points: { x: number; y: number }[],
+    width: number,
+    rand: () => number,
+  ): void {
+    g.fillStyle(PALETTE.tarmacWear, 0.18);
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.floor(len / 36));
+      for (let k = 0; k < n; k++) {
+        const t = (k + rand()) / (n + 1);
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        const ox = (rand() - 0.5) * width * 0.55;
+        const oy = (rand() - 0.5) * width * 0.35;
+        g.fillEllipse(x + ox, y + oy, 7 + rand() * 11, 3 + rand() * 5);
       }
     }
   }
@@ -1984,44 +2020,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Cream sash/cap vs belt on the sprite — kit cue without redrawing capsules.
-   * Chevron (runner) / block (hugger) sits at the feet so a scrum still reads.
+   * Runner vs hugger at the feet — no sash/belt/collar strokes through the body.
    */
   private drawKitCue(c: RenderChar): void {
-    const g = this.markerGfx;
-    const hugger = c.build === 'hugger';
-    const pxSize = c.controlled ? PLAYER_SPRITE_PX : NPC_SPRITE_PX;
     const { x: ux, y: uy } = this.facingOf(c);
-    const px = -uy;
-    const py = ux;
-    const half = pxSize * 0.36;
-    const cueW = Math.max(2.8, pxSize * 0.08);
-    if (hugger) {
-      const bx = c.x - ux * pxSize * 0.05;
-      const by = c.y - uy * pxSize * 0.05;
-      g.lineStyle(cueW, PALETTE.kitCue, 0.95);
-      g.lineBetween(bx - px * half, by - py * half, bx + px * half, by + py * half);
-      const cx = c.x + ux * pxSize * 0.16;
-      const cy = c.y + uy * pxSize * 0.16;
-      g.lineStyle(Math.max(2.2, pxSize * 0.06), PALETTE.kitCue, 0.9);
-      g.lineBetween(
-        cx - px * half * 0.7,
-        cy - py * half * 0.7,
-        cx + px * half * 0.7,
-        cy + py * half * 0.7,
-      );
-    } else {
-      g.lineStyle(cueW, PALETTE.kitCue, 0.95);
-      g.lineBetween(
-        c.x - px * half - ux * pxSize * 0.1,
-        c.y - py * half - uy * pxSize * 0.1,
-        c.x + px * half + ux * pxSize * 0.1,
-        c.y + py * half + uy * pxSize * 0.1,
-      );
-      g.fillStyle(PALETTE.kitCue, 0.95);
-      g.fillCircle(c.x + ux * pxSize * 0.22, c.y + uy * pxSize * 0.22, Math.max(2.6, pxSize * 0.09));
-    }
-    this.drawBuildMark(c, ux, uy, px, py, c.radius * (c.controlled ? 1.22 : 1));
+    this.drawBuildMark(c, ux, uy, -uy, ux, c.radius * (c.controlled ? 1.22 : 1));
   }
 
   /** World-space glyph: chevron (runner) vs block (hugger). Survives a scrum. */
@@ -2562,7 +2565,9 @@ export class GameScene extends Phaser.Scene {
     const mill = scoringGoalMarker(this.world.player.team, this.world.map).name;
     const copy: Record<Teach, string> = {
       move: touch ? 'Stick — run' : 'WASD — run',
-      build: touch ? 'Sash = runner. Belt = hugger.' : 'Sash = runner (open). Belt = hugger (pack). Tab to switch',
+      build: touch
+        ? 'Arrow at feet = runner. Block = hugger.'
+        : 'Arrow at feet = runner (open). Block = hugger (pack). Tab to switch',
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
@@ -2584,14 +2589,15 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
-    g.fillStyle(PALETTE.mud, 0.85);
+    g.lineStyle(1.6, PALETTE.tarmac, 0.9);
     for (const road of map.roads) {
-      g.fillRect(
-        ox + (road.position.x - road.width / 2) * sx,
-        oy + (road.position.y - road.height / 2) * sy,
-        Math.max(1.2, road.width * sx),
-        Math.max(1.2, road.height * sy),
-      );
+      if (road.points.length < 2) continue;
+      g.beginPath();
+      g.moveTo(ox + road.points[0]!.x * sx, oy + road.points[0]!.y * sy);
+      for (let i = 1; i < road.points.length; i++) {
+        g.lineTo(ox + road.points[i]!.x * sx, oy + road.points[i]!.y * sy);
+      }
+      g.strokePath();
     }
     g.fillStyle(PALETTE.hedge, 0.95);
     for (const h of map.hedges) {

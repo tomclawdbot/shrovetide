@@ -32,6 +32,8 @@ export {
   isInObstacle,
   isInRiver,
   isInWater,
+  distToSegment,
+  distanceToRoad,
   isNearRoad,
   isOnBridge,
   isOnRoad,

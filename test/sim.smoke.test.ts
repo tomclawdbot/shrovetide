@@ -889,8 +889,12 @@ test('world: Down player spawns east and scores at Clifton', () => {
 
 test('map: roads link the high street and stay soft (fields stay playable)', () => {
   const map = ASHBOURNE_TOWN;
-  assert.ok(map.roads.some((r) => r.kind === 'street'), 'town cobble streets');
+  assert.ok(map.roads.some((r) => r.kind === 'street'), 'town streets');
   assert.ok(map.roads.some((r) => r.kind === 'lane'), 'millstone / bank lanes');
+  for (const r of map.roads) {
+    assert.ok(r.points.length >= 2, 'road is a polyline');
+    assert.ok(r.width > 20 && r.width < 140, 'road strip is a lane, not a slab');
+  }
 
   const northStreet = { x: 1200 * TOWN_SCALE, y: 660 * TOWN_SCALE };
   const southStreet = { x: 1230 * TOWN_SCALE, y: 1110 * TOWN_SCALE };
@@ -898,6 +902,7 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   assert.equal(isOnRoad(southStreet, map), true, 'south pubs sit on a street');
   assert.equal(isInObstacle(northStreet, map), false, 'street runs between footprints');
   assert.equal(isInObstacle(southStreet, map), false, 'south street is not inside a pub');
+  assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up sits on the centre-bridge road');
 
   for (const b of map.obstacles.filter(isBuilding)) {
     assert.ok(isNearRoad(b.position, map, 90), `${b.name} should front a road`);
@@ -909,6 +914,22 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   assert.equal(isOnRoad(field, map), false, 'SE field is off the tarmac');
   assert.equal(isWalkable(field, map), true, 'fields stay part of the game');
   assert.equal(speedMultiplierAt(field, map), 1);
+});
+
+test('map: roads are winding connectors, not dead-end grid stubs', () => {
+  const map = ASHBOURNE_TOWN;
+  const empty = [
+    { name: 'NW field', x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE },
+    { name: 'NE field', x: 2100 * TOWN_SCALE, y: 200 * TOWN_SCALE },
+    { name: 'old south-highway stub', x: 1680 * TOWN_SCALE, y: 960 * TOWN_SCALE },
+    { name: 'far SW grass', x: 180 * TOWN_SCALE, y: 1200 * TOWN_SCALE },
+  ];
+  for (const p of empty) {
+    assert.equal(isOnRoad(p, map), false, `${p.name} must not be a road to nowhere`);
+    assert.equal(isWalkable(p, map), true, `${p.name} stays playable grass`);
+  }
+  assert.equal(isOnRoad({ x: 400 * TOWN_SCALE, y: 880 * TOWN_SCALE }, map), true, 'west bridge is on the network');
+  assert.equal(isOnRoad({ x: 2000 * TOWN_SCALE, y: 880 * TOWN_SCALE }, map), true, 'east bridge is on the network');
 });
 
 test('map: street lights sit on the road network', () => {
