@@ -1009,21 +1009,17 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.equal(byKind.market!.id, 'market-hall');
   assert.equal(byKind.hall!.id, 'town-hall');
   assert.equal(byKind.trailhead!.id, 'the-baths');
-  // Art swap keys — Game Art filenames. Layout (position + collision size) stays.
-  assert.equal(byKind.church!.position.x, 250 * TOWN_SCALE);
-  assert.equal(byKind.church!.position.y, 360 * TOWN_SCALE);
-  assert.equal(byKind.school!.position.x, 740 * TOWN_SCALE);
-  assert.equal(byKind.market!.position.x, 1380 * TOWN_SCALE);
-  assert.equal(byKind.hall!.position.x, 1464 * TOWN_SCALE);
-  assert.equal(byKind.trailhead!.position.x, 1654 * TOWN_SCALE);
 
   const riverY = map.river.position.y;
   assert.ok(byKind.church!.position.y < riverY, 'church sits north of the Henmore');
   assert.ok(byKind.church!.position.x < map.width * 0.35, 'church reads on the Clifton / west side');
   assert.ok(byKind.school!.position.y < riverY, 'school sits north of the Henmore');
-  assert.ok(byKind.market!.position.y > riverY, 'market sits south of the Henmore');
+  assert.ok(byKind.market!.position.y < riverY, 'market sits north of the Henmore (historic core)');
+  assert.ok(byKind.hall!.position.y < riverY, 'town hall sits on the square, north of the brook');
   assert.ok(byKind.trailhead!.position.y < riverY, 'trailhead is on the north cutting');
   assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
+  assert.ok(byKind.church!.position.x < byKind.market!.position.x, 'St Oswald’s reads west of the square');
+  assert.ok(byKind.trailhead!.position.y < byKind.market!.position.y, 'Baths / trail sit toward the north edge');
 
   assert.ok(map.roads.some((r) => r.kind === 'trail'), 'Tissington Trail is a trail strip');
   const placeNames = map.places.map((p) => p.name);
@@ -1040,6 +1036,7 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(greenMan, 'The Green Man pub keeps its footprint');
   assert.equal(placeById['green-man']!.position.x, greenMan!.position.x);
   assert.equal(placeById['green-man']!.position.y, greenMan!.position.y);
+  assert.ok(placeById['market-place']!.position.y < riverY, 'Market Place is north of the brook');
 
   for (const goal of map.goals) {
     assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
@@ -1047,6 +1044,31 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   }
   assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up still on the centre deck');
   assert.equal(isWalkable({ x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE }, map), true, 'NW field stays playable');
+});
+
+test('map: roundabouts sit on the civic network', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.ok(map.roundabouts.length >= 1 && map.roundabouts.length <= 2, '1–2 mini-roundabouts');
+  for (const rbt of map.roundabouts) {
+    assert.ok(rbt.radius > rbt.island + 10, 'carriageway ring around the island');
+    assert.equal(isOnRoad(rbt.position, map), false, 'island is not tarmac');
+    const ring = { x: rbt.position.x + (rbt.island + rbt.radius) / 2, y: rbt.position.y };
+    assert.equal(isOnRoad(ring, map), true, 'roundabout ring is part of the network');
+  }
+});
+
+test('map: fields are hedge-bordered English parcels', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.ok(map.fields.length >= 6, `expected a field pattern, got ${map.fields.length}`);
+  for (const f of map.fields) {
+    assert.ok(f.width > 80 && f.height > 60, 'parcel is a real rectangle');
+    const interior = f.position;
+    assert.equal(isWalkable(interior, map), true, 'field interior stays playable grass');
+    assert.equal(isOnRoad(interior, map), false, 'parcel interior is not a road');
+  }
+  const se = { x: map.width * 0.70, y: map.height * 0.82 };
+  assert.equal(isWalkable(se, map), true, 'SE feel-test field stays open');
+  assert.equal(isOnRoad(se, map), false);
 });
 
 test('map: 17v17 placement stays out of walls and OOB', () => {

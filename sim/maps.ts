@@ -107,10 +107,22 @@ export interface GoalMarker {
 
 export interface Bridge extends RectZone {}
 
+/** Mini-roundabout — tarmac ring around a grass/cobble island. Visual — not collision. */
+export interface Roundabout {
+  position: Vec2Like;
+  /** Outer kerb radius. */
+  radius: number;
+  /** Central island radius. */
+  island: number;
+}
+
+/** Hedge-bordered English field parcel. Visual grass; hedges are the crawl. */
+export interface FieldParcel extends RectZone {}
+
 /** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
 export type RoadKind = 'street' | 'lane' | 'trail';
 
-/** Soft winding strip — polyline of short segments, not an axis-aligned slab. */
+/** Polyline lane. Joints are mitred in the client — keep vertices on junctions. */
 export interface RoadSegment {
   kind: RoadKind;
   /** Full width of the strip in sim px. */
@@ -135,11 +147,15 @@ export interface TownMap {
   river: RectZone;
   /** Walkable segments crossing the river. Fast movement. */
   bridges: Bridge[];
+  /** Mini-roundabouts on the lane network. Soft — same as roads. */
+  roundabouts: Roundabout[];
   /**
    * Hedgerows. Walkable at a crawl (HEDGE_SPEED_MULT) — slower than river.
    * Bridges (and any gap left between hedge rects) pierce them for routing.
    */
   hedges: RectZone[];
+  /** Rectangular English field parcels. Visual; hedges on the borders crawl. */
+  fields: FieldParcel[];
   /**
    * Soft paths between buildings and out to the millstones.
    * Not collision — hug / fields / Henmore stay playable off the tarmac.
@@ -254,7 +270,7 @@ function sroad(
   kind: RoadKind,
   width: number,
   waypoints: ReadonlyArray<readonly [number, number]>,
-  smooth = 2,
+  smooth = 0,
 ): RoadSegment {
   return {
     kind,
@@ -264,6 +280,77 @@ function sroad(
       smooth,
     ),
   };
+}
+
+function sroundabout(x: number, y: number, radius: number, island: number): Roundabout {
+  return { position: sxy(x, y), radius: sx(radius), island: sx(island) };
+}
+
+function sfield(x: number, y: number, w: number, h: number): FieldParcel {
+  return srect(x, y, w, h);
+}
+
+/** Hedge border of a rectangular parcel, with optional gaps (design-space). */
+function parcelHedges(
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  thick: number,
+  gaps: { n?: number[]; s?: number[]; e?: number[]; w?: number[] } = {},
+  gapHalf = 56,
+): RectZone[] {
+  const x0 = cx - w / 2;
+  const x1 = cx + w / 2;
+  const y0 = cy - h / 2;
+  const y1 = cy + h / 2;
+  return [
+    ...hedgeRow(y0, thick, x0, x1, gaps.n ?? [], gapHalf),
+    ...hedgeRow(y1, thick, x0, x1, gaps.s ?? [], gapHalf),
+    ...hedgeCol(x0, thick, y0, y1, gaps.w ?? [], gapHalf),
+    ...hedgeCol(x1, thick, y0, y1, gaps.e ?? [], gapHalf),
+  ];
+}
+
+/** Verge lamps along polylines + roundabout kerbs. Positions already in sim space. */
+function vergeLights(roads: RoadSegment[], roundabouts: Roundabout[]): StreetLight[] {
+  const out: StreetLight[] = [];
+  for (const r of roads) {
+    let acc = 0;
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const a = r.points[i]!;
+      const b = r.points[i + 1]!;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 8) continue;
+      const nx = -(b.y - a.y) / len;
+      const ny = (b.x - a.x) / len;
+      const verge = r.width / 2 + 10;
+      const start = acc === 0 ? 48 : 0;
+      for (let d = start; d < len; d += 150) {
+        const t = d / len;
+        const side = out.length % 2 === 0 ? 1 : -1;
+        out.push({
+          position: {
+            x: a.x + (b.x - a.x) * t + nx * verge * side,
+            y: a.y + (b.y - a.y) * t + ny * verge * side,
+          },
+        });
+      }
+      acc += len;
+    }
+  }
+  for (const rbt of roundabouts) {
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.35;
+      out.push({
+        position: {
+          x: rbt.position.x + Math.cos(a) * (rbt.radius + 14),
+          y: rbt.position.y + Math.sin(a) * (rbt.radius + 14),
+        },
+      });
+    }
+  }
+  return out;
 }
 
 /** Distance from `p` to the closest point on segment `a`–`b`. */
@@ -276,7 +363,15 @@ export function distToSegment(p: Vec2Like, a: Vec2Like, b: Vec2Like): number {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-/** Distance from `p` to the nearest road centreline. */
+/** Distance from `p` to a roundabout carriageway (0 = on the ring). */
+export function distToRoundabout(p: Vec2Like, r: Roundabout): number {
+  const d = Math.hypot(p.x - r.position.x, p.y - r.position.y);
+  if (d <= r.island) return r.island - d;
+  if (d >= r.radius) return d - r.radius;
+  return 0;
+}
+
+/** Distance from `p` to the nearest road centreline (includes roundabout rings). */
 export function distanceToRoad(p: Vec2Like, map: TownMap): number {
   let best = Infinity;
   for (const r of map.roads) {
@@ -284,6 +379,10 @@ export function distanceToRoad(p: Vec2Like, map: TownMap): number {
       const d = distToSegment(p, r.points[i]!, r.points[i + 1]!);
       if (d < best) best = d;
     }
+  }
+  for (const rbt of map.roundabouts) {
+    const d = distToRoundabout(p, rbt);
+    if (d < best) best = d;
   }
   return best;
 }
@@ -342,278 +441,262 @@ function hedgeCol(
 }
 
 // ---------------------------------------------------------------------------
-// ASHBOURNE TOWN (abstracted, 2× the TICKET 002 layout)
+// ASHBOURNE TOWN — Derbyshire market-town homage (not GPS).
 //
-// Layout is the same as 2400×1600, just farther millstones and more grass
-// between turn-up and the stones. Hedges channel north/south through the
-// three bridge lanes and east/west along the banks — slower than the river.
+// Henmore along the south edge of the historic core. Long main street and
+// triangular Market Place north of the brook. St Oswald’s west. Compton
+// crossings south toward Clifton (W) and Sturston (E). Tissington Trail
+// and tunnel on the north cutting. Mini-roundabouts at Market/Compton and
+// the trailhead. Fields are hedge-bordered rectangles outside the core.
 //
-//   ┌─────────────────────────────────────────────────────────────┐
-//   │ [St Oswald's] ══ hedge ══  [Old Grammar]   [Trail / Tunnel] │
-//   │   churchyard                                                │
-//   │      ▲ lane 1                  ▲ lane 3                      │
-//   │   ▒▒▒▒┼▒▒▒▒ HENMORE BROOK ▒▒▒▒▒▒┼▒▒▒▒                       │
-//   │      │             ▲ lane 2 (turn-up)          │              │
-//   │   ══ hedge ══                                      ══ hedge ═│
-//   │              ┌──┐  Green Man / high street                    │
-//   │              │T │  Market Place / Town Hall (south)           │
-//   │              └──┘                                             │
-//   │                              [open field]              [memorial]│
-//   └─────────────────────────────────────────────────────────────┘
-//
-//   Clifton (Down score, west) ◄── Henmore ──► Sturston (Up score, east)
+//   [Tunnel / Trail]  (R2)  [Baths]
+//   [St Oswald's]  Market Place △  [Old Grammar]     Coach
+//        churchyard   Green Man / Halls
+//              (R1) ── centre bridge / turn-up
+//   ▒▒▒▒▒▒▒▒▒▒▒ HENMORE ▒▒▒▒▒▒▒▒▒▒▒  stone bridges
+//        Compton  Vaults / White Hart
+//   Clifton ◄──────────────────────────► Sturston
 // ---------------------------------------------------------------------------
 
 const BRIDGE_XS = [400, 1200, 2000];
-/** Shoulder past each bridge so a body can run the lane without hedge-crawl. */
 const LANE_GAP_HALF = 80;
 const RIVER_GAP_HALF = 140;
+
+/** Market / Compton mini-roundabout — south of the square, on the centre crossing. */
+const MARKET_RBT = sroundabout(1200, 760, 70, 30);
+/** Trailhead mini-roundabout — Baths / Tissington / Coach. */
+const TRAIL_RBT = sroundabout(1660, 300, 56, 24);
+
+const TOWN_ROUNDABOUTS: Roundabout[] = [MARKET_RBT, TRAIL_RBT];
+
+const TOWN_ROADS: RoadSegment[] = [
+  // St John / high street west — church through George to R1 west entry.
+  sroad('street', 50, [
+    [320, 530],
+    [420, 560],
+    [580, 630],
+    [740, 670],
+    [920, 720],
+    [1130, 760],
+  ]),
+  // R1 north arm through Market Place (keeps 1200,660 on tarmac).
+  sroad('street', 48, [
+    [1200, 690],
+    [1200, 660],
+    [1200, 620],
+    [1140, 600],
+    [1080, 590],
+  ]),
+  // Market Place frontage — Green Man / halls, T-joins the north arm.
+  sroad('street', 46, [
+    [980, 650],
+    [1080, 630],
+    [1140, 620],
+    [1240, 610],
+    [1260, 600],
+  ]),
+  // R1 east — Station Stores toward the east (Sturston) bridge.
+  sroad('street', 48, [
+    [1270, 760],
+    [1420, 720],
+    [1520, 680],
+    [1640, 660],
+    [1840, 720],
+    [2000, 830],
+    [2000, 880],
+  ]),
+  // R1 south — Compton crossing / turn-up deck / south street.
+  sroad('street', 48, [
+    [1200, 830],
+    [1200, 880],
+    [1200, 1040],
+    [1230, 1110],
+    [1280, 1160],
+  ]),
+  // Clifton millstone → west bridge (hedge corridor — keep straight).
+  sroad('lane', 48, [
+    [150, 790],
+    [250, 790],
+    [320, 790],
+    [400, 790],
+    [400, 880],
+  ]),
+  // West T — bridge north into the high street at (580, 630).
+  sroad('lane', 42, [
+    [400, 848],
+    [500, 720],
+    [580, 630],
+  ]),
+  // West T — bridge south to The Wheel.
+  sroad('lane', 42, [
+    [400, 912],
+    [520, 1100],
+    [600, 1280],
+  ]),
+  // Compton west — Wheel along to the south street sample (1230, 1110).
+  sroad('lane', 42, [
+    [600, 1280],
+    [860, 1180],
+    [1080, 1120],
+    [1230, 1110],
+  ]),
+  // Sturston millstone → east bridge.
+  sroad('lane', 48, [
+    [2250, 790],
+    [2168, 790],
+    [2080, 790],
+    [2000, 790],
+    [2000, 880],
+  ]),
+  // Church gate — high street west up to St Oswald's (stops short of the yard).
+  sroad('lane', 36, [
+    [320, 530],
+    [280, 510],
+    [240, 500],
+  ]),
+  // Old Grammar — north off the high street.
+  sroad('lane', 36, [
+    [740, 670],
+    [720, 600],
+    [700, 540],
+  ]),
+  // Tissington Trail — tunnel to R2 north entry.
+  sroad('trail', 34, [
+    [1660, 48],
+    [1660, 140],
+    [1660, 244],
+  ]),
+  // R2 east — Baths/Coach, then south to join the east high street at (1640, 660).
+  sroad('lane', 42, [
+    [1716, 300],
+    [1820, 360],
+    [1740, 500],
+    [1640, 660],
+  ]),
+  // R2 south stub onto the Coach lane (three-arm mini-roundabout).
+  sroad('lane', 40, [
+    [1660, 356],
+    [1680, 380],
+    [1820, 360],
+  ]),
+];
+
+const TOWN_FIELDS: FieldParcel[] = [
+  sfield(520, 300, 400, 240),
+  sfield(980, 220, 360, 180),
+  sfield(2140, 420, 400, 320),
+  sfield(1980, 160, 280, 200),
+  sfield(260, 1280, 200, 200),
+  sfield(1320, 1320, 300, 250),
+  sfield(1700, 1320, 420, 260),
+  sfield(2140, 1200, 360, 240),
+  sfield(820, 1360, 280, 180),
+  sfield(280, 1040, 260, 160),
+];
+
+const TOWN_HEDGES: RectZone[] = [
+  ...parcelHedges(520, 300, 400, 240, 18),
+  ...parcelHedges(980, 220, 360, 180, 16, { s: [980] }),
+  ...parcelHedges(2140, 420, 400, 320, 18),
+  ...parcelHedges(1980, 160, 280, 200, 16, { w: [160] }),
+  ...parcelHedges(260, 1280, 200, 200, 18),
+  ...parcelHedges(1320, 1320, 300, 250, 18, { n: [1320], e: [1320], w: [1320] }, 80),
+  ...parcelHedges(1700, 1320, 420, 260, 18, { n: [1700], w: [1320], e: [1700] }, 80),
+  ...parcelHedges(2140, 1200, 360, 240, 18),
+  ...parcelHedges(820, 1360, 280, 180, 16, { n: [820] }),
+  ...parcelHedges(280, 1040, 260, 160, 16, { e: [1040] }),
+  ...hedgeRow(1480, 28, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
+  ...hedgeCol(360, 22, 620, 1120, [790, 880], RIVER_GAP_HALF),
+  ...hedgeCol(2080, 22, 520, 1120, [790, 880], RIVER_GAP_HALF),
+  // Goal approaches — hedges flank the millstone lanes, clear of the stones.
+  srect(355, 754, 270, 22),
+  srect(355, 826, 270, 18),
+  srect(2045, 754, 270, 22),
+  srect(2045, 826, 270, 18),
+  srect(300, 980, 200, 28),
+  srect(2100, 980, 200, 28),
+];
+
+function townLamps(): StreetLight[] {
+  const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
+  const riverY = sx(880);
+  const riverH = sx(58);
+  const decks = [sx(400), sx(1200), sx(2000)];
+  const stones = [sxy(140, 790), sxy(2260, 790)];
+  const extra = [
+    slight(400, 766),
+    slight(2000, 766),
+    slight(1200, 808),
+    slight(1200, 952),
+    slight(1660, 160),
+    slight(1140, 640),
+  ];
+  return [...lamps, ...extra].filter((l) => {
+    const inRiver = Math.abs(l.position.y - riverY) < riverH;
+    const onDeck = decks.some((bx) => Math.abs(l.position.x - bx) < sx(80));
+    if (inRiver && !onDeck) return false;
+    for (const g of stones) {
+      if (Math.hypot(l.position.x - g.x, l.position.y - g.y) < 48) return false;
+    }
+    return true;
+  });
+}
 
 export const ASHBOURNE_TOWN: TownMap = {
   width: sx(2400),
   height: sx(1600),
 
-  // High street — named Ashbourne pubs/shops. Rectangles the bodies cannot pass.
-  // Positions are center-of-rect, in the original 2400×1600 design space.
-  // Keep the turn-up corridor and millstone approaches open.
   obstacles: [
-    // North of the Henmore: town core / St John Street flavour
-    sbuilding(1080, 600, 90, 90, 'The Green Man', 'pub'),
-    sbuilding(1220, 560, 110, 70, 'Gingerbread Shop', 'shop'),
-    sbuilding(1340, 620, 80, 80, 'The Horns', 'pub'),
-    sbuilding(1160, 720, 100, 60, "Smith's Butcher", 'shop'),
-    sbuilding(920, 640, 84, 70, 'The George & Dragon', 'pub'),
-    sbuilding(1480, 680, 90, 64, 'Station Stores', 'shop'),
-    // South of the river (between turn-up bridge and Down'Ards half)
-    sbuilding(1080, 1080, 100, 80, 'The Vaults', 'pub'),
-    sbuilding(1260, 1140, 90, 90, 'The White Hart', 'pub'),
-    slandmark(1380, 1080, 78, 112, 'Market Hall', 'market'),
-    slandmark(1464, 1088, 72, 86, 'Town Hall', 'hall'),
-    // Flank inns — readable from a millstone run, not blocking the stones
+    // Historic core — north of the Henmore / Market Place.
+    sbuilding(1000, 660, 90, 90, 'The Green Man', 'pub'),
+    sbuilding(1100, 560, 110, 70, 'Gingerbread Shop', 'shop'),
+    sbuilding(1280, 660, 80, 80, 'The Horns', 'pub'),
+    sbuilding(1040, 710, 100, 60, "Smith's Butcher", 'shop'),
+    sbuilding(840, 640, 84, 70, 'The George & Dragon', 'pub'),
+    sbuilding(1520, 640, 90, 64, 'Station Stores', 'shop'),
+    // Compton — south of the brook.
+    sbuilding(1100, 1080, 100, 80, 'The Vaults', 'pub'),
+    sbuilding(1280, 1160, 90, 90, 'The White Hart', 'pub'),
+    slandmark(1080, 580, 78, 112, 'Market Hall', 'market'),
+    slandmark(1260, 590, 72, 86, 'Town Hall', 'hall'),
     sbuilding(600, 1280, 90, 70, 'The Wheel', 'pub'),
-    sbuilding(1820, 320, 110, 80, 'The Coach & Horses', 'pub'),
-    // Civic landmarks — homage names, not crests or street addresses.
-    slandmark(250, 360, 118, 86, "St Oswald's", 'church'),
-    slandmark(740, 400, 150, 72, 'Old Grammar', 'school'),
-    slandmark(1654, 228, 78, 64, 'The Baths', 'trailhead'),
+    sbuilding(1820, 360, 110, 80, 'The Coach & Horses', 'pub'),
+    slandmark(220, 500, 118, 86, "St Oswald's", 'church'),
+    slandmark(700, 540, 150, 72, 'Old Grammar', 'school'),
+    slandmark(1700, 200, 78, 64, 'The Baths', 'trailhead'),
   ],
 
-  // OOB — players & ball physically can't enter (well, ball gets bounced back).
   outOfBounds: [
-    // Churchyard (top-left)
-    srect(180, 180, 220, 220),
-    // Memorial garden (bottom-right)
+    srect(180, 240, 200, 200),
     srect(2220, 1420, 220, 220),
   ],
 
-  // River — runs roughly horizontal through the middle.
   river: srect(1200, 880, 2400, 120),
 
-  // Bridges — walkable cuts across the river. Fast movement (not slowed).
   bridges: [
-    srect(400, 880, 110, 120),
-    srect(1200, 880, 110, 120),
-    srect(2000, 880, 110, 120),
+    srect(400, 880, 150, 140),
+    srect(1200, 880, 150, 140),
+    srect(2000, 880, 150, 140),
   ],
 
-  // Hedgerows — thicker crawl than water. Gaps line up with the three bridges
-  // so play is channelled, not sealed. Rows sit outside the 0.18–0.46 /
-  // 0.62–0.84 placement bands so 17v17 does not spawn inside a crawl.
-  hedges: [
-    ...hedgeRow(200, 36, 80, 2320, [...BRIDGE_XS, 1680], LANE_GAP_HALF),
-    ...hedgeRow(1480, 36, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
-    // Starts south of the church/school lanes so those stubs are not a hedge crawl.
-    ...hedgeCol(360, 28, 600, 1460, [880], RIVER_GAP_HALF),
-    ...hedgeCol(2080, 28, 320, 1280, [880], RIVER_GAP_HALF),
-    // Goal approaches — hedges flank the millstone lanes, clear of the stones.
-    srect(355, 754, 270, 22),
-    srect(355, 826, 270, 18),
-    srect(2045, 754, 270, 22),
-    srect(2045, 826, 270, 18),
-    // South-bank channeling — keep the centre turn-up corridor open for kickoff.
-    srect(300, 980, 200, 28),
-    srect(2100, 980, 200, 28),
-  ],
+  roundabouts: TOWN_ROUNDABOUTS,
 
-  // Winding market-town lanes. Pubs/shops ↔ bridges ↔ millstones ↔ turn-up.
-  // Soft — no collision. Hedge-flanked approaches stay straight so the stones read.
-  roads: [
-    // St John flavour — north high street through the pubs, hook at Gingerbread.
-    sroad('street', 48, [
-      [900, 680],
-      [1000, 648],
-      [1080, 658],
-      [1160, 672],
-      [1200, 660],
-      [1224, 598],
-      [1288, 638],
-      [1348, 668],
-      [1420, 692],
-      [1500, 708],
-    ]),
-    // Butcher yard down to the turn-up bridge.
-    sroad('street', 44, [
-      [1160, 672],
-      [1168, 736],
-      [1192, 808],
-      [1200, 868],
-    ]),
-    // Centre bridge deck — high street meets south market at the plinth.
-    sroad('street', 46, [
-      [1200, 848],
-      [1200, 880],
-      [1200, 912],
-    ], 0),
-    // South market — Vaults, White Hart, Market Hall.
-    sroad('street', 48, [
-      [1040, 1098],
-      [1140, 1122],
-      [1230, 1110],
-      [1272, 1160],
-      [1348, 1124],
-      [1408, 1094],
-    ]),
-    // South market up to the turn-up bridge.
-    sroad('street', 44, [
-      [1230, 1110],
-      [1208, 1036],
-      [1214, 978],
-      [1200, 918],
-    ]),
-    // Clifton millstone → west bridge (hedge corridor — keep straight).
-    sroad('lane', 48, [
-      [150, 790],
-      [250, 790],
-      [320, 790],
-      [400, 790],
-      [400, 880],
-    ], 0),
-    // West bridge up into the high street at the George.
-    sroad('lane', 42, [
-      [400, 848],
-      [508, 758],
-      [668, 712],
-      [808, 692],
-      [900, 680],
-    ]),
-    // West bridge down to The Wheel.
-    sroad('lane', 42, [
-      [400, 912],
-      [458, 1024],
-      [528, 1148],
-      [584, 1244],
-      [600, 1280],
-    ]),
-    // The Wheel along to the south market.
-    sroad('lane', 42, [
-      [600, 1280],
-      [728, 1222],
-      [888, 1158],
-      [1040, 1098],
-    ]),
-    // Sturston millstone → east bridge (hedge corridor — keep straight).
-    sroad('lane', 48, [
-      [2250, 790],
-      [2168, 790],
-      [2080, 790],
-      [2000, 790],
-      [2000, 880],
-    ], 0),
-    // Coach & Horses down to Station Stores (no stub into empty grass).
-    sroad('lane', 42, [
-      [1820, 338],
-      [1764, 418],
-      [1684, 528],
-      [1584, 628],
-      [1500, 708],
-    ]),
-    // Station Stores along to the east bridge / Sturston approach.
-    sroad('lane', 42, [
-      [1500, 708],
-      [1624, 724],
-      [1768, 756],
-      [1912, 778],
-      [2000, 828],
-      [2000, 880],
-    ]),
-    // Church gate — west-bridge lane up to St Oswald's (stops short of the yard).
-    sroad('lane', 36, [
-      [508, 758],
-      [400, 580],
-      [300, 440],
-      [250, 380],
-    ]),
-    // Old Grammar — north off the George / west-bridge lane.
-    sroad('lane', 36, [
-      [668, 712],
-      [710, 540],
-      [740, 420],
-    ]),
-    // Tissington Trail — former railway cutting, joins the Coach lane.
-    sroad('trail', 34, [
-      [1630, 48],
-      [1650, 140],
-      [1688, 240],
-      [1740, 340],
-      [1764, 418],
-    ]),
-    // Market Place east — Town Hall fronts the same square as Market Hall.
-    sroad('street', 40, [
-      [1408, 1094],
-      [1464, 1088],
-    ], 0),
-  ],
+  hedges: TOWN_HEDGES,
 
-  // Verge lamps — sit on the new lanes, not in the Henmore, not on the stones.
-  streetLights: [
-    slight(900, 700),
-    slight(1080, 678),
-    slight(1210, 640),
-    slight(1348, 688),
-    slight(1488, 728),
-    slight(1180, 760),
-    slight(1220, 828),
-    slight(1060, 1118),
-    slight(1236, 1132),
-    slight(1388, 1112),
-    slight(1210, 1020),
-    slight(280, 766),
-    slight(400, 766),
-    slight(520, 742),
-    slight(760, 704),
-    slight(460, 1028),
-    slight(568, 1212),
-    slight(792, 1196),
-    slight(2200, 766),
-    slight(2000, 766),
-    slight(1788, 380),
-    slight(1688, 536),
-    slight(1704, 740),
-    slight(1916, 792),
-    slight(1200, 808),
-    slight(1200, 952),
-    slight(428, 968),
-    slight(360, 540),
-    slight(268, 400),
-    slight(708, 548),
-    slight(736, 428),
-    slight(1660, 160),
-    slight(1728, 320),
-    slight(1460, 1096),
-  ],
+  fields: TOWN_FIELDS,
+
+  roads: TOWN_ROADS,
+
+  streetLights: townLamps(),
 
   places: [
-    smark(720, 818, 'Henmore Brook', 'brook'),
-    smark(1288, 1104, 'Market Place', 'plaza'),
-    smark(1708, 168, 'Tissington Trail', 'trail'),
-    smark(1630, 52, 'The Tunnel', 'tunnel'),
-    smark(1080, 600, 'Green Man', 'inn-sign'),
+    smark(640, 818, 'Henmore Brook', 'brook'),
+    smark(1140, 640, 'Market Place', 'plaza'),
+    smark(1670, 150, 'Tissington Trail', 'trail'),
+    smark(1660, 48, 'The Tunnel', 'tunnel'),
+    smark(1000, 660, 'Green Man', 'inn-sign'),
   ],
 
-  // Millstones sit on the north bank (river spans design y 820–940), inland
-  // of the sideline pad so a body can stand inside GOAL_REACH without wall-clamping.
-  // Clifton (west / left) is the Down'Ards scoring mill; Sturston (east / right)
-  // is the Up'Ards scoring mill — Ashbourne geography, not a colour invert.
   goals: [
     { team: 0, name: MILL_CLIFTON, position: sxy(140, 790) },
     { team: 1, name: MILL_STURSTON, position: sxy(2260, 790) },
@@ -623,7 +706,7 @@ export const ASHBOURNE_TOWN: TownMap = {
 };
 
 // ---------------------------------------------------------------------------
-// Zone helpers — — used by physics + AI + UI.
+// Zone helpers — used by physics + AI + UI.
 // ---------------------------------------------------------------------------
 
 /** Point-in-rectangle test (inclusive bounds). */
@@ -683,6 +766,9 @@ export function isOnRoad(p: Vec2Like, map: TownMap): boolean {
       if (distToSegment(p, r.points[i]!, r.points[i + 1]!) <= half) return true;
     }
   }
+  for (const rbt of map.roundabouts) {
+    if (distToRoundabout(p, rbt) === 0) return true;
+  }
   return false;
 }
 
@@ -693,6 +779,9 @@ export function isNearRoad(p: Vec2Like, map: TownMap, pad = 24): boolean {
     for (let i = 0; i < r.points.length - 1; i++) {
       if (distToSegment(p, r.points[i]!, r.points[i + 1]!) <= reach) return true;
     }
+  }
+  for (const rbt of map.roundabouts) {
+    if (distToRoundabout(p, rbt) <= pad) return true;
   }
   return false;
 }
