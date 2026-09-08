@@ -38,13 +38,15 @@ export interface Circle {
  */
 export type BuildingKind = 'pub' | 'shop' | 'church' | 'school' | 'market' | 'hall' | 'trailhead';
 
-export const CIVIC_KINDS: readonly BuildingKind[] = [
+export const CIVIC_KINDS = [
   'church',
   'school',
   'market',
   'hall',
   'trailhead',
-];
+] as const satisfies readonly BuildingKind[];
+
+export type CivicKind = (typeof CIVIC_KINDS)[number];
 
 export interface Building extends RectZone {
   name: string;
@@ -69,8 +71,8 @@ export function isBuilding(o: Obstacle): o is Building {
   return 'kind' in o && 'name' in o;
 }
 
-export function isCivicBuilding(o: Obstacle): o is Building {
-  return isBuilding(o) && CIVIC_KINDS.includes(o.kind);
+export function isCivicBuilding(o: Obstacle): o is Building & { kind: CivicKind } {
+  return isBuilding(o) && (CIVIC_KINDS as readonly BuildingKind[]).includes(o.kind);
 }
 
 /** Homage slug — art key, not a trademark or street address. */

@@ -50,6 +50,7 @@ export {
   type Bridge,
   type Building,
   type BuildingKind,
+  type CivicKind,
   type Circle,
   type PlaceKind,
   type PlaceMark,
