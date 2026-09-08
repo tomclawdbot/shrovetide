@@ -2020,37 +2020,39 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Runner vs hugger at the feet — no sash/belt/collar strokes through the body.
+   * Runner vs hugger sits just behind the sprite — never a sash through the torso.
    */
   private drawKitCue(c: RenderChar): void {
     const { x: ux, y: uy } = this.facingOf(c);
-    this.drawBuildMark(c, ux, uy, -uy, ux, c.radius * (c.controlled ? 1.22 : 1));
+    const pxSize = c.controlled ? PLAYER_SPRITE_PX : NPC_SPRITE_PX;
+    this.drawBuildMark(c, ux, uy, -uy, ux, pxSize);
   }
 
-  /** World-space glyph: chevron (runner) vs block (hugger). Survives a scrum. */
+  /** World-space glyph: chevron (runner) vs block (hugger). Outside the body. */
   private drawBuildMark(
     c: RenderChar,
     ux: number,
     uy: number,
     px: number,
     py: number,
-    r: number,
+    pxSize: number,
   ): void {
     const g = this.markerGfx;
-    const mx = c.x - ux * r * 0.95;
-    const my = c.y - uy * r * 0.95;
-    const s = Math.max(5.5, r * 0.42);
-    g.fillStyle(PALETTE.kitCue, c.controlled ? 1 : 0.92);
-    g.lineStyle(1.6, PALETTE.ballEdge, 0.9);
+    const dist = pxSize * 0.58;
+    const mx = c.x - ux * dist;
+    const my = c.y - uy * dist;
+    const s = Math.max(4.2, pxSize * 0.13);
+    g.fillStyle(PALETTE.kitCue, c.controlled ? 0.95 : 0.82);
+    g.lineStyle(1.4, PALETTE.ballEdge, 0.95);
     if (c.build === 'hugger') {
-      const half = s * 0.72;
+      const half = s * 0.62;
       g.fillRect(mx - half, my - half, half * 2, half * 2);
       g.strokeRect(mx - half, my - half, half * 2, half * 2);
     } else {
-      const tipX = mx + ux * s * 1.15;
-      const tipY = my + uy * s * 1.15;
-      const backX = mx - ux * s * 0.55;
-      const backY = my - uy * s * 0.55;
+      const tipX = mx + ux * s * 0.35;
+      const tipY = my + uy * s * 0.35;
+      const backX = mx - ux * s * 0.85;
+      const backY = my - uy * s * 0.85;
       g.fillTriangle(
         tipX,
         tipY,
