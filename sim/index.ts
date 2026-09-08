@@ -112,6 +112,7 @@ export {
   beginPlayerReleaseWindow,
   isOpposingPickupBlocked,
   PASS_PICKUP_IMMUNITY_TICKS,
+  PASS_GHOST_TICKS,
   PLAYER_RELEASE_OPP_PICKUP_TICKS,
   PICKUP_PADDING,
   RELEASE_CLEARANCE,

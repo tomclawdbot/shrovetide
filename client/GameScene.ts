@@ -38,7 +38,7 @@ import {
   type World,
 } from '../sim/index.js';
 import { canvasSafePad, unlockAudio } from './shell.js';
-import { TouchControls } from './touch.js';
+import { resolveKickAim, shouldCommitAim, TouchControls } from './touch.js';
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS_PER_FRAME = 2;
@@ -1181,9 +1181,7 @@ export class GameScene extends Phaser.Scene {
     this.isPassing = true;
     this.passChargeStartedAt = this.now();
     this.inputState.charging = true;
-    const aimLen = Math.hypot(this.lastAim.x, this.lastAim.y);
-    this.inputState.passAim =
-      aimLen > 0 ? { x: this.lastAim.x / aimLen, y: this.lastAim.y / aimLen } : { x: 1, y: 0 };
+    this.inputState.passAim = this.kickAimUnit();
     if (this.teach === 'kick') this.teach = 'sprint';
   }
 
@@ -1203,8 +1201,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const chargeSeconds = (this.now() - this.passChargeStartedAt) / 1000;
-    const moving = this.inputState.move.x !== 0 || this.inputState.move.y !== 0;
-    const aim = moving ? { ...this.inputState.move } : { ...this.lastAim };
+    const aim = this.kickAimUnit();
     const aimLen = Math.hypot(aim.x, aim.y);
     if (aimLen > 0) {
       this.kickJuice = {
@@ -1473,6 +1470,7 @@ export class GameScene extends Phaser.Scene {
     this.markerGfx?.destroy();
     this.worldObjs = this.worldObjs.filter((o) => o.active);
     this.world = createWorld({ playerTeam: team, difficulty: this.difficulty });
+    this.lastAim = team === 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
     this.cameras.main.setBounds(0, 0, this.world.map.width, this.world.map.height);
     this.createSprites();
     this.placeTargetId = this.world.npcs.find((n) => n.team === team)?.id ?? null;
@@ -1624,8 +1622,8 @@ export class GameScene extends Phaser.Scene {
       my = this.touch.move.y;
     }
     const len = Math.hypot(mx, my);
-    if (len > 0) {
-      this.lastAim = { x: mx, y: my };
+    if (shouldCommitAim({ x: mx, y: my })) {
+      this.lastAim = { x: mx / len, y: my / len };
       if (this.teach === 'move' && this.flow === 'playing') this.teach = 'ball';
     }
     this.inputState.move = { x: mx, y: my };
@@ -1636,7 +1634,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isPassing && !this.world.player.hasBall) this.clearPassCharge();
     if (this.inputState.sprint && this.teach === 'sprint') this.teach = 'breath';
     if (this.inputState.charging) {
-      this.inputState.passAim = len > 0 ? { x: mx, y: my } : { ...this.lastAim };
+      this.inputState.passAim = this.kickAimUnit();
     }
   }
 
@@ -1762,12 +1760,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private kickAimUnit(): { x: number; y: number } {
-    const a = this.inputState.passAim;
-    const len = Math.hypot(a.x, a.y);
-    if (len > 0.01) return { x: a.x / len, y: a.y / len };
-    const l = this.lastAim;
-    const ll = Math.hypot(l.x, l.y) || 1;
-    return { x: l.x / ll, y: l.y / ll };
+    return resolveKickAim(this.inputState.move, this.lastAim, this.controlledFacing());
+  }
+
+  /** Facing the runner is pointed, or the team's scoring-end default. */
+  private controlledFacing(): { x: number; y: number } {
+    const stored = this.lastFacing.get(this.world.player.id);
+    if (stored) return stored;
+    return this.world.player.team === 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
   }
 
   private drawAimArrow(

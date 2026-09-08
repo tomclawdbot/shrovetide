@@ -135,10 +135,10 @@ export interface World extends SimState {
   _ripPressure: number;
   /** Ticks of Rip grace left after a jostle leaves Rip range. */
   _ripGraceTicks: number;
-  /** While `tick < this`, the popped stone is a sensor so it cannot re-glue. */
+  /** While `tick < this`, a just-ripped or kicked stone is a sensor so it cannot re-glue. */
   _ripGhostUntilTick: number;
   /**
-   * After a player Rip/kick, opposing chase cannot claim until this tick.
+   * After a player Rip/kick, NPC chase cannot claim until this tick.
    * Time-gated breakaway window — not a permanent AI nerf.
    */
   _oppPickupBlockedUntilTick: number;
@@ -535,9 +535,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
 
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);
-  // A just-ripped stone stays a sensor for a few ticks so the scrum cannot
-  // bounce it straight back into the bodies it left. Airborne throw-up is
-  // also a sensor so the stone flies over the packing hug.
+  // A just-ripped or kicked stone stays a sensor for a few ticks so the scrum
+  // cannot bounce it straight back into the bodies it left. Airborne throw-up
+  // is also a sensor so the stone flies over the packing hug.
   if (world.tick < world._ripGhostUntilTick || isBallAirborne(world)) {
     setBallSensor(physics, true);
   }

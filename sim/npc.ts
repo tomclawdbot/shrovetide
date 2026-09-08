@@ -293,8 +293,11 @@ function pickTarget(
   }
 
   // Loose stone: swarm at the turn-up; once it squirts, shepherd the scoring end.
+  // During the player kick/Rip window, opposing chase must not drive the stone
+  // back toward their mill — that read as snap-back even without a claim.
   if (npc.role === 'chase') {
-    if (!isTurnUpSwarm(world) && isShepherding(npc, world)) {
+    const oppWindow = isOpponent(npc, world) && isOpposingPickupBlocked(world);
+    if (!oppWindow && !isTurnUpSwarm(world) && isShepherding(npc, world)) {
       return shepherdTarget(npc, world, scoreAt);
     }
     return world.ball.position;
