@@ -18,11 +18,12 @@ export const HUGGER_SPEED_MULT = 0.82;
 export const RUNNER_HUG_STAMINA_MULT = 1.5;
 export const HUGGER_HUG_STAMINA_MULT = 0.55;
 
-/** Packed-hug shove authority multiplier (higher = pushes the scrum more). */
-export const RUNNER_SHOVE_MULT = 0.75;
+/** Packed-hug shove authority multiplier (higher = pushes the scrum more).
+ * Runner open-speed × this must lose to a hugger in the pack so switching is felt. */
+export const RUNNER_SHOVE_MULT = 0.62;
 export const HUGGER_SHOVE_MULT = 1.45;
 
-/** Draw scale hint for the client (runners leaner, huggers thicker). */
+/** Physics radius scale vs baseline (runners leaner, huggers thicker). Client kit/silhouette is the readable cue. */
 export const RUNNER_RADIUS_MULT = 0.92;
 export const HUGGER_RADIUS_MULT = 1.08;
 

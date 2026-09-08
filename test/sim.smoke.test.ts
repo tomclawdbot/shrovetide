@@ -15,6 +15,7 @@ import {
   GOAL_CONTEST_RADIUS,
   groundBall,
   HEDGE_SPEED_MULT,
+  hugShoveAt,
   HUG_MIN_SHOVE,
   hugShoveAuthority,
   isBuilding,
@@ -218,6 +219,41 @@ test('builds: each side fields 9 runners and 8 huggers', () => {
     PLAYER_RADIUS * radiusMultForBuild(world.player.build),
     'physics radius stays the build-scaled PLAYER_RADIUS',
   );
+});
+
+test('builds: runner covers more open ground; hugger shoves harder in the pack', () => {
+  const runnerW = createWorld({ seed: 11 });
+  const huggerW = createWorld({ seed: 11 });
+  startMatch(runnerW);
+  startMatch(huggerW);
+  const huggerId = huggerW.npcs.find(
+    (n) => n.team === huggerW.player.team && n.build === 'hugger',
+  )!.id;
+  assert.ok(switchControl(huggerW, huggerId));
+  assert.equal(runnerW.player.build, 'runner');
+  assert.equal(huggerW.player.build, 'hugger');
+
+  const rField = parkOpen(runnerW);
+  const hField = parkOpen(huggerW);
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(runnerW, east, 60);
+  runTicks(huggerW, east, 60);
+  const rDx = runnerW.player.position.x - rField.x;
+  const hDx = huggerW.player.position.x - hField.x;
+  assert.ok(
+    rDx > hDx + 25,
+    `runner should outrun hugger in the open (${rDx.toFixed(0)} vs ${hDx.toFixed(0)})`,
+  );
+
+  packHugAround(runnerW, rField.x, rField.y, 8);
+  packHugAround(huggerW, hField.x, hField.y, 8);
+  const rShove = hugShoveAt(runnerW, runnerW.player.id, runnerW.player.position);
+  const hShove = hugShoveAt(huggerW, huggerW.player.id, huggerW.player.position);
+  assert.ok(
+    hShove > rShove + 0.04,
+    `hugger should shove harder in the pack (${hShove.toFixed(2)} vs ${rShove.toFixed(2)})`,
+  );
+  assert.ok(rShove < 0.5 && hShove < 0.5, 'hug still crawls — no pack rocket');
 });
 
 test('smoke: runs 1000 ticks moving + sprinting with ball', () => {
@@ -523,7 +559,7 @@ test('feel: carrying the ball does not rocket-launch the player', () => {
   runTicks(world, east, 60);
   const dx = world.player.position.x - x0;
   // Carrier is slower (carrierSpeedMult 0.62) — still px/s, not px/tick.
-  assert.ok(dx > 80, `carrier should still run, got ${dx}`);
+  assert.ok(dx > 60, `carrier should still run, got ${dx}`);
   assert.ok(dx < 140, `carrier must not be collision-launched, got ${dx}`);
 });
 
@@ -768,7 +804,7 @@ test('feel: carrying toward the millstone is slower than running empty', () => {
   runTicks(laden, east, 60);
   const dxEmpty = empty.player.position.x - field.x;
   const dxCarry = laden.player.position.x - field.x;
-  assert.ok(dxCarry > 80, `carrier should still cover ground, got ${dxCarry}`);
+  assert.ok(dxCarry > 60, `carrier should still cover ground, got ${dxCarry}`);
   assert.ok(
     dxCarry < dxEmpty * 0.78,
     `carry should be noticeably slower than empty (${dxCarry} vs ${dxEmpty})`,

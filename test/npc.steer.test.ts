@@ -28,7 +28,6 @@ import {
   PLAYER_MAX_SPEED,
   SPRINT_SPEED_MULT,
   MOVEMENT,
-  NPC_MAX_SPEED,
   type Input,
   type NPC,
   type World,
@@ -356,7 +355,7 @@ test('npc: carrier drive stays under the player-Sprint budget (no rocket)', () =
     `NPC carrier mean ${mean.toFixed(1)} px/s must stay under Sprint budget ${budget.toFixed(1)}`,
   );
   assert.ok(dist > 40, `carrier should still progress, dist=${dist.toFixed(0)}`);
-  const authored = NPC_MAX_SPEED * MOVEMENT.carrierSpeedMult * 1.05;
+  const authored = carrier.maxSpeed * MOVEMENT.carrierSpeedMult * 1.05;
   assert.ok(
     mean < authored + 20,
     `carrier should sit near the authored carry cap (~${authored.toFixed(0)}), got ${mean.toFixed(1)}`,
@@ -530,7 +529,7 @@ test('npc: chasing a loose stone spends Breath; spent Breath kills the burst', (
     `spent Breath must drop the cap (${capSpent.toFixed(0)} vs ${capFresh.toFixed(0)})`,
   );
   assert.ok(
-    Math.abs(capSpent - NPC_MAX_SPEED * EXHAUSTED_SPEED_MULT) < 8,
+    Math.abs(capSpent - hunter.maxSpeed * EXHAUSTED_SPEED_MULT) < 8,
     `spent chase cap should sit on exhausted walk, got ${capSpent.toFixed(1)}`,
   );
 });
