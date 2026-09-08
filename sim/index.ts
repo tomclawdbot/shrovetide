@@ -19,6 +19,7 @@ export type {
 
 export {
   ASHBOURNE_TOWN,
+  CIVIC_KINDS,
   HEDGE_SPEED_MULT,
   MILL_CLIFTON,
   MILL_STURSTON,
@@ -27,6 +28,8 @@ export {
   goalFor,
   goalMarkerFor,
   isBuilding,
+  isCivicBuilding,
+  landmarkId,
   isInHedge,
   isInHedgeSlow,
   isInObstacle,
@@ -47,7 +50,10 @@ export {
   type Bridge,
   type Building,
   type BuildingKind,
+  type CivicKind,
   type Circle,
+  type PlaceKind,
+  type PlaceMark,
   type GoalMarker,
   type MillName,
   type Obstacle,

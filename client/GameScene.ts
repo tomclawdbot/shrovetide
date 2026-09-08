@@ -14,6 +14,7 @@ import {
   countHugNeighbors,
   hugPackExtent,
   isBuilding,
+  isCivicBuilding,
   isBallAirborne,
   isCarrierAtOpponentGoal,
   isInHugZone,
@@ -35,6 +36,7 @@ import {
   npcRipContest,
   wrestleMode,
   type Build,
+  type Building,
   type Difficulty,
   type Input,
   type Obstacle,
@@ -98,8 +100,23 @@ const PALETTE = {
   lampHead: 0x3a3428,
   lampGlass: 0x6a5a40,
   lampGlow: 0xffe08a,
-  church: 0x6e6a62,
+  church: 0x7a7670,
+  churchAshlar: 0x8c8880,
   churchRoof: 0x3a3834,
+  churchSpire: 0x2e2c28,
+  schoolBrick: 0x8a4034,
+  schoolStone: 0x9a8a78,
+  schoolRoof: 0x3a2a22,
+  hallStone: 0x7a7064,
+  hallRoof: 0x3a3228,
+  marketArch: 0x5a4a3a,
+  trail: 0x6b5340,
+  trailWear: 0x4a3a2c,
+  trailEdge: 0x8a6a4a,
+  tunnelDark: 0x1a1612,
+  tunnelRing: 0x4a443c,
+  greenMan: 0x3a6a32,
+  bathsBlue: 0x3a6a78,
   window: 0x2a4050,
   windowLite: 0x8ab0c4,
   door: 0x2a1810,
@@ -707,26 +724,31 @@ export class GameScene extends Phaser.Scene {
 
     // After river + decks so lanes continue over the bridges, not under the Henmore.
     this.drawRoads(rand);
+    this.drawMarketPlaza();
+    this.drawTunnelPortal();
 
     for (const o of map.obstacles) {
       this.drawBuilding(o);
     }
     this.drawLampPosts();
+    this.drawPlaceLabels();
 
     for (const o of map.obstacles) {
       if (!isBuilding(o)) continue;
+      const civic = isCivicBuilding(o);
       const oy = o.position.y - o.height / 2;
       const fasciaH = Math.min(18, o.height * 0.22);
+      const labelY = civic ? oy - (o.kind === 'church' ? 118 : 36) : oy + 4 + fasciaH * 0.5;
       const label = this.add
-        .text(o.position.x, oy + 4 + fasciaH * 0.5, o.name.toUpperCase(), {
+        .text(o.position.x, labelY, o.name.toUpperCase(), {
           fontFamily: FONT,
-          fontSize: o.kind === 'pub' ? '11px' : '10px',
+          fontSize: civic ? '15px' : o.kind === 'pub' ? '11px' : '10px',
           color: '#f3ead4',
           stroke: '#1a100a',
-          strokeThickness: 3,
+          strokeThickness: civic ? 5 : 3,
           align: 'center',
         })
-        .setOrigin(0.5, 0.5)
+        .setOrigin(0.5, civic ? 1 : 0.5)
         .setDepth(1);
       this.adoptWorld(label);
     }
@@ -758,9 +780,22 @@ export class GameScene extends Phaser.Scene {
     const g = this.mapGfx;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
-      this.drawRoadStrip(g, road.points, road.width + 14, PALETTE.verge, 0.55);
-      this.drawRoadStrip(g, road.points, road.width, street ? PALETTE.tarmac : PALETTE.grit, 0.92);
-      this.drawRoadStrip(g, road.points, road.width * 0.38, PALETTE.tarmacWear, street ? 0.22 : 0.16);
+      const trail = road.kind === 'trail';
+      this.drawRoadStrip(g, road.points, road.width + 14, trail ? PALETTE.trailEdge : PALETTE.verge, trail ? 0.4 : 0.55);
+      this.drawRoadStrip(
+        g,
+        road.points,
+        road.width,
+        trail ? PALETTE.trail : street ? PALETTE.tarmac : PALETTE.grit,
+        0.92,
+      );
+      this.drawRoadStrip(
+        g,
+        road.points,
+        road.width * 0.38,
+        trail ? PALETTE.trailWear : PALETTE.tarmacWear,
+        trail ? 0.28 : street ? 0.22 : 0.16,
+      );
       this.stippleRoad(g, road.points, road.width, rand);
     }
   }
@@ -883,7 +918,7 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(x, y - 8, 6);
   }
 
-  /** Timber-framed pub or brick shopfront — Ashbourne high street, not a labeled box. */
+  /** Timber-framed pub, brick shop, or civic massing — art later keys off `id`. */
   private drawBuilding(o: Obstacle): void {
     const g = this.mapGfx;
     if ('radius' in o) {
@@ -894,6 +929,28 @@ export class GameScene extends Phaser.Scene {
       g.lineStyle(3, PALETTE.buildingEdge, 1);
       g.strokeCircle(o.position.x, o.position.y, o.radius);
       return;
+    }
+    if (isBuilding(o)) {
+      if (o.kind === 'church') {
+        this.drawChurch(o);
+        return;
+      }
+      if (o.kind === 'school') {
+        this.drawSchool(o);
+        return;
+      }
+      if (o.kind === 'market') {
+        this.drawMarketHall(o);
+        return;
+      }
+      if (o.kind === 'hall') {
+        this.drawTownHall(o);
+        return;
+      }
+      if (o.kind === 'trailhead') {
+        this.drawTrailhead(o);
+        return;
+      }
     }
     const ox = o.position.x - o.width / 2;
     const oy = o.position.y - o.height / 2;
@@ -967,15 +1024,30 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(dx + doorW - 5, dy + doorH * 0.5, 2);
 
     if (pub) {
+      const greenMan = isBuilding(o) && o.id === 'the-green-man';
       const hx = ox + o.width + 4;
       g.lineStyle(3, PALETTE.timberBeam, 1);
-      g.lineBetween(hx, oy + 6, hx, oy + 28);
-      g.fillStyle(PALETTE.pubFascia, 1);
-      g.fillRoundedRect(hx - 16, oy + 26, 32, 22, 3);
-      g.lineStyle(2, PALETTE.pubSign, 1);
-      g.strokeRoundedRect(hx - 16, oy + 26, 32, 22, 3);
-      g.fillStyle(PALETTE.pubSign, 1);
-      g.fillCircle(hx, oy + 37, 5);
+      g.lineBetween(hx, oy + 6, hx, oy + (greenMan ? 40 : 28));
+      if (greenMan) {
+        // Hanging inn sign — Green Man homage, not a crest.
+        g.fillStyle(PALETTE.pubFascia, 1);
+        g.fillRoundedRect(hx - 22, oy + 38, 44, 36, 4);
+        g.lineStyle(3, PALETTE.pubSign, 1);
+        g.strokeRoundedRect(hx - 22, oy + 38, 44, 36, 4);
+        g.fillStyle(PALETTE.greenMan, 1);
+        g.fillCircle(hx, oy + 54, 10);
+        g.fillStyle(PALETTE.hedgeLeaf, 0.95);
+        g.fillCircle(hx - 9, oy + 50, 5);
+        g.fillCircle(hx + 9, oy + 50, 5);
+        g.fillCircle(hx, oy + 44, 5);
+      } else {
+        g.fillStyle(PALETTE.pubFascia, 1);
+        g.fillRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+        g.lineStyle(2, PALETTE.pubSign, 1);
+        g.strokeRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+        g.fillStyle(PALETTE.pubSign, 1);
+        g.fillCircle(hx, oy + 37, 5);
+      }
     } else {
       const awningY = oy + fasciaH + 3;
       const stripe = (o.width - 10) / 8;
@@ -995,26 +1067,261 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** St Oswald's churchyard — render only; OOB collision unchanged. */
+  /** St Oswald's–inspired nave + tall recessed spire. Collision is the nave; spire is massing. */
+  private drawChurch(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    const cx = o.position.x;
+    g.fillStyle(PALETTE.cobble, 0.3);
+    g.fillRect(ox - 8, oy + o.height - 4, o.width + 16, 12);
+    g.fillStyle(PALETTE.church, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(2, PALETTE.churchAshlar, 0.55);
+    for (let y = oy + 10; y < oy + o.height - 6; y += 10) {
+      g.lineBetween(ox + 3, y, ox + o.width - 3, y);
+    }
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.fillStyle(PALETTE.churchRoof, 1);
+    g.fillTriangle(ox - 8, oy + 6, cx + 10, oy - 28, ox + o.width + 4, oy + 6);
+    const tx = ox + o.width * 0.18;
+    const tw = Math.max(28, o.width * 0.22);
+    g.fillStyle(PALETTE.churchAshlar, 1);
+    g.fillRect(tx, oy - 92, tw, 98);
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(tx, oy - 92, tw, 98);
+    const mid = tx + tw / 2;
+    g.fillStyle(PALETTE.window, 1);
+    g.fillRect(mid - 6, oy - 78, 12, 22);
+    g.lineStyle(1, PALETTE.timberBeam, 0.8);
+    g.lineBetween(mid, oy - 78, mid, oy - 56);
+    g.fillStyle(PALETTE.churchSpire, 1);
+    g.fillTriangle(tx - 10, oy - 90, mid, oy - 168, tx + tw + 10, oy - 90);
+    g.fillStyle(PALETTE.churchRoof, 1);
+    g.fillTriangle(tx - 4, oy - 90, mid, oy - 118, tx + tw + 4, oy - 90);
+    g.fillStyle(PALETTE.pubSign, 0.95);
+    g.fillCircle(mid, oy - 172, 4);
+    g.lineStyle(2, PALETTE.pubSign, 1);
+    g.lineBetween(mid, oy - 172, mid + 8, oy - 180);
+    const pane = (px: number, py: number, w: number, h: number): void => {
+      g.fillStyle(PALETTE.window, 1);
+      g.fillRect(px, py, w, h);
+      g.fillStyle(PALETTE.windowLite, 0.28);
+      g.fillRect(px + 1, py + 1, w * 0.4, h * 0.35);
+      g.lineStyle(1, PALETTE.timberBeam, 0.85);
+      g.lineBetween(px + w / 2, py, px + w / 2, py + h);
+      g.strokeRect(px, py, w, h);
+    };
+    pane(ox + o.width * 0.48, oy + o.height * 0.28, 14, 22);
+    pane(ox + o.width * 0.68, oy + o.height * 0.28, 14, 22);
+    pane(ox + o.width * 0.86, oy + o.height * 0.28, 14, 22);
+    const doorW = 18;
+    const doorH = Math.min(32, o.height * 0.42);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(cx + 8, oy + o.height - doorH - 2, doorW, doorH);
+    g.lineStyle(2, PALETTE.timberBeam, 1);
+    g.strokeRect(cx + 8, oy + o.height - doorH - 2, doorW, doorH);
+  }
+
+  /** Old Grammar School–inspired hall — brick range + bellcote, no crest. */
+  private drawSchool(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.cobble, 0.28);
+    g.fillRect(ox - 10, oy + o.height - 4, o.width + 20, 14);
+    g.fillStyle(PALETTE.schoolRoof, 1);
+    g.fillRect(ox - 4, oy - 16, o.width + 8, 20);
+    g.fillTriangle(ox - 8, oy - 4, o.position.x, oy - 28, ox + o.width + 8, oy - 4);
+    g.fillStyle(PALETTE.schoolStone, 1);
+    g.fillRect(o.position.x - 8, oy - 40, 16, 18);
+    g.fillStyle(PALETTE.pubSign, 0.85);
+    g.fillCircle(o.position.x, oy - 44, 4);
+    g.fillStyle(PALETTE.schoolBrick, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(1, PALETTE.brickLine, 0.6);
+    for (let y = oy + 6; y < oy + o.height - 4; y += 7) {
+      g.lineBetween(ox + 2, y, ox + o.width - 2, y);
+    }
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.fillStyle(PALETTE.schoolStone, 1);
+    g.fillRect(ox + 4, oy + 4, o.width - 8, 12);
+    const winW = 10;
+    const winH = 16;
+    const count = Math.max(4, Math.floor(o.width / 28));
+    for (let i = 0; i < count; i++) {
+      const px = ox + 12 + i * ((o.width - 24) / count);
+      g.fillStyle(PALETTE.window, 1);
+      g.fillRect(px, oy + o.height * 0.38, winW, winH);
+      g.fillStyle(PALETTE.windowLite, 0.25);
+      g.fillRect(px + 1, oy + o.height * 0.38 + 1, 4, 6);
+    }
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - 10, oy + o.height - 28, 20, 26);
+    g.lineStyle(2, PALETTE.timberBeam, 1);
+    g.strokeRect(o.position.x - 10, oy + o.height - 28, 20, 26);
+  }
+
+  /** Market Hall — arched arcade under an upper hall. */
+  private drawMarketHall(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.cobble, 0.4);
+    g.fillRect(ox - 12, oy + o.height - 2, o.width + 24, 16);
+    g.fillStyle(PALETTE.hallRoof, 1);
+    g.fillRect(ox - 2, oy - 14, o.width + 4, 18);
+    g.fillStyle(PALETTE.hallStone, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.fillStyle(PALETTE.shopFascia, 1);
+    g.fillRect(ox + 4, oy + 4, o.width - 8, 16);
+    const arches = 3;
+    const aw = (o.width - 16) / arches;
+    for (let i = 0; i < arches; i++) {
+      const ax = ox + 8 + i * aw;
+      const ay = oy + o.height * 0.42;
+      g.fillStyle(PALETTE.marketArch, 1);
+      g.fillRect(ax + 4, ay, aw - 10, o.height * 0.5);
+      g.fillStyle(PALETTE.oob, 0.55);
+      g.fillCircle(ax + aw / 2, ay + 8, (aw - 12) / 2);
+      g.fillRect(ax + 6, ay + 8, aw - 14, o.height * 0.42);
+    }
+    g.fillStyle(PALETTE.window, 1);
+    g.fillRect(ox + o.width * 0.2, oy + 22, 12, 12);
+    g.fillRect(ox + o.width * 0.7, oy + 22, 12, 12);
+  }
+
+  /** Town Hall massing — clock pediment, civic steps. */
+  private drawTownHall(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.cobble, 0.35);
+    g.fillRect(ox - 8, oy + o.height - 2, o.width + 16, 14);
+    g.fillStyle(PALETTE.hallRoof, 1);
+    g.fillTriangle(ox - 6, oy + 4, o.position.x, oy - 26, ox + o.width + 6, oy + 4);
+    g.fillStyle(PALETTE.hallStone, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.fillStyle(PALETTE.schoolStone, 1);
+    g.fillRect(ox + 6, oy + 6, o.width - 12, 18);
+    g.fillStyle(PALETTE.millstone, 0.9);
+    g.fillCircle(o.position.x, oy + 15, 7);
+    g.fillStyle(PALETTE.buildingEdge, 1);
+    g.fillCircle(o.position.x, oy + 15, 2);
+    g.fillStyle(PALETTE.window, 1);
+    g.fillRect(ox + o.width * 0.18, oy + o.height * 0.4, 14, 16);
+    g.fillRect(ox + o.width * 0.7, oy + o.height * 0.4, 14, 16);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - 10, oy + o.height - 30, 20, 28);
+    g.fillStyle(PALETTE.schoolStone, 1);
+    g.fillRect(o.position.x - 16, oy + o.height - 6, 32, 6);
+    g.fillRect(o.position.x - 20, oy + o.height - 2, 40, 5);
+  }
+
+  /** Leisure-centre / trailhead cue beside the Tissington Trail. */
+  private drawTrailhead(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.trail, 0.35);
+    g.fillRect(ox - 14, oy + o.height - 2, o.width + 40, 16);
+    g.fillStyle(PALETTE.hallRoof, 1);
+    g.fillRect(ox - 2, oy - 10, o.width + 4, 14);
+    g.fillStyle(PALETTE.schoolStone, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(3, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.fillStyle(PALETTE.bathsBlue, 0.85);
+    g.fillRect(ox + 8, oy + 10, o.width - 16, o.height * 0.32);
+    g.fillStyle(PALETTE.windowLite, 0.35);
+    g.fillRect(ox + 10, oy + 12, o.width - 20, 8);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - 8, oy + o.height - 22, 16, 20);
+    const px = ox + o.width + 10;
+    g.fillStyle(PALETTE.timberBeam, 1);
+    g.fillRect(px, oy + 8, 4, 36);
+    g.fillStyle(PALETTE.trailEdge, 1);
+    g.fillTriangle(px + 4, oy + 10, px + 22, oy + 18, px + 4, oy + 26);
+  }
+
+  /** Market Place cobbles — render only, hug still crosses the square. */
+  private drawMarketPlaza(): void {
+    const mark = this.world.map.places.find((p) => p.kind === 'plaza');
+    if (!mark) return;
+    const g = this.mapGfx;
+    g.fillStyle(PALETTE.cobble, 0.42);
+    g.fillEllipse(mark.position.x, mark.position.y + 8, 220, 140);
+    g.fillStyle(PALETTE.cobbleEdge, 0.28);
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      g.fillRect(mark.position.x + Math.cos(a) * 70 - 6, mark.position.y + Math.sin(a) * 42, 12, 5);
+    }
+  }
+
+  /** Tissington Trail tunnel mouth — hillside cutting, not a tourist maze. */
+  private drawTunnelPortal(): void {
+    const mark = this.world.map.places.find((p) => p.kind === 'tunnel');
+    if (!mark) return;
+    const g = this.mapGfx;
+    const x = mark.position.x;
+    const y = mark.position.y;
+    g.fillStyle(PALETTE.grassDark, 1);
+    g.fillEllipse(x, y + 8, 90, 48);
+    g.fillStyle(PALETTE.hedge, 0.85);
+    g.fillEllipse(x - 38, y + 4, 28, 22);
+    g.fillEllipse(x + 38, y + 4, 28, 22);
+    g.fillStyle(PALETTE.tunnelRing, 1);
+    g.fillCircle(x, y + 6, 28);
+    g.fillStyle(PALETTE.tunnelDark, 1);
+    g.fillCircle(x, y + 8, 20);
+    g.fillRect(x - 20, y + 8, 40, 22);
+    g.lineStyle(3, PALETTE.buildingEdge, 0.8);
+    g.strokeCircle(x, y + 6, 28);
+    g.fillStyle(PALETTE.trail, 0.9);
+    g.fillRect(x - 12, y + 26, 24, 16);
+  }
+
+  /** Place names that orient the parish — homage labels, not wayfinding to real doors. */
+  private drawPlaceLabels(): void {
+    for (const p of this.world.map.places) {
+      if (p.kind === 'inn-sign') continue;
+      const size = p.kind === 'brook' || p.kind === 'trail' ? '16px' : '14px';
+      const lift = p.kind === 'tunnel' ? -36 : p.kind === 'brook' ? -6 : -18;
+      const label = this.add
+        .text(p.position.x, p.position.y + lift, p.name.toUpperCase(), {
+          fontFamily: FONT,
+          fontSize: size,
+          color: p.kind === 'brook' ? '#c8dce8' : '#f3ead4',
+          stroke: '#1a100a',
+          strokeThickness: 5,
+          align: 'center',
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(1);
+      this.adoptWorld(label);
+    }
+  }
+
+  /** Churchyard graves — St Oswald's massing is the civic footprint south of the yard. */
   private dressChurchyard(z: { position: { x: number; y: number }; width: number; height: number }): void {
     const g = this.mapGfx;
     const cx = z.position.x;
     const cy = z.position.y;
-    g.fillStyle(PALETTE.church, 1);
-    g.fillRect(cx - 28, cy - 8, 56, 48);
+    g.fillStyle(PALETTE.hedgeLeaf, 0.45);
+    g.fillCircle(cx - 70, cy - 20, 22);
+    g.fillCircle(cx + 64, cy - 8, 18);
     g.fillStyle(PALETTE.churchRoof, 1);
-    g.fillTriangle(cx - 36, cy - 8, cx, cy - 44, cx + 36, cy - 8);
-    g.fillRect(cx + 10, cy - 58, 14, 28);
-    g.fillStyle(PALETTE.pubSign, 0.9);
-    g.fillCircle(cx + 17, cy - 62, 4);
-    g.fillStyle(PALETTE.windowLite, 0.45);
-    g.fillRect(cx - 10, cy + 8, 10, 16);
-    g.fillRect(cx + 4, cy + 8, 10, 16);
-    g.fillStyle(PALETTE.door, 1);
-    g.fillRect(cx - 6, cy + 22, 12, 18);
-    for (let i = 0; i < 5; i++) {
-      const gx = cx - 50 + i * 22;
-      const gy = cy + 38;
+    g.fillRect(cx - 6, cy - 28, 12, 22);
+    g.fillTriangle(cx - 10, cy - 28, cx, cy - 42, cx + 10, cy - 28);
+    for (let i = 0; i < 6; i++) {
+      const gx = cx - 58 + i * 20;
+      const gy = cy + 28;
       g.fillStyle(PALETTE.churchRoof, 1);
       g.fillRect(gx, gy, 8, 14);
       g.fillTriangle(gx - 2, gy, gx + 4, gy - 8, gx + 10, gy);
@@ -2591,9 +2898,9 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
-    g.lineStyle(1.6, PALETTE.tarmac, 0.9);
     for (const road of map.roads) {
       if (road.points.length < 2) continue;
+      g.lineStyle(1.6, road.kind === 'trail' ? PALETTE.trailEdge : PALETTE.tarmac, 0.9);
       g.beginPath();
       g.moveTo(ox + road.points[0]!.x * sx, oy + road.points[0]!.y * sy);
       for (let i = 1; i < road.points.length; i++) {
