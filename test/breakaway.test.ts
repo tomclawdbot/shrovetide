@@ -177,6 +177,7 @@ test('breakaway: after player kick, opposing chase cannot claim for ~1.6s', () =
   world.ball.ownerId = world.player.id;
   Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
   world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
 
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
   assert.equal(world.ball.ownerId, null);
@@ -204,6 +205,7 @@ test('breakaway: opposing chase can reclaim after the window if the player dawdl
   world.ball.ownerId = world.player.id;
   Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
   world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
 
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
   pinOpposingChaseOnBall(world);

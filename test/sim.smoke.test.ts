@@ -13,6 +13,7 @@ import {
   createWorld,
   cycleTeammate,
   GOAL_CONTEST_RADIUS,
+  groundBall,
   HEDGE_SPEED_MULT,
   HUG_MIN_SHOVE,
   hugShoveAuthority,
@@ -115,6 +116,7 @@ function openField(world: World): { x: number; y: number } {
 function parkOpen(world: World): { x: number; y: number } {
   const field = openField(world);
   parkIsolated(world, field.x, field.y);
+  groundBall(world);
   return field;
 }
 
@@ -589,6 +591,7 @@ test('pass: a second kick works after picking the ball up again', () => {
   world.player.hasBall = false;
   Matter.Body.setPosition(world.physics.ballBody, world.player.position);
   world.ball.position = { ...world.player.position };
+  groundBall(world);
   runTicks(world, IDLE, 4);
   assert.equal(world.player.hasBall, true, 'picked up again');
 

@@ -169,6 +169,7 @@ test('event: late goal on day 1 rolls into day 2 placement', () => {
 test('event: day 1 timer expiry starts day 2 placement without a goal', () => {
   const world = createWorld();
   startMatch(world);
+  world.kickoffTimeRemaining = 0;
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
@@ -202,6 +203,7 @@ test('event: day 2 timer expiry can draw when scores are level', () => {
   startMatch(world);
   world.eventDay = 2;
   world.score = [1, 1];
+  world.kickoffTimeRemaining = 0;
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
@@ -216,6 +218,7 @@ test('event: day 2 timer expiry awards the side ahead on aggregate', () => {
   startMatch(world);
   world.eventDay = 2;
   world.score = [0, 2];
+  world.kickoffTimeRemaining = 0;
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
