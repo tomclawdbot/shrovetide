@@ -15,6 +15,7 @@ import {
   hugPackExtent,
   isBuilding,
   isCivicBuilding,
+  distToSegment,
   isBallAirborne,
   isCarrierAtOpponentGoal,
   isInHugZone,
@@ -125,6 +126,11 @@ const PALETTE = {
   hedge: 0x1c3a16,
   hedgeLeaf: 0x3a6a28,
   hedgeEdge: 0x0c1a0a,
+  fieldA: 0x3e522c,
+  fieldB: 0x354826,
+  fieldC: 0x44582e,
+  plough: 0x2c3c1c,
+  roadPaint: 0xf0ece0,
   bridge: 0x8a6844,
   oob: 0x2a2218,
   oobEdge: 0x120e0a,
@@ -203,6 +209,107 @@ function buildTag(build: Build): string {
 }
 
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
+
+type Pt = { x: number; y: number };
+
+/** Offset polylines for a mitred strip. Square caps at the ends. */
+function mitreOffsets(points: Pt[], hw: number): { left: Pt[]; right: Pt[] } {
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  const n = points.length;
+  const MITRE_LIMIT = 2.8;
+  for (let i = 0; i < n; i++) {
+    const p = points[i]!;
+    if (i === 0 || i === n - 1) {
+      const q = i === 0 ? points[1]! : points[i - 1]!;
+      const dx = i === 0 ? q.x - p.x : p.x - q.x;
+      const dy = i === 0 ? q.y - p.y : p.y - q.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      left.push({ x: p.x + nx * hw, y: p.y + ny * hw });
+      right.push({ x: p.x - nx * hw, y: p.y - ny * hw });
+      continue;
+    }
+    const prev = points[i - 1]!;
+    const next = points[i + 1]!;
+    const lenIn = Math.hypot(p.x - prev.x, p.y - prev.y) || 1;
+    const lenOut = Math.hypot(next.x - p.x, next.y - p.y) || 1;
+    const nInx = -(p.y - prev.y) / lenIn;
+    const nIny = (p.x - prev.x) / lenIn;
+    const nOutx = -(next.y - p.y) / lenOut;
+    const nOuty = (next.x - p.x) / lenOut;
+    let bx = nInx + nOutx;
+    let by = nIny + nOuty;
+    const bLen = Math.hypot(bx, by);
+    if (bLen < 0.08) {
+      left.push({ x: p.x + nInx * hw, y: p.y + nIny * hw });
+      right.push({ x: p.x - nInx * hw, y: p.y - nIny * hw });
+      continue;
+    }
+    bx /= bLen;
+    by /= bLen;
+    const cos = bx * nInx + by * nIny;
+    const miter = Math.abs(cos) < 0.12 ? hw * MITRE_LIMIT : Math.min(hw * MITRE_LIMIT, hw / cos);
+    left.push({ x: p.x + bx * miter, y: p.y + by * miter });
+    right.push({ x: p.x - bx * miter, y: p.y - by * miter });
+  }
+  return { left, right };
+}
+
+function dashAlong(
+  g: Phaser.GameObjects.Graphics,
+  points: Pt[],
+  dash: number,
+  gap: number,
+  stroke: number,
+  skipStart: number,
+  skipEnd: number,
+): void {
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    total += Math.hypot(points[i + 1]!.x - points[i]!.x, points[i + 1]!.y - points[i]!.y);
+  }
+  const endAt = Math.max(skipStart, total - skipEnd);
+  if (endAt <= skipStart + dash) return;
+  g.lineStyle(stroke, PALETTE.roadPaint, 0.88);
+  let dist = 0;
+  let paint = true;
+  let remain = dash;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    let segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    if (segLen < 0.5) continue;
+    const ux = (b.x - a.x) / segLen;
+    const uy = (b.y - a.y) / segLen;
+    let consumed = 0;
+    while (consumed < segLen - 0.01) {
+      const step = Math.min(remain, segLen - consumed);
+      const d0 = dist + consumed;
+      const d1 = d0 + step;
+      if (paint && d1 > skipStart && d0 < endAt) {
+        const t0 = Math.max(0, skipStart - d0);
+        const t1 = step - Math.max(0, d1 - endAt);
+        if (t1 > t0) {
+          g.lineBetween(
+            a.x + ux * (consumed + t0),
+            a.y + uy * (consumed + t0),
+            a.x + ux * (consumed + t1),
+            a.y + uy * (consumed + t1),
+          );
+        }
+      }
+      consumed += step;
+      remain -= step;
+      if (remain <= 0.01) {
+        paint = !paint;
+        remain = paint ? dash : gap;
+      }
+    }
+    dist += segLen;
+  }
+}
 
 type Flow = 'title' | 'placing' | 'playing';
 type Teach = 'move' | 'build' | 'ball' | 'kick' | 'sprint' | 'breath' | 'goal' | 'done';
@@ -687,6 +794,7 @@ export class GameScene extends Phaser.Scene {
 
     this.mapGfx.fillStyle(PALETTE.grass, 1);
     this.mapGfx.fillRect(0, 0, map.width, map.height);
+    this.drawFields();
 
     let s = 0x9e3779b9;
     const rand = (): number => {
@@ -810,33 +918,107 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  /** Soft tarmac / packed grit strips. No cobble seams, no white edges. */
+  /** Rectangular English parcels — hedge borders live in sim; this is the fill. */
+  private drawFields(): void {
+    const g = this.mapGfx;
+    const shades = [PALETTE.fieldA, PALETTE.fieldB, PALETTE.fieldC];
+    for (const f of this.world.map.fields) {
+      const x = f.position.x - f.width / 2;
+      const y = f.position.y - f.height / 2;
+      const shade = shades[(Math.abs(Math.floor(f.position.x * 0.013 + f.position.y * 0.007)) | 0) % 3]!;
+      g.fillStyle(shade, 1);
+      g.fillRect(x, y, f.width, f.height);
+      g.lineStyle(2, PALETTE.hedgeEdge, 0.35);
+      g.strokeRect(x, y, f.width, f.height);
+      g.lineStyle(1, PALETTE.plough, 0.22);
+      const across = f.width >= f.height;
+      if (across) {
+        for (let py = y + 10; py < y + f.height - 6; py += 14) {
+          g.lineBetween(x + 6, py, x + f.width - 6, py);
+        }
+      } else {
+        for (let px = x + 10; px < x + f.width - 6; px += 14) {
+          g.lineBetween(px, y + 6, px, y + f.height - 6);
+        }
+      }
+    }
+  }
+
+  /** Mitred tarmac / grit with square caps — UK lanes, not sausage blobs. */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
-      this.drawRoadStrip(g, road.points, road.width + 14, trail ? PALETTE.trailEdge : PALETTE.verge, trail ? 0.4 : 0.55);
-      this.drawRoadStrip(
+      const pts = this.prepareRoadPoints(road);
+      this.fillMitredStrip(g, pts, road.width + 14, trail ? PALETTE.trailEdge : PALETTE.verge, trail ? 0.4 : 0.55);
+      this.fillMitredStrip(
         g,
-        road.points,
+        pts,
         road.width,
         trail ? PALETTE.trail : street ? PALETTE.tarmac : PALETTE.grit,
-        0.92,
+        0.94,
       );
-      this.drawRoadStrip(
+      this.fillMitredStrip(
         g,
-        road.points,
-        road.width * 0.38,
+        pts,
+        road.width * 0.34,
         trail ? PALETTE.trailWear : PALETTE.tarmacWear,
-        trail ? 0.28 : street ? 0.22 : 0.16,
+        trail ? 0.28 : street ? 0.2 : 0.14,
       );
-      this.stippleRoad(g, road.points, road.width, rand);
+      this.stippleRoad(g, pts, road.width, rand);
+    }
+    this.drawRoundabouts();
+    this.drawRoadMarkings();
+  }
+
+  /**
+   * Extend an end into a crossing carriageway or roundabout ring so T-junctions
+   * fill to the far kerb. True dead-ends stay square (no round cap).
+   */
+  private prepareRoadPoints(road: { points: { x: number; y: number }[]; width: number }): { x: number; y: number }[] {
+    const pts = road.points.map((p) => ({ x: p.x, y: p.y }));
+    if (pts.length < 2) return pts;
+    this.extendRoadEnd(pts, road, 0, 1);
+    this.extendRoadEnd(pts, road, pts.length - 1, pts.length - 2);
+    return pts;
+  }
+
+  private extendRoadEnd(
+    pts: { x: number; y: number }[],
+    road: { points: { x: number; y: number }[]; width: number },
+    endIdx: number,
+    inwardIdx: number,
+  ): void {
+    const end = pts[endIdx]!;
+    const inward = pts[inwardIdx]!;
+    const len = Math.hypot(end.x - inward.x, end.y - inward.y) || 1;
+    const dx = (end.x - inward.x) / len;
+    const dy = (end.y - inward.y) / len;
+    const map = this.world.map;
+    for (const rab of map.roundabouts) {
+      const d = Math.hypot(end.x - rab.position.x, end.y - rab.position.y);
+      if (d <= rab.radius + 12) {
+        end.x += dx * 12;
+        end.y += dy * 12;
+        return;
+      }
+    }
+    let best = 0;
+    for (const other of map.roads) {
+      if (other.points === road.points) continue;
+      for (let i = 0; i < other.points.length - 1; i++) {
+        const d = distToSegment(end, other.points[i]!, other.points[i + 1]!);
+        if (d <= other.width * 0.55 + 6) best = Math.max(best, other.width);
+      }
+    }
+    if (best > 0) {
+      end.x += dx * (best * 0.48);
+      end.y += dy * (best * 0.48);
     }
   }
 
-  /** Filled polyline strip with round joints — reads as a lane, not a Manhattan slab. */
-  private drawRoadStrip(
+  private fillMitredStrip(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
     width: number,
@@ -844,27 +1026,14 @@ export class GameScene extends Phaser.Scene {
     alpha: number,
   ): void {
     if (points.length < 2 || width <= 0) return;
-    const hw = width / 2;
+    const { left, right } = mitreOffsets(points, width / 2);
     g.fillStyle(color, alpha);
-    g.fillCircle(points[0]!.x, points[0]!.y, hw);
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i]!;
-      const b = points[i + 1]!;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 0.5) continue;
-      const nx = (-dy / len) * hw;
-      const ny = (dx / len) * hw;
-      g.beginPath();
-      g.moveTo(a.x + nx, a.y + ny);
-      g.lineTo(b.x + nx, b.y + ny);
-      g.lineTo(b.x - nx, b.y - ny);
-      g.lineTo(a.x - nx, a.y - ny);
-      g.closePath();
-      g.fillPath();
-      g.fillCircle(b.x, b.y, hw);
-    }
+    g.beginPath();
+    g.moveTo(left[0]!.x, left[0]!.y);
+    for (let i = 1; i < left.length; i++) g.lineTo(left[i]!.x, left[i]!.y);
+    for (let i = right.length - 1; i >= 0; i--) g.lineTo(right[i]!.x, right[i]!.y);
+    g.closePath();
+    g.fillPath();
   }
 
   /** Sparse grit — texture without a grid of seams. */
@@ -889,6 +1058,111 @@ export class GameScene extends Phaser.Scene {
         g.fillEllipse(x + ox, y + oy, 7 + rand() * 11, 3 + rand() * 5);
       }
     }
+  }
+
+  private drawRoundabouts(): void {
+    const g = this.mapGfx;
+    for (const rab of this.world.map.roundabouts) {
+      const { x, y } = rab.position;
+      g.fillStyle(PALETTE.verge, 0.55);
+      g.fillCircle(x, y, rab.radius + 8);
+      g.fillStyle(PALETTE.tarmac, 0.96);
+      g.fillCircle(x, y, rab.radius);
+      g.fillStyle(PALETTE.tarmacWear, 0.22);
+      g.fillCircle(x, y, rab.radius * 0.72);
+      g.fillStyle(PALETTE.fieldB, 1);
+      g.fillCircle(x, y, rab.island);
+      g.fillStyle(PALETTE.hedgeLeaf, 0.35);
+      g.fillCircle(x - rab.island * 0.25, y - rab.island * 0.1, rab.island * 0.45);
+      g.fillStyle(PALETTE.hedge, 0.5);
+      g.fillCircle(x + rab.island * 0.2, y + rab.island * 0.15, rab.island * 0.28);
+    }
+  }
+
+  /** Centre dashes, give-way at T / roundabout entries. Trails stay unmarked. */
+  private drawRoadMarkings(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    for (const road of map.roads) {
+      if (road.kind === 'trail' || road.points.length < 2) continue;
+      const skip = Math.max(road.width * 0.85, 36);
+      dashAlong(g, road.points, 16, 14, 2.2, skip, skip);
+      this.markGiveWay(g, road, 0, 1);
+      this.markGiveWay(g, road, road.points.length - 1, road.points.length - 2);
+    }
+    for (const rab of map.roundabouts) {
+      const r = rab.island + 7;
+      const steps = 28;
+      g.lineStyle(2.2, PALETTE.roadPaint, 0.88);
+      for (let i = 0; i < steps; i++) {
+        if (i % 2 === 1) continue;
+        const a0 = (i / steps) * Math.PI * 2;
+        const a1 = ((i + 0.7) / steps) * Math.PI * 2;
+        g.lineBetween(
+          rab.position.x + Math.cos(a0) * r,
+          rab.position.y + Math.sin(a0) * r,
+          rab.position.x + Math.cos(a1) * r,
+          rab.position.y + Math.sin(a1) * r,
+        );
+      }
+    }
+  }
+
+  private markGiveWay(
+    g: Phaser.GameObjects.Graphics,
+    road: { width: number; points: { x: number; y: number }[] },
+    endIdx: number,
+    inwardIdx: number,
+  ): void {
+    const end = road.points[endIdx]!;
+    const inward = road.points[inwardIdx]!;
+    const map = this.world.map;
+    let atRab = false;
+    for (const rab of map.roundabouts) {
+      const d = Math.hypot(end.x - rab.position.x, end.y - rab.position.y);
+      if (d <= rab.radius + 10) atRab = true;
+    }
+    let atJoin = atRab;
+    if (!atJoin) {
+      for (const other of map.roads) {
+        if (other.points === road.points) continue;
+        for (let i = 0; i < other.points.length - 1; i++) {
+          if (distToSegment(end, other.points[i]!, other.points[i + 1]!) <= other.width * 0.52) {
+            atJoin = true;
+            break;
+          }
+        }
+        if (atJoin) break;
+      }
+    }
+    if (!atJoin) return;
+    const len = Math.hypot(end.x - inward.x, end.y - inward.y) || 1;
+    const ux = (end.x - inward.x) / len;
+    const uy = (end.y - inward.y) / len;
+    const nx = -uy;
+    const ny = ux;
+    const back = atRab ? 16 : 22;
+    const cx = end.x - ux * back;
+    const cy = end.y - uy * back;
+    const half = road.width * 0.36;
+    g.lineStyle(2.6, PALETTE.roadPaint, 0.9);
+    const x0 = cx - nx * half;
+    const y0 = cy - ny * half;
+    const x1 = cx + nx * half;
+    const y1 = cy + ny * half;
+    const segs = 5;
+    for (let i = 0; i < segs; i++) {
+      if (i % 2 === 1) continue;
+      const t0 = i / segs;
+      const t1 = (i + 0.7) / segs;
+      g.lineBetween(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1);
+    }
+    const tipx = end.x - ux * (back * 0.35);
+    const tipy = end.y - uy * (back * 0.35);
+    const bx = cx - ux * 8;
+    const by = cy - uy * 8;
+    g.fillStyle(PALETTE.roadPaint, 0.8);
+    g.fillTriangle(tipx, tipy, bx - nx * 8, by - ny * 8, bx + nx * 8, by + ny * 8);
   }
 
   /** Daytime lamp posts. Glow is drawn on the HUD veil at Nightfall. */
@@ -1360,17 +1634,24 @@ export class GameScene extends Phaser.Scene {
     g.fillTriangle(px + 4, oy + 10, px + 22, oy + 18, px + 4, oy + 26);
   }
 
-  /** Market Place cobbles — render only, hug still crosses the square. */
+  /** Market Place cobbles — triangular square, hug still crosses it. */
   private drawMarketPlaza(): void {
     const mark = this.world.map.places.find((p) => p.kind === 'plaza');
-    if (!mark || this.hasLandmarkSprite(mark.id)) return;
+    if (!mark) return;
     const g = this.mapGfx;
-    g.fillStyle(PALETTE.cobble, 0.42);
-    g.fillEllipse(mark.position.x, mark.position.y + 8, 220, 140);
+    const cx = mark.position.x;
+    const cy = mark.position.y;
+    g.fillStyle(PALETTE.cobble, this.hasLandmarkSprite(mark.id) ? 0.32 : 0.5);
+    g.beginPath();
+    g.moveTo(cx - 170, cy + 64);
+    g.lineTo(cx + 90, cy + 78);
+    g.lineTo(cx - 10, cy - 120);
+    g.closePath();
+    g.fillPath();
     g.fillStyle(PALETTE.cobbleEdge, 0.28);
-    for (let i = 0; i < 18; i++) {
-      const a = (i / 18) * Math.PI * 2;
-      g.fillRect(mark.position.x + Math.cos(a) * 70 - 6, mark.position.y + Math.sin(a) * 42, 12, 5);
+    for (let i = 0; i < 16; i++) {
+      const t = (i + 0.4) / 16;
+      g.fillRect(cx - 90 + t * 140, cy - 40 + (i % 3) * 22, 11, 5);
     }
   }
 
@@ -3015,6 +3296,15 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
+    g.fillStyle(PALETTE.fieldA, 0.55);
+    for (const f of map.fields) {
+      g.fillRect(
+        ox + (f.position.x - f.width / 2) * sx,
+        oy + (f.position.y - f.height / 2) * sy,
+        Math.max(1.5, f.width * sx),
+        Math.max(1.5, f.height * sy),
+      );
+    }
     for (const road of map.roads) {
       if (road.points.length < 2) continue;
       g.lineStyle(1.6, road.kind === 'trail' ? PALETTE.trailEdge : PALETTE.tarmac, 0.9);
@@ -3024,6 +3314,13 @@ export class GameScene extends Phaser.Scene {
         g.lineTo(ox + road.points[i]!.x * sx, oy + road.points[i]!.y * sy);
       }
       g.strokePath();
+    }
+    g.fillStyle(PALETTE.tarmac, 0.9);
+    for (const rab of map.roundabouts) {
+      g.fillCircle(ox + rab.position.x * sx, oy + rab.position.y * sy, Math.max(3, rab.radius * sx));
+      g.fillStyle(PALETTE.fieldB, 1);
+      g.fillCircle(ox + rab.position.x * sx, oy + rab.position.y * sy, Math.max(1.2, rab.island * sx));
+      g.fillStyle(PALETTE.tarmac, 0.9);
     }
     g.fillStyle(PALETTE.hedge, 0.95);
     for (const h of map.hedges) {

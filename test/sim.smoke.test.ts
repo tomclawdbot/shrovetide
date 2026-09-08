@@ -29,6 +29,7 @@ import {
   isNearRoad,
   isOnBridge,
   isOnRoad,
+  isOnRoundabout,
   isWalkable,
   MILL_CLIFTON,
   MILL_STURSTON,
@@ -897,12 +898,12 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
     assert.ok(r.width > 20 && r.width < 140, 'road strip is a lane, not a slab');
   }
 
-  const northStreet = { x: 1200 * TOWN_SCALE, y: 660 * TOWN_SCALE };
-  const southStreet = { x: 1230 * TOWN_SCALE, y: 1110 * TOWN_SCALE };
+  const northStreet = { x: 900 * TOWN_SCALE, y: 720 * TOWN_SCALE };
+  const southStreet = { x: 900 * TOWN_SCALE, y: 1100 * TOWN_SCALE };
   assert.equal(isOnRoad(northStreet, map), true, 'north pubs sit on a street');
-  assert.equal(isOnRoad(southStreet, map), true, 'south pubs sit on a street');
+  assert.equal(isOnRoad(southStreet, map), true, 'Compton sits on a street');
   assert.equal(isInObstacle(northStreet, map), false, 'street runs between footprints');
-  assert.equal(isInObstacle(southStreet, map), false, 'south street is not inside a pub');
+  assert.equal(isInObstacle(southStreet, map), false, 'Compton is not inside a pub');
   assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up sits on the centre-bridge road');
 
   for (const b of map.obstacles.filter(isBuilding)) {
@@ -917,13 +918,13 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   assert.equal(speedMultiplierAt(field, map), 1);
 });
 
-test('map: roads are winding connectors, not dead-end grid stubs', () => {
+test('map: roads are a junctioned network, not dead-end grid stubs', () => {
   const map = ASHBOURNE_TOWN;
   const empty = [
-    { name: 'NW field', x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE },
-    { name: 'NE field', x: 2100 * TOWN_SCALE, y: 480 * TOWN_SCALE },
-    { name: 'old south-highway stub', x: 1680 * TOWN_SCALE, y: 960 * TOWN_SCALE },
-    { name: 'far SW grass', x: 180 * TOWN_SCALE, y: 1200 * TOWN_SCALE },
+    { name: 'NW pasture', x: 200 * TOWN_SCALE, y: 110 * TOWN_SCALE },
+    { name: 'NE field', x: 1900 * TOWN_SCALE, y: 100 * TOWN_SCALE },
+    { name: 'south-bank grass', x: 1680 * TOWN_SCALE, y: 960 * TOWN_SCALE },
+    { name: 'SE parcel', x: 1680 * TOWN_SCALE, y: 1310 * TOWN_SCALE },
   ];
   for (const p of empty) {
     assert.equal(isOnRoad(p, map), false, `${p.name} must not be a road to nowhere`);
@@ -1009,23 +1010,34 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.equal(byKind.market!.id, 'market-hall');
   assert.equal(byKind.hall!.id, 'town-hall');
   assert.equal(byKind.trailhead!.id, 'the-baths');
-  // Art swap keys — Game Art filenames. Layout (position + collision size) stays.
-  assert.equal(byKind.church!.position.x, 250 * TOWN_SCALE);
-  assert.equal(byKind.church!.position.y, 360 * TOWN_SCALE);
-  assert.equal(byKind.school!.position.x, 740 * TOWN_SCALE);
-  assert.equal(byKind.market!.position.x, 1380 * TOWN_SCALE);
-  assert.equal(byKind.hall!.position.x, 1464 * TOWN_SCALE);
-  assert.equal(byKind.trailhead!.position.x, 1654 * TOWN_SCALE);
 
   const riverY = map.river.position.y;
   assert.ok(byKind.church!.position.y < riverY, 'church sits north of the Henmore');
-  assert.ok(byKind.church!.position.x < map.width * 0.35, 'church reads on the Clifton / west side');
+  assert.ok(byKind.church!.position.x < map.width * 0.25, 'church reads on the Clifton / west side');
   assert.ok(byKind.school!.position.y < riverY, 'school sits north of the Henmore');
-  assert.ok(byKind.market!.position.y > riverY, 'market sits south of the Henmore');
+  assert.ok(
+    byKind.school!.position.x > byKind.church!.position.x,
+    'Old Grammar sits in town east of the church',
+  );
+  assert.ok(byKind.market!.position.y < riverY, 'market sits north of the Henmore');
+  assert.ok(byKind.hall!.position.y < riverY, 'town hall sits north of the Henmore');
+  assert.ok(
+    Math.hypot(
+      byKind.market!.position.x - byKind.hall!.position.x,
+      byKind.market!.position.y - byKind.hall!.position.y,
+    ) < 280,
+    'Market Hall and Town Hall share the square',
+  );
   assert.ok(byKind.trailhead!.position.y < riverY, 'trailhead is on the north cutting');
   assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
+  assert.ok(
+    byKind.trailhead!.position.y < byKind.school!.position.y,
+    'Baths / trail sit north of the civic fabric',
+  );
 
   assert.ok(map.roads.some((r) => r.kind === 'trail'), 'Tissington Trail is a trail strip');
+  assert.ok(map.roundabouts.length >= 1 && map.roundabouts.length <= 2, '1–2 small roundabouts');
+  assert.ok(map.fields.length >= 8, 'countryside is parcelled into fields');
   const placeNames = map.places.map((p) => p.name);
   for (const name of ['Henmore Brook', 'Market Place', 'Tissington Trail', 'The Tunnel']) {
     assert.ok(placeNames.includes(name), `place label ${name}`);
@@ -1040,13 +1052,30 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(greenMan, 'The Green Man pub keeps its footprint');
   assert.equal(placeById['green-man']!.position.x, greenMan!.position.x);
   assert.equal(placeById['green-man']!.position.y, greenMan!.position.y);
+  assert.ok(placeById['market-place']!.position.y < riverY, 'Market Place sits north of the Henmore');
+  assert.ok(placeById['market-place']!.position.y < riverY, 'Market Place sits north of the Henmore');
 
   for (const goal of map.goals) {
     assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
     assert.equal(isInObstacle(goal.position, map), false);
   }
   assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up still on the centre deck');
-  assert.equal(isWalkable({ x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE }, map), true, 'NW field stays playable');
+  assert.equal(isWalkable({ x: 200 * TOWN_SCALE, y: 110 * TOWN_SCALE }, map), true, 'NW field stays playable');
+});
+
+test('map: roundabouts sit on the civic network', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.equal(map.roundabouts.length, 2, 'market + trailhead gyratories');
+  const [marketRab, trailRab] = map.roundabouts;
+  assert.ok(marketRab && trailRab);
+  assert.ok(marketRab.radius > marketRab.island, 'market island is inside the ring');
+  assert.ok(trailRab.radius > trailRab.island, 'trail island is inside the ring');
+  assert.equal(isOnRoundabout(marketRab.position, map), true);
+  assert.equal(isOnRoad(marketRab.position, map), true, 'gyratory counts as road');
+  assert.ok(marketRab.position.y < map.river.position.y, 'market gyratory is north of the Henmore');
+  assert.ok(trailRab.position.y < marketRab.position.y, 'trailhead gyratory is further north');
+  assert.ok(isWalkable(map.fields[0]!.position, map), 'a field interior stays playable grass');
+  assert.equal(isOnRoad(map.fields[0]!.position, map), false, 'field interiors are off the tarmac');
 });
 
 test('map: 17v17 placement stays out of walls and OOB', () => {
