@@ -15,6 +15,7 @@ import {
   GOAL_CONTEST_RADIUS,
   groundBall,
   HEDGE_SPEED_MULT,
+  hugShoveAt,
   HUG_MIN_SHOVE,
   hugShoveAuthority,
   isBuilding,
@@ -218,6 +219,41 @@ test('builds: each side fields 9 runners and 8 huggers', () => {
     PLAYER_RADIUS * radiusMultForBuild(world.player.build),
     'physics radius stays the build-scaled PLAYER_RADIUS',
   );
+});
+
+test('builds: runner covers more open ground; hugger shoves harder in the pack', () => {
+  const runnerW = createWorld({ seed: 11 });
+  const huggerW = createWorld({ seed: 11 });
+  startMatch(runnerW);
+  startMatch(huggerW);
+  const huggerId = huggerW.npcs.find(
+    (n) => n.team === huggerW.player.team && n.build === 'hugger',
+  )!.id;
+  assert.ok(switchControl(huggerW, huggerId));
+  assert.equal(runnerW.player.build, 'runner');
+  assert.equal(huggerW.player.build, 'hugger');
+
+  const rField = parkOpen(runnerW);
+  const hField = parkOpen(huggerW);
+  const east: Input = { ...IDLE, move: { x: 1, y: 0 } };
+  runTicks(runnerW, east, 60);
+  runTicks(huggerW, east, 60);
+  const rDx = runnerW.player.position.x - rField.x;
+  const hDx = huggerW.player.position.x - hField.x;
+  assert.ok(
+    rDx > hDx + 25,
+    `runner should outrun hugger in the open (${rDx.toFixed(0)} vs ${hDx.toFixed(0)})`,
+  );
+
+  packHugAround(runnerW, rField.x, rField.y, 8);
+  packHugAround(huggerW, hField.x, hField.y, 8);
+  const rShove = hugShoveAt(runnerW, runnerW.player.id, runnerW.player.position);
+  const hShove = hugShoveAt(huggerW, huggerW.player.id, huggerW.player.position);
+  assert.ok(
+    hShove > rShove + 0.04,
+    `hugger should shove harder in the pack (${hShove.toFixed(2)} vs ${rShove.toFixed(2)})`,
+  );
+  assert.ok(rShove < 0.5 && hShove < 0.5, 'hug still crawls — no pack rocket');
 });
 
 test('smoke: runs 1000 ticks moving + sprinting with ball', () => {

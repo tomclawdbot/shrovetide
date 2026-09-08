@@ -88,8 +88,8 @@ test('npc: empty-handed open-field cap matches player walk on normal', () => {
   teleportId(world, world.player.id, 200, 200);
   const cap = npcSpeedCap(ally, world);
   assert.ok(
-    Math.abs(cap - PLAYER_MAX_SPEED) < 1,
-    `ally walk should match player walk (${cap.toFixed(1)} vs ${PLAYER_MAX_SPEED})`,
+    Math.abs(cap - ally.maxSpeed) < 1,
+    `ally walk should match that body's build (${cap.toFixed(1)} vs ${ally.maxSpeed.toFixed(1)})`,
   );
 });
 

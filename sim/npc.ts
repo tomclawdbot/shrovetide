@@ -11,7 +11,7 @@
 // Packed bodies lose shove authority so the scrum grinds instead of skating.
 
 import Matter from 'matter-js';
-import { hugStaminaMultForBuild } from './builds.js';
+import { hugStaminaMultForBuild, speedMultForBuild } from './builds.js';
 import { difficultyTuning } from './difficulty.js';
 import { isInHugZone } from './hug.js';
 import { goalFor, opponentGoalFor, speedMultiplierAt } from './maps.js';
@@ -184,7 +184,8 @@ export function npcSpeedCap(
   const canBurst = npc.stamina > 0;
   const opp = isOpponent(npc, world);
   const tune = difficultyTuning(world.difficulty);
-  const speedBase = PLAYER_MAX_SPEED * (opp ? tune.opponentSpeedMult : 1);
+  const speedBase =
+    PLAYER_MAX_SPEED * speedMultForBuild(npc.build) * (opp ? tune.opponentSpeedMult : 1);
   const looseMult = opp ? tune.opponentLooseBoost : LOOSE_BALL_SPEED_MULT;
   // Player Rip/kick window: no hot opposing chase — stone stays readable.
   const looseBoost =
@@ -200,7 +201,7 @@ export function npcSpeedCap(
   const defendMult = opp ? tune.opponentDefendBoost : GOAL_DEFEND_SPEED_MULT;
   const defendBoost = canBurst && isCollapsing ? defendMult : 1;
   const terrainMult = speedMultiplierAt(npc.position, world.map);
-  // Empty-handed NPCs match player walk pace (difficulty scales opponents only).
+  // Empty-handed NPCs match that body's walk; difficulty scales opponents only.
   return speedBase * looseBoost * terrainMult * carryMult * driveBoost * defendBoost * breathMult;
 }
 
