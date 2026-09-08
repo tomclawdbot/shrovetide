@@ -88,6 +88,11 @@ const PALETTE = {
   brickLine: 0x5a382c,
   chimney: 0x4a3028,
   cobble: 0x6a5a48,
+  cobbleEdge: 0x4a3e30,
+  lampPole: 0x2a2218,
+  lampHead: 0x3a3428,
+  lampGlass: 0x6a5a40,
+  lampGlow: 0xffe08a,
   church: 0x6e6a62,
   churchRoof: 0x3a3834,
   window: 0x2a4050,
@@ -239,6 +244,7 @@ export class GameScene extends Phaser.Scene {
   private minimapGfx!: Phaser.GameObjects.Graphics;
   private vignetteGfx!: Phaser.GameObjects.Graphics;
   private nightOverlay!: Phaser.GameObjects.Rectangle;
+  private lightGfx!: Phaser.GameObjects.Graphics;
   private windedOverlay!: Phaser.GameObjects.Rectangle;
   private feelBanner!: Phaser.GameObjects.Text;
   private kickLabel!: Phaser.GameObjects.Text;
@@ -645,14 +651,7 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
 
-    // Mud streets toward the millstones and along the river bank.
-    this.mapGfx.fillStyle(PALETTE.mud, 0.55);
-    this.mapGfx.fillRect(40, map.river.position.y - 70, map.width - 80, 40);
-    this.mapGfx.fillRect(40, map.river.position.y + 30, map.width - 80, 40);
-    this.mapGfx.fillStyle(PALETTE.mudDark, 0.35);
-    for (let i = 0; i < 80; i++) {
-      this.mapGfx.fillEllipse(rand() * map.width, map.river.position.y + (rand() - 0.5) * 160, 18 + rand() * 40, 8 + rand() * 10);
-    }
+    this.drawRoads(rand);
 
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
@@ -706,6 +705,7 @@ export class GameScene extends Phaser.Scene {
     for (const o of map.obstacles) {
       this.drawBuilding(o);
     }
+    this.drawLampPosts();
 
     for (const o of map.obstacles) {
       if (!isBuilding(o)) continue;
@@ -745,6 +745,61 @@ export class GameScene extends Phaser.Scene {
 
     this.mapGfx.lineStyle(3, 0x1a140c, 0.7);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
+  }
+
+  /** Cobble streets + mud lanes from map data. Soft — no collision. */
+  private drawRoads(rand: () => number): void {
+    const g = this.mapGfx;
+    for (const road of this.world.map.roads) {
+      const x = road.position.x - road.width / 2;
+      const y = road.position.y - road.height / 2;
+      if (road.kind === 'street') {
+        g.fillStyle(PALETTE.cobble, 0.88);
+        g.fillRect(x, y, road.width, road.height);
+        g.lineStyle(2, PALETTE.cobbleEdge, 0.45);
+        g.strokeRect(x, y, road.width, road.height);
+        const seam = road.width >= road.height ? road.width : road.height;
+        const steps = Math.max(3, Math.floor(seam / 28));
+        g.fillStyle(PALETTE.cobbleEdge, 0.28);
+        for (let i = 0; i < steps; i++) {
+          const t = (i + 0.5) / steps;
+          if (road.width >= road.height) {
+            g.fillRect(x + t * road.width - 1, y + 2, 2, road.height - 4);
+          } else {
+            g.fillRect(x + 2, y + t * road.height - 1, road.width - 4, 2);
+          }
+        }
+      } else {
+        g.fillStyle(PALETTE.mud, 0.72);
+        g.fillRect(x, y, road.width, road.height);
+        g.fillStyle(PALETTE.mudDark, 0.35);
+        const along = Math.max(road.width, road.height);
+        const n = Math.max(2, Math.floor(along / 40));
+        for (let i = 0; i < n; i++) {
+          const t = (i + rand()) / (n + 1);
+          const px = x + (road.width >= road.height ? t * road.width : road.width * 0.5);
+          const py = y + (road.height > road.width ? t * road.height : road.height * 0.5);
+          g.fillEllipse(px, py, 16 + rand() * 22, 6 + rand() * 8);
+        }
+      }
+    }
+  }
+
+  /** Daytime lamp posts. Glow is drawn on the HUD veil at Nightfall. */
+  private drawLampPosts(): void {
+    const g = this.mapGfx;
+    for (const lamp of this.world.map.streetLights) {
+      const x = lamp.position.x;
+      const y = lamp.position.y;
+      g.fillStyle(PALETTE.shadow, 0.28);
+      g.fillEllipse(x + 2, y + 6, 10, 5);
+      g.fillStyle(PALETTE.lampPole, 1);
+      g.fillRect(x - 2, y - 18, 4, 22);
+      g.fillStyle(PALETTE.lampHead, 1);
+      g.fillRect(x - 6, y - 26, 12, 10);
+      g.fillStyle(PALETTE.lampGlass, 0.85);
+      g.fillRect(x - 4, y - 24, 8, 6);
+    }
   }
 
   /** Sturston (Up goal) blue/yellow hoops; Clifton (Down goal) black. */
@@ -1264,6 +1319,8 @@ export class GameScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(8),
     );
+    // Warm lamps sit above the night veil so they still read when the day closes.
+    this.lightGfx = this.adoptHud(this.add.graphics().setScrollFactor(0).setDepth(8.5));
     this.windedOverlay = this.adoptHud(
       this.add
         .rectangle(0, 0, VIEW_W, VIEW_H, 0x3a0808, 0)
@@ -2189,6 +2246,7 @@ export class GameScene extends Phaser.Scene {
     if (!on) {
       this.nightOverlay.setAlpha(0);
       this.nightOverlay.setVisible(false);
+      this.lightGfx.clear();
       this.windedOverlay.setAlpha(0);
       this.windedOverlay.setVisible(false);
       this.feelBanner.setVisible(false);
@@ -2326,6 +2384,27 @@ export class GameScene extends Phaser.Scene {
     const g = lerp((dayBg >> 8) & 0xff, (nightBg >> 8) & 0xff);
     const b = lerp(dayBg & 0xff, nightBg & 0xff);
     this.cameras.main.setBackgroundColor((r << 16) | (g << 8) | b);
+    this.drawStreetLightGlow(amount);
+  }
+
+  /** Street lamps punch through the HUD night veil once dusk starts. */
+  private drawStreetLightGlow(amount: number): void {
+    this.lightGfx.clear();
+    const glow = Math.min(1, Math.max(0, (amount - 0.06) / 0.38));
+    if (glow <= 0.01) return;
+    const cam = this.cameras.main;
+    const view = cam.worldView;
+    const pulse = 0.85 + 0.15 * Math.abs(Math.sin(this.now() / 420));
+    for (const lamp of this.world.map.streetLights) {
+      const sx = ((lamp.position.x - view.x) / view.width) * VIEW_W;
+      const sy = ((lamp.position.y - view.y) / view.height) * VIEW_H;
+      if (sx < -40 || sy < -40 || sx > VIEW_W + 40 || sy > VIEW_H + 40) continue;
+      const r = 36 * cam.zoom;
+      this.lightGfx.fillStyle(PALETTE.lampGlow, 0.16 * glow * pulse);
+      this.lightGfx.fillCircle(sx, sy - 14 * cam.zoom, r);
+      this.lightGfx.fillStyle(0xfff6c8, 0.42 * glow);
+      this.lightGfx.fillCircle(sx, sy - 18 * cam.zoom, 6 + 3 * cam.zoom);
+    }
   }
 
   /** Enter Day 2 placement — same walk-them-out beat as Day 1. */
@@ -2505,6 +2584,15 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
+    g.fillStyle(PALETTE.mud, 0.85);
+    for (const road of map.roads) {
+      g.fillRect(
+        ox + (road.position.x - road.width / 2) * sx,
+        oy + (road.position.y - road.height / 2) * sy,
+        Math.max(1.2, road.width * sx),
+        Math.max(1.2, road.height * sy),
+      );
+    }
     g.fillStyle(PALETTE.hedge, 0.95);
     for (const h of map.hedges) {
       g.fillRect(

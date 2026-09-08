@@ -69,6 +69,18 @@ export interface GoalMarker {
 
 export interface Bridge extends RectZone {}
 
+/** Town cobble vs millstone-approach track. Visual / later landmarks — not collision. */
+export type RoadKind = 'street' | 'lane';
+
+export interface RoadSegment extends RectZone {
+  kind: RoadKind;
+}
+
+/** Lamp post along a road. Client lights the lantern at dusk / Nightfall. */
+export interface StreetLight {
+  position: Vec2Like;
+}
+
 export interface TownMap {
   width: number;
   height: number;
@@ -85,6 +97,13 @@ export interface TownMap {
    * Bridges (and any gap left between hedge rects) pierce them for routing.
    */
   hedges: RectZone[];
+  /**
+   * Soft paths between buildings and out to the millstones.
+   * Not collision — hug / fields / Henmore stay playable off the tarmac.
+   */
+  roads: RoadSegment[];
+  /** Lamp posts on the road network. Render-only; glow is a client Nightfall hook. */
+  streetLights: StreetLight[];
   /** Two millstones, one per team. */
   goals: GoalMarker[];
   /** "Turn-up" point — where the ball spawns at match start. */
@@ -132,6 +151,14 @@ function sbuilding(
     name,
     kind,
   };
+}
+
+function sroad(x: number, y: number, w: number, h: number, kind: RoadKind): RoadSegment {
+  return { ...srect(x, y, w, h), kind };
+}
+
+function slight(x: number, y: number): StreetLight {
+  return { position: sxy(x, y) };
 }
 
 /**
@@ -266,11 +293,65 @@ export const ASHBOURNE_TOWN: TownMap = {
     ...hedgeRow(1480, 36, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
     ...hedgeCol(360, 28, 320, 1460, [880], RIVER_GAP_HALF),
     ...hedgeCol(2080, 28, 320, 1280, [880], RIVER_GAP_HALF),
-    // Flank closes — keep the centre turn-up corridor open for kickoff.
-    srect(300, 780, 220, 28),
-    srect(2100, 780, 220, 28),
+    // Goal approaches — hedges flank the millstone lanes, clear of the stones.
+    srect(355, 754, 270, 22),
+    srect(355, 826, 270, 18),
+    srect(2045, 754, 270, 22),
+    srect(2045, 826, 270, 18),
+    // South-bank channeling — keep the centre turn-up corridor open for kickoff.
     srect(300, 980, 200, 28),
     srect(2100, 980, 200, 28),
+  ],
+
+  // Soft streets. Buildings sit on the frontage; bodies can leave onto fields.
+  roads: [
+    sroad(1200, 800, 2320, 48, 'lane'),
+    sroad(1200, 960, 2320, 44, 'lane'),
+    sroad(1200, 660, 720, 52, 'street'),
+    sroad(1220, 630, 56, 80, 'street'),
+    sroad(1200, 730, 56, 90, 'street'),
+    sroad(1230, 1110, 420, 52, 'street'),
+    sroad(1200, 1035, 56, 90, 'street'),
+    sroad(840, 1280, 500, 44, 'lane'),
+    sroad(1080, 1200, 48, 160, 'lane'),
+    sroad(1820, 560, 48, 480, 'lane'),
+    sroad(320, 790, 380, 52, 'lane'),
+    sroad(2080, 790, 380, 52, 'lane'),
+  ],
+
+  // Verge lamps — not in the Henmore, not on the millstones.
+  streetLights: [
+    slight(900, 696),
+    slight(1020, 696),
+    slight(1140, 696),
+    slight(1244, 618),
+    slight(1260, 696),
+    slight(1380, 696),
+    slight(1500, 696),
+    slight(1080, 1076),
+    slight(1200, 1076),
+    slight(1320, 1076),
+    slight(1400, 1076),
+    slight(280, 766),
+    slight(440, 766),
+    slight(720, 766),
+    slight(1000, 766),
+    slight(1400, 766),
+    slight(1680, 766),
+    slight(1960, 766),
+    slight(2200, 766),
+    slight(400, 992),
+    slight(800, 992),
+    slight(1200, 992),
+    slight(1600, 992),
+    slight(2000, 992),
+    slight(700, 1304),
+    slight(900, 1304),
+    slight(1844, 400),
+    slight(1844, 560),
+    slight(1844, 700),
+    slight(1228, 730),
+    slight(1228, 1035),
   ],
 
   // Millstones sit on the north bank (river spans design y 820–940), inland
@@ -336,6 +417,24 @@ export function isInWater(p: Vec2Like, map: TownMap): boolean {
 /** True iff the point lies inside any hedge rect. */
 export function isInHedge(p: Vec2Like, map: TownMap): boolean {
   return map.hedges.some((h) => pointInRect(p, h));
+}
+
+/** True iff the point sits on a road segment. Roads do not block or slow. */
+export function isOnRoad(p: Vec2Like, map: TownMap): boolean {
+  return map.roads.some((r) => pointInRect(p, r));
+}
+
+/** True iff the point is on or within `pad` px of a road (verge lamps). */
+export function isNearRoad(p: Vec2Like, map: TownMap, pad = 24): boolean {
+  for (const r of map.roads) {
+    const grown: RectZone = {
+      position: r.position,
+      width: r.width + pad * 2,
+      height: r.height + pad * 2,
+    };
+    if (pointInRect(p, grown)) return true;
+  }
+  return false;
 }
 
 /**
