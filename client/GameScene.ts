@@ -1,7 +1,7 @@
 // client/GameScene.ts — Phaser scene. Pure render + input. All game logic lives in /sim.
 //
 // First-run: HUD lives on a zoom-1 camera (main zoom was swallowing scrollFactor(0)
-// overlays). Kickoff is title → ~20s place-your-people → whistle. Who-am-I follows
+// overlays). Kickoff is title → ~20s place-your-people → plinth throw-up. Who-am-I follows
 // control. Scoring has HOLD THE STONE + pips + hit-stop.
 // Phone (Chrome iOS / WebKit): DOM stick + kick/switch (see touch.ts); keyboard still drives Input.move.
 
@@ -12,6 +12,7 @@ import {
   DEFAULT_DIFFICULTY,
   formatDayClock,
   isBuilding,
+  isBallAirborne,
   isCarrierAtOpponentGoal,
   isNightfall,
   MILL_CLIFTON,
@@ -58,7 +59,6 @@ const CROWD_RADIUS = 260;
 const CAMERA_LEAD = 0.08;
 const ZOOM_LERP = 0.04;
 const PLACE_SECONDS = 20;
-const KICKOFF_SECONDS = 3;
 const PLACE_SPEED = 220;
 const TEACH_WINDOW_MS = 30_000;
 
@@ -99,6 +99,9 @@ const PALETTE = {
   oobEdge: 0x120e0a,
   millstone: 0xe4d4a8,
   millstoneEdge: 0x4a3a1c,
+  plinth: 0xb8a078,
+  plinthDark: 0x6a5434,
+  plinthEdge: 0x3a2a14,
   teamUp: 0x3d6eaa,
   teamUpTrim: 0xf5d76e,
   teamDown: 0x161616,
@@ -196,6 +199,7 @@ export class GameScene extends Phaser.Scene {
   private lastFacing = new Map<string, { x: number; y: number }>();
   private ballSprite!: Phaser.GameObjects.Arc;
   private ballShadow!: Phaser.GameObjects.Ellipse;
+  private ballBlotch!: Phaser.GameObjects.Arc;
   private mapGfx!: Phaser.GameObjects.Graphics;
   private peopleGfx!: Phaser.GameObjects.Graphics;
   private markerGfx!: Phaser.GameObjects.Graphics;
@@ -246,7 +250,6 @@ export class GameScene extends Phaser.Scene {
   private lastGoalingTaps = 0;
   private scoredJuice = false;
   private feedbackUntil = 0;
-  private kickoffLeft = 0;
   private lastThumpAt = 0;
   private lastWall = 0;
   private lastScore: [number, number] = [0, 0];
@@ -508,21 +511,15 @@ export class GameScene extends Phaser.Scene {
     this.pinCam(this.camLook.x, this.camLook.y, this.currentZoom);
   }
 
-  /** Freeze-frame beat: you + their millstone in the same shot. */
+  /** Freeze-frame beat: the plinth throw-up, then the chase. */
   private frameKickoff(): void {
-    const p = this.world.player;
-    const g = opponentGoalFor(p.team, this.world.map);
-    const pad = 180;
-    const minX = Math.min(p.position.x, g.x) - pad;
-    const maxX = Math.max(p.position.x, g.x) + pad;
-    const minY = Math.min(p.position.y, g.y) - pad;
-    const maxY = Math.max(p.position.y, g.y) + pad;
-    const z = Math.max(
-      0.28,
-      Math.min(0.8, VIEW_W / Math.max(80, maxX - minX), VIEW_H / Math.max(80, maxY - minY)),
-    );
+    const tu = this.world.map.turnUp;
     this.camFollow = true;
-    this.pinCam((minX + maxX) / 2, (minY + maxY) / 2, z);
+    this.pinCam(tu.x, tu.y - 20, 1.15);
+  }
+
+  private inKickoff(): boolean {
+    return this.world.kickoffTimeRemaining > 0;
   }
 
   private applyLookKeys(dt: number): void {
@@ -552,7 +549,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyCamera(): void {
-    if (this.flow === 'playing' && this.kickoffLeft > 0) {
+    if (this.flow === 'playing' && this.inKickoff()) {
       this.frameKickoff();
       return;
     }
@@ -693,6 +690,8 @@ export class GameScene extends Phaser.Scene {
       this.adoptWorld(label);
     }
 
+    this.drawPlinth(map.turnUp.x, map.turnUp.y);
+
     this.mapGfx.lineStyle(3, 0x1a140c, 0.7);
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
@@ -723,6 +722,23 @@ export class GameScene extends Phaser.Scene {
     g.strokeCircle(x, y, 12);
     g.fillStyle(PALETTE.millstoneEdge, 1);
     g.fillCircle(x, y, 4);
+  }
+
+  /** Placeholder Ashbourne turn-up plinth — render only, no collision. */
+  private drawPlinth(x: number, y: number): void {
+    const g = this.mapGfx;
+    g.fillStyle(PALETTE.plinthDark, 0.55);
+    g.fillEllipse(x + 2, y + 18, 54, 22);
+    g.fillStyle(PALETTE.plinthDark, 1);
+    g.fillRoundedRect(x - 22, y - 6, 44, 28, 4);
+    g.fillStyle(PALETTE.plinth, 1);
+    g.fillRoundedRect(x - 24, y - 18, 48, 22, 5);
+    g.lineStyle(3, PALETTE.plinthEdge, 0.95);
+    g.strokeRoundedRect(x - 24, y - 18, 48, 22, 5);
+    g.lineStyle(2, PALETTE.millstone, 0.5);
+    g.strokeRoundedRect(x - 18, y - 12, 36, 10, 3);
+    g.fillStyle(PALETTE.millstone, 0.35);
+    g.fillCircle(x, y - 8, 6);
   }
 
   /** Timber-framed pub or brick shopfront — Ashbourne high street, not a labeled box. */
@@ -911,6 +927,17 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(3, PALETTE.ballEdge)
       .setDepth(4);
     this.adoptWorld(this.ballSprite);
+
+    this.ballBlotch = this.add
+      .circle(
+        this.world.ball.position.x,
+        this.world.ball.position.y,
+        this.world.ball.radius * 0.32,
+        PALETTE.ballEdge,
+        0.55,
+      )
+      .setDepth(4.1);
+    this.adoptWorld(this.ballBlotch);
 
     this.peopleGfx = this.add.graphics().setDepth(2);
     this.adoptWorld(this.peopleGfx);
@@ -1441,6 +1468,7 @@ export class GameScene extends Phaser.Scene {
     this.lastFacing.clear();
     this.ballSprite?.destroy();
     this.ballShadow?.destroy();
+    this.ballBlotch?.destroy();
     this.peopleGfx?.destroy();
     this.markerGfx?.destroy();
     this.worldObjs = this.worldObjs.filter((o) => o.active);
@@ -1470,7 +1498,6 @@ export class GameScene extends Phaser.Scene {
     this.playStartedAt = this.now();
     this.teach = 'move';
     this.lastWall = this.now();
-    this.kickoffLeft = KICKOFF_SECONDS;
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
     this.lastStamina = this.world.player.stamina;
@@ -1491,7 +1518,7 @@ export class GameScene extends Phaser.Scene {
   /** One-shot center banner. Yields to kickoff, recovery, climax, and match over. */
   private showFeelBanner(msg: string, ms: number): boolean {
     if (this.world.matchState === 'over') return false;
-    if (this.kickoffLeft > 0) return false;
+    if (this.inKickoff()) return false;
     if (this.world.recoveryTimeRemaining > 0) return false;
     if (this.millstoneClimax()) return false;
     this.feelBanner.setText(msg);
@@ -1548,11 +1575,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.flow === 'playing') {
-      if (this.kickoffLeft > 0) this.kickoffLeft = Math.max(0, this.kickoffLeft - dt);
       if (this.hitStopLeft > 0) this.hitStopLeft = Math.max(0, this.hitStopLeft - dt);
     }
 
-    if (this.flow === 'playing' && this.hitStopLeft <= 0 && this.kickoffLeft <= 0) {
+    if (this.flow === 'playing' && this.hitStopLeft <= 0) {
       this.accumulator += dt;
       let steps = 0;
       while (this.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
@@ -1851,22 +1877,29 @@ export class GameScene extends Phaser.Scene {
     }
 
     const b = this.world.ball;
-    this.ballSprite.setPosition(b.position.x, b.position.y);
-    this.ballShadow.setPosition(b.position.x, b.position.y + 6);
+    const h = b.height;
+    const lift = h * 0.55;
+    const scale = 1 + h / 180;
+    this.ballSprite.setPosition(b.position.x, b.position.y - lift);
+    this.ballSprite.setScale(scale);
+    this.ballShadow.setPosition(b.position.x + h * 0.06, b.position.y + 6 + h * 0.12);
+    this.ballShadow.setAlpha(Math.max(0.08, 0.32 * (1 - Math.min(0.75, h / 240))));
+    this.ballShadow.setScale(1 + h / 280, 1);
+    const br = b.radius * scale;
+    this.ballBlotch.setPosition(
+      b.position.x + Math.cos(b.spin) * br * 0.38,
+      b.position.y - lift + Math.sin(b.spin) * br * 0.38,
+    );
+    this.ballBlotch.setScale(scale);
+    this.ballBlotch.setVisible(carrierId === null);
     if (carrierId === null) {
       const pulse = 2 + Math.sin(this.now() / 90) * 2;
-      this.markerGfx.lineStyle(2, PALETTE.ball, 0.6);
+      this.markerGfx.lineStyle(2, PALETTE.ball, isBallAirborne(this.world) ? 0.9 : 0.6);
       this.markerGfx.strokeCircle(b.position.x, b.position.y, b.radius + 6 + pulse);
     }
 
     if (this.isPassing && p.hasBall) {
       this.drawKickCharge(p.position.x, p.position.y, p.radius);
-    } else if (this.flow === 'playing' && this.kickoffLeft > 0) {
-      const goal = opponentGoalFor(p.team, this.world.map);
-      const dx = goal.x - p.position.x;
-      const dy = goal.y - p.position.y;
-      const len = Math.hypot(dx, dy) || 1;
-      this.drawAimArrow(p.position.x, p.position.y, dx / len, dy / len, 110, PALETTE.youRing, 0.95, 6);
     }
 
     if (this.now() < this.kickJuiceUntil) {
@@ -2051,7 +2084,6 @@ export class GameScene extends Phaser.Scene {
     this.lastWall = this.now();
     this.spaceReady = false;
     this.eatPointer = true;
-    this.kickoffLeft = 0;
     this.hitStopLeft = 0;
     this.teach = 'move';
     this.scoredJuice = false;
@@ -2138,11 +2170,14 @@ export class GameScene extends Phaser.Scene {
       this.setCaption('');
       return;
     }
-    if (this.kickoffLeft > 0) {
+    if (this.inKickoff()) {
       const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
       const day = this.world.eventDay === 2 ? 'DAY 2 — ' : '';
-      const side = this.world.player.team === 0 ? "YOU ARE UP'ARDS" : "YOU ARE DOWN'ARDS";
-      this.setCaption(`${day}${side} — play to ${mill}`);
+      this.setCaption(
+        isBallAirborne(this.world)
+          ? `${day}Turned up`
+          : `${day}Turned up — play to ${mill}`,
+      );
       return;
     }
     if (this.world.recoveryTimeRemaining > 0) {

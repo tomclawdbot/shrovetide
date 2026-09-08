@@ -1,8 +1,8 @@
 // sim/match.ts — two-day event state machine + scorekeeping + timer.
 //
 // State machine:
-//   placement ──startMatch()──▶ playing (Day 1)
-//     early goal (<3 min) ──▶ toss-up + 10s recovery (clock paused)
+//   placement ──startMatch()──▶ playing (Day 1, plinth throw-up)
+//     early goal (<3 min) ──▶ throw-up + 10s recovery (clock paused)
 //     late goal / timer expiry ──▶ Day 2 placement (full reset like Day 1)
 //     Day 2 late goal / timer expiry ──▶ over (aggregate score / draw)
 //
@@ -11,7 +11,7 @@
 // and detect state transitions.
 
 import Matter from 'matter-js';
-import { setBallSensor } from './physics.js';
+import { MATTER_VELOCITY_SCALE, setBallSensor } from './physics.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
 import type { Team } from './types.js';
 import type { World } from './world.js';
@@ -107,10 +107,57 @@ export function isEarlyGoalWindow(world: World): boolean {
   return dayElapsedSeconds(world) < EARLY_GOAL_WINDOW_SECONDS && world.matchTimeRemaining > 0;
 }
 
-/** Reset the stone to turn-up and clear ownership / contest state. */
-export function tossUpBall(world: World): void {
+/** Visual / sit height of the turn-up plinth (px). */
+export const PLINTH_HEIGHT = 44;
+/** Gravity on the throw-up height channel (px/s²). */
+export const THROW_UP_GRAVITY = 420;
+/** Vertical launch speed range (px/s, upward). */
+export const THROW_UP_MIN = 380;
+export const THROW_UP_MAX = 460;
+/** Horizontal launch speed range (px/s) — stays inside the turn-up swarm. */
+export const THROW_OUT_MIN = 36;
+export const THROW_OUT_MAX = 88;
+/** Absolute spin rate range (rad/s). Sign is seeded. */
+export const THROW_SPIN_MIN = 7;
+export const THROW_SPIN_MAX = 13;
+/**
+ * Match-start ritual length (throw hang + a beat after the thud).
+ * Covers ~2.1s of hang at the authored throw, then a short settle.
+ */
+export const KICKOFF_THROW_SECONDS = 2.6;
+/** XY speed kept after the stone hits the pitch. */
+const THROW_LAND_XY_DAMP = 0.72;
+const THROW_LAND_SPIN_DAMP = 0.55;
+const AIR_SPIN_DAMP = 0.12;
+const GROUND_SPIN_DAMP = 2.4;
+
+/** True while the stone is in the air and unclaimed (cannot be picked up). */
+export function isBallAirborne(world: World): boolean {
+  return world.ball.ownerId === null && world.ball.height > 0;
+}
+
+/** Sit the stone on the plinth with no launch — placement / day roll. */
+function poseBallOnPlinth(world: World): void {
   world.ball.position = { ...world.map.turnUp };
   world.ball.velocity = { x: 0, y: 0 };
+  world.ball.height = PLINTH_HEIGHT;
+  world.ball.spin = 0;
+  world._ballHeightVel = 0;
+  world._ballSpinRate = 0;
+  Matter.Body.setPosition(world.physics.ballBody, world.ball.position);
+  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+}
+
+/** Put the stone on the pitch. Tests use this after teleporting the ball. */
+export function groundBall(world: World): void {
+  world.ball.height = 0;
+  world._ballHeightVel = 0;
+  world._ballSpinRate = 0;
+  if (world.ball.ownerId === null) setBallSensor(world.physics, false);
+}
+
+/** Reset the stone to the turn-up plinth and clear ownership / contest state. */
+export function tossUpBall(world: World): void {
   world.ball.ownerId = null;
   world.player.hasBall = false;
   world.passImmuneId = null;
@@ -126,9 +173,80 @@ export function tossUpBall(world: World): void {
   world.goaling.carrierId = null;
   world.goaling.taps = 0;
   world.goaling.lastTapTick = 0;
-  Matter.Body.setPosition(world.physics.ballBody, world.ball.position);
-  Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
+  poseBallOnPlinth(world);
   setBallSensor(world.physics, false);
+}
+
+/**
+ * Ashbourne turn-up: launch up and out from the plinth with seeded
+ * direction / spin, bounded so the hug can still pack underneath.
+ */
+export function throwUpBall(world: World): void {
+  tossUpBall(world);
+  const rng = world._rng;
+  const angle = rng() * Math.PI * 2;
+  const out = THROW_OUT_MIN + rng() * (THROW_OUT_MAX - THROW_OUT_MIN);
+  const up = THROW_UP_MIN + rng() * (THROW_UP_MAX - THROW_UP_MIN);
+  const spinMag = THROW_SPIN_MIN + rng() * (THROW_SPIN_MAX - THROW_SPIN_MIN);
+  const spinSign = rng() < 0.5 ? -1 : 1;
+  world.ball.velocity = {
+    x: Math.cos(angle) * out,
+    y: Math.sin(angle) * out,
+  };
+  world.ball.height = PLINTH_HEIGHT;
+  world.ball.spin = rng() * Math.PI * 2;
+  world._ballHeightVel = up;
+  world._ballSpinRate = spinSign * spinMag;
+  Matter.Body.setVelocity(world.physics.ballBody, {
+    x: world.ball.velocity.x * MATTER_VELOCITY_SCALE,
+    y: world.ball.velocity.y * MATTER_VELOCITY_SCALE,
+  });
+  setBallSensor(world.physics, true);
+}
+
+/**
+ * Integrate throw-up height / spin. Pickup stays blocked while airborne.
+ * A carried stone is forced onto the pitch so a claim cannot hover.
+ */
+export function tickThrowUp(world: World, dt: number): void {
+  const ball = world.ball;
+  if (ball.ownerId !== null) {
+    if (ball.height !== 0 || world._ballHeightVel !== 0) {
+      ball.height = 0;
+      world._ballHeightVel = 0;
+      world._ballSpinRate = 0;
+    }
+    return;
+  }
+
+  const airborne = ball.height > 0 || world._ballHeightVel !== 0;
+  if (airborne) {
+    world._ballHeightVel -= THROW_UP_GRAVITY * dt;
+    ball.height += world._ballHeightVel * dt;
+    ball.spin += world._ballSpinRate * dt;
+    world._ballSpinRate *= Math.max(0, 1 - AIR_SPIN_DAMP * dt);
+    if (ball.height <= 0) {
+      ball.height = 0;
+      world._ballHeightVel = 0;
+      ball.velocity.x *= THROW_LAND_XY_DAMP;
+      ball.velocity.y *= THROW_LAND_XY_DAMP;
+      world._ballSpinRate *= THROW_LAND_SPIN_DAMP;
+      Matter.Body.setVelocity(world.physics.ballBody, {
+        x: ball.velocity.x * MATTER_VELOCITY_SCALE,
+        y: ball.velocity.y * MATTER_VELOCITY_SCALE,
+      });
+      setBallSensor(world.physics, false);
+    } else {
+      setBallSensor(world.physics, true);
+    }
+    return;
+  }
+
+  if (world._ballSpinRate !== 0) {
+    ball.spin += world._ballSpinRate * dt;
+    world._ballSpinRate *= Math.max(0, 1 - GROUND_SPIN_DAMP * dt);
+    if (Math.abs(world._ballSpinRate) < 0.05) world._ballSpinRate = 0;
+  }
 }
 
 function restoreSquadBreath(world: World): void {
@@ -142,14 +260,19 @@ export function startMatch(world: World): void {
   // Keep eventDay (Day 2 placement already set it to 2).
   if (world.eventDay !== 1 && world.eventDay !== 2) world.eventDay = 1;
   if (world.eventDay === 1) world.winState = null;
-  tossUpBall(world);
+  throwUpBall(world);
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
   world.recoveryTimeRemaining = 0;
+  world.kickoffTimeRemaining = KICKOFF_THROW_SECONDS;
 }
 
 /** Per-frame match tick. Recovery pauses the day clock; else ends day on expiry. */
 export function tickMatch(world: World, dt: number): void {
   if (world.matchState !== 'playing') return;
+  if (world.kickoffTimeRemaining > 0) {
+    world.kickoffTimeRemaining = Math.max(0, world.kickoffTimeRemaining - dt);
+    return;
+  }
   if (world.recoveryTimeRemaining > 0) {
     world.recoveryTimeRemaining = Math.max(0, world.recoveryTimeRemaining - dt);
     return;
@@ -168,8 +291,9 @@ export function scoreGoal(world: World, scorerId: string, scorerTeam: Team): voi
   if (world.matchState !== 'playing') return;
   world.score[scorerTeam] += 1;
   if (isEarlyGoalWindow(world)) {
-    tossUpBall(world);
+    throwUpBall(world);
     world.recoveryTimeRemaining = TOSS_UP_RECOVERY_SECONDS;
+    world.kickoffTimeRemaining = 0;
     return;
   }
   endDay(world, scorerId, scorerTeam, 'goal');
@@ -199,6 +323,7 @@ export function beginDay2Placement(world: World): void {
   world.matchState = 'placement';
   world.matchTimeRemaining = 0;
   world.recoveryTimeRemaining = 0;
+  world.kickoffTimeRemaining = 0;
   world.goaling.carrierId = null;
   world.goaling.taps = 0;
   world.goaling.lastTapTick = 0;
@@ -221,6 +346,7 @@ export function endEvent(
   if (world.matchState === 'over') return;
   world.matchState = 'over';
   world.recoveryTimeRemaining = 0;
+  world.kickoffTimeRemaining = 0;
   const winner: Team | null =
     world.score[0] > world.score[1] ? 0 : world.score[1] > world.score[0] ? 1 : null;
   world.winState = { winner, reason, scorerId, scorerTeam };

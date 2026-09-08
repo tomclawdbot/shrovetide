@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import Matter from 'matter-js';
 import {
   createWorld,
+  groundBall,
   isOpposingPickupBlocked,
   pickupReach,
   PLAYER_RELEASE_OPP_PICKUP_TICKS,
@@ -71,6 +72,7 @@ function packHug(
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
   world.ball.position = { x, y };
   world.ball.velocity = { x: 0, y: 0 };
+  groundBall(world);
 
   let packed = 0;
   for (let i = 0; i < world.npcs.length; i++) {
@@ -175,6 +177,7 @@ test('breakaway: after player kick, opposing chase cannot claim for ~1.6s', () =
   world.ball.ownerId = world.player.id;
   Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
   world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
 
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
   assert.equal(world.ball.ownerId, null);
@@ -202,6 +205,7 @@ test('breakaway: opposing chase can reclaim after the window if the player dawdl
   world.ball.ownerId = world.player.id;
   Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
   world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
 
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
   pinOpposingChaseOnBall(world);

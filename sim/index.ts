@@ -203,6 +203,10 @@ export {
   beginDay2Placement,
   scoreGoal,
   tossUpBall,
+  throwUpBall,
+  tickThrowUp,
+  groundBall,
+  isBallAirborne,
   tickMatch,
   dayElapsedSeconds,
   dayProgress,
@@ -219,6 +223,15 @@ export {
   DAY_CLOCK_END_HOUR,
   GOAL_TAP_SPACING_TICKS,
   GOAL_TAP_MAX_CHAIN_TICKS,
+  PLINTH_HEIGHT,
+  THROW_UP_GRAVITY,
+  THROW_UP_MIN,
+  THROW_UP_MAX,
+  THROW_OUT_MIN,
+  THROW_OUT_MAX,
+  THROW_SPIN_MIN,
+  THROW_SPIN_MAX,
+  KICKOFF_THROW_SECONDS,
 } from './match.js';
 
 export { tapGoal, tickNpcGoalTap, GOAL_REACH_DISTANCE, isCarrierAtOpponentGoal } from './goaling.js';
