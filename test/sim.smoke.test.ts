@@ -1002,8 +1002,20 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.equal(byKind.church!.name, "St Oswald's");
   assert.equal(byKind.school!.name, 'Old Grammar');
   assert.equal(byKind.market!.name, 'Market Hall');
+  assert.equal(byKind.hall!.name, 'Town Hall');
+  assert.equal(byKind.trailhead!.name, 'The Baths');
   assert.equal(byKind.church!.id, 'st-oswalds');
   assert.equal(byKind.school!.id, 'old-grammar');
+  assert.equal(byKind.market!.id, 'market-hall');
+  assert.equal(byKind.hall!.id, 'town-hall');
+  assert.equal(byKind.trailhead!.id, 'the-baths');
+  // Art swap keys — Game Art filenames. Layout (position + collision size) stays.
+  assert.equal(byKind.church!.position.x, 250 * TOWN_SCALE);
+  assert.equal(byKind.church!.position.y, 360 * TOWN_SCALE);
+  assert.equal(byKind.school!.position.x, 740 * TOWN_SCALE);
+  assert.equal(byKind.market!.position.x, 1380 * TOWN_SCALE);
+  assert.equal(byKind.hall!.position.x, 1464 * TOWN_SCALE);
+  assert.equal(byKind.trailhead!.position.x, 1654 * TOWN_SCALE);
 
   const riverY = map.river.position.y;
   assert.ok(byKind.church!.position.y < riverY, 'church sits north of the Henmore');
@@ -1018,6 +1030,16 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   for (const name of ['Henmore Brook', 'Market Place', 'Tissington Trail', 'The Tunnel']) {
     assert.ok(placeNames.includes(name), `place label ${name}`);
   }
+  const placeById = Object.fromEntries(map.places.map((p) => [p.id, p]));
+  assert.equal(placeById['henmore-brook']?.kind, 'brook');
+  assert.equal(placeById['market-place']?.kind, 'plaza');
+  assert.equal(placeById['tissington-trail']?.kind, 'trail');
+  assert.equal(placeById['the-tunnel']?.kind, 'tunnel');
+  assert.equal(placeById['green-man']?.kind, 'inn-sign');
+  const greenMan = map.obstacles.filter(isBuilding).find((b) => b.id === 'the-green-man');
+  assert.ok(greenMan, 'The Green Man pub keeps its footprint');
+  assert.equal(placeById['green-man']!.position.x, greenMan!.position.x);
+  assert.equal(placeById['green-man']!.position.y, greenMan!.position.y);
 
   for (const goal of map.goals) {
     assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);

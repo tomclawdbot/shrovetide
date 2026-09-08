@@ -172,6 +172,32 @@ const TEX_DOWN_HUG_32 = 'player-downards-hug-32';
 /** Neighbours in the stone-hug that flip runner → outstretched hug pose. */
 const HUG_POSE_NEIGHBORS = 2;
 
+/**
+ * Tom-approved Ashbourne landmark art. Filenames match Building.id / PlaceMark.id
+ * from sim/maps.ts. Layout (#40 footprints) stays; this is a client art swap.
+ */
+const LANDMARK_SPRITE_IDS = [
+  'st-oswalds',
+  'old-grammar',
+  'market-hall',
+  'town-hall',
+  'the-baths',
+  'the-tunnel',
+  'tissington-trail',
+  'henmore-brook',
+  'market-place',
+  'green-man',
+] as const;
+
+const LANDMARK_TEX_PREFIX = 'landmark-';
+const LANDMARK_GROUND_DEPTH = 0.12;
+const LANDMARK_BUILDING_DEPTH = 0.22;
+const LANDMARK_SIGN_DEPTH = 0.32;
+
+function landmarkTextureKey(id: string): string {
+  return `${LANDMARK_TEX_PREFIX}${id}`;
+}
+
 function buildTag(build: Build): string {
   return build === 'runner' ? 'RUNNER' : 'HUGGER';
 }
@@ -318,6 +344,9 @@ export class GameScene extends Phaser.Scene {
     this.load.image(TEX_UP_HUG_32, 'sprites/players/play/upards-hug-32.png');
     this.load.image(TEX_DOWN_RUN_32, 'sprites/players/play/downards-runner-32.png');
     this.load.image(TEX_DOWN_HUG_32, 'sprites/players/play/downards-hug-32.png');
+    for (const id of LANDMARK_SPRITE_IDS) {
+      this.load.image(landmarkTextureKey(id), `sprites/landmarks/${id}.png`);
+    }
   }
 
   /** Wall clock. Phaser game time can race and skip the kickoff beat. */
@@ -432,6 +461,7 @@ export class GameScene extends Phaser.Scene {
       TEX_UP_HUG_32,
       TEX_DOWN_RUN_32,
       TEX_DOWN_HUG_32,
+      ...LANDMARK_SPRITE_IDS.map(landmarkTextureKey),
     ]) {
       this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
@@ -726,10 +756,12 @@ export class GameScene extends Phaser.Scene {
     this.drawRoads(rand);
     this.drawMarketPlaza();
     this.drawTunnelPortal();
+    this.drawPlaceSprites();
 
     for (const o of map.obstacles) {
       this.drawBuilding(o);
     }
+    this.drawGreenManSign();
     this.drawLampPosts();
     this.drawPlaceLabels();
 
@@ -738,7 +770,10 @@ export class GameScene extends Phaser.Scene {
       const civic = isCivicBuilding(o);
       const oy = o.position.y - o.height / 2;
       const fasciaH = Math.min(18, o.height * 0.22);
-      const labelY = civic ? oy - (o.kind === 'church' ? 118 : 36) : oy + 4 + fasciaH * 0.5;
+      const sprite = this.hasLandmarkSprite(o.id);
+      const labelY = civic
+        ? oy - (o.kind === 'church' && !sprite ? 118 : 10)
+        : oy + 4 + fasciaH * 0.5;
       const label = this.add
         .text(o.position.x, labelY, o.name.toUpperCase(), {
           fontFamily: FONT,
@@ -918,7 +953,69 @@ export class GameScene extends Phaser.Scene {
     g.fillCircle(x, y - 8, 6);
   }
 
-  /** Timber-framed pub, brick shop, or civic massing — art later keys off `id`. */
+  /** Native pixel size of a loaded landmark texture, or null. */
+  private landmarkNativeSize(id: string): { w: number; h: number } | null {
+    const key = landmarkTextureKey(id);
+    if (!this.textures.exists(key)) return null;
+    const src = this.textures.get(key).getSourceImage() as { width: number; height: number };
+    if (!src?.width || !src?.height) return null;
+    return { w: src.width, h: src.height };
+  }
+
+  private hasLandmarkSprite(id: string): boolean {
+    return this.textures.exists(landmarkTextureKey(id));
+  }
+
+  /**
+   * Landmark art centered on the #40 footprint. Collision stays on the sim rect;
+   * this only swaps what the player sees.
+   */
+  private placeLandmarkSprite(
+    id: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    depth: number,
+  ): Phaser.GameObjects.Image | null {
+    const key = landmarkTextureKey(id);
+    if (!this.textures.exists(key)) return null;
+    const img = this.add.image(x, y, key).setDepth(depth);
+    img.setOrigin(0.5, 0.5);
+    img.setDisplaySize(width, height);
+    this.adoptWorld(img);
+    return img;
+  }
+
+  /** Brook / trail / plaza / tunnel cues — places have no collision box, so size to native art. */
+  private drawPlaceSprites(): void {
+    for (const p of this.world.map.places) {
+      if (p.kind === 'inn-sign') continue;
+      const size = this.landmarkNativeSize(p.id);
+      if (!size) continue;
+      this.placeLandmarkSprite(
+        p.id,
+        p.position.x,
+        p.position.y,
+        size.w,
+        size.h,
+        LANDMARK_GROUND_DEPTH,
+      );
+    }
+  }
+
+  /** Hanging inn sign beside The Green Man — overlay, not a building footprint. */
+  private drawGreenManSign(): void {
+    const size = this.landmarkNativeSize('green-man');
+    if (!size) return;
+    const pub = this.world.map.obstacles.find((o): o is Building => isBuilding(o) && o.id === 'the-green-man');
+    const mark = this.world.map.places.find((p) => p.id === 'green-man');
+    const x = pub ? pub.position.x + pub.width / 2 + size.w * 0.42 : (mark?.position.x ?? 0) + 36;
+    const y = pub ? pub.position.y - pub.height * 0.18 : (mark?.position.y ?? 0) - 18;
+    this.placeLandmarkSprite('green-man', x, y, size.w, size.h, LANDMARK_SIGN_DEPTH);
+  }
+
+  /** Timber-framed pub, brick shop, or civic massing — art keys off `id`. */
   private drawBuilding(o: Obstacle): void {
     const g = this.mapGfx;
     if ('radius' in o) {
@@ -928,6 +1025,17 @@ export class GameScene extends Phaser.Scene {
       g.fillCircle(o.position.x, o.position.y, o.radius);
       g.lineStyle(3, PALETTE.buildingEdge, 1);
       g.strokeCircle(o.position.x, o.position.y, o.radius);
+      return;
+    }
+    if (isBuilding(o) && this.hasLandmarkSprite(o.id)) {
+      this.placeLandmarkSprite(
+        o.id,
+        o.position.x,
+        o.position.y,
+        o.width,
+        o.height,
+        LANDMARK_BUILDING_DEPTH,
+      );
       return;
     }
     if (isBuilding(o)) {
@@ -1025,28 +1133,30 @@ export class GameScene extends Phaser.Scene {
 
     if (pub) {
       const greenMan = isBuilding(o) && o.id === 'the-green-man';
-      const hx = ox + o.width + 4;
-      g.lineStyle(3, PALETTE.timberBeam, 1);
-      g.lineBetween(hx, oy + 6, hx, oy + (greenMan ? 40 : 28));
-      if (greenMan) {
-        // Hanging inn sign — Green Man homage, not a crest.
-        g.fillStyle(PALETTE.pubFascia, 1);
-        g.fillRoundedRect(hx - 22, oy + 38, 44, 36, 4);
-        g.lineStyle(3, PALETTE.pubSign, 1);
-        g.strokeRoundedRect(hx - 22, oy + 38, 44, 36, 4);
-        g.fillStyle(PALETTE.greenMan, 1);
-        g.fillCircle(hx, oy + 54, 10);
-        g.fillStyle(PALETTE.hedgeLeaf, 0.95);
-        g.fillCircle(hx - 9, oy + 50, 5);
-        g.fillCircle(hx + 9, oy + 50, 5);
-        g.fillCircle(hx, oy + 44, 5);
-      } else {
-        g.fillStyle(PALETTE.pubFascia, 1);
-        g.fillRoundedRect(hx - 16, oy + 26, 32, 22, 3);
-        g.lineStyle(2, PALETTE.pubSign, 1);
-        g.strokeRoundedRect(hx - 16, oy + 26, 32, 22, 3);
-        g.fillStyle(PALETTE.pubSign, 1);
-        g.fillCircle(hx, oy + 37, 5);
+      if (!(greenMan && this.hasLandmarkSprite('green-man'))) {
+        const hx = ox + o.width + 4;
+        g.lineStyle(3, PALETTE.timberBeam, 1);
+        g.lineBetween(hx, oy + 6, hx, oy + (greenMan ? 40 : 28));
+        if (greenMan) {
+          // Hanging inn sign — Green Man homage, not a crest.
+          g.fillStyle(PALETTE.pubFascia, 1);
+          g.fillRoundedRect(hx - 22, oy + 38, 44, 36, 4);
+          g.lineStyle(3, PALETTE.pubSign, 1);
+          g.strokeRoundedRect(hx - 22, oy + 38, 44, 36, 4);
+          g.fillStyle(PALETTE.greenMan, 1);
+          g.fillCircle(hx, oy + 54, 10);
+          g.fillStyle(PALETTE.hedgeLeaf, 0.95);
+          g.fillCircle(hx - 9, oy + 50, 5);
+          g.fillCircle(hx + 9, oy + 50, 5);
+          g.fillCircle(hx, oy + 44, 5);
+        } else {
+          g.fillStyle(PALETTE.pubFascia, 1);
+          g.fillRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+          g.lineStyle(2, PALETTE.pubSign, 1);
+          g.strokeRoundedRect(hx - 16, oy + 26, 32, 22, 3);
+          g.fillStyle(PALETTE.pubSign, 1);
+          g.fillCircle(hx, oy + 37, 5);
+        }
       }
     } else {
       const awningY = oy + fasciaH + 3;
@@ -1253,7 +1363,7 @@ export class GameScene extends Phaser.Scene {
   /** Market Place cobbles — render only, hug still crosses the square. */
   private drawMarketPlaza(): void {
     const mark = this.world.map.places.find((p) => p.kind === 'plaza');
-    if (!mark) return;
+    if (!mark || this.hasLandmarkSprite(mark.id)) return;
     const g = this.mapGfx;
     g.fillStyle(PALETTE.cobble, 0.42);
     g.fillEllipse(mark.position.x, mark.position.y + 8, 220, 140);
@@ -1267,7 +1377,7 @@ export class GameScene extends Phaser.Scene {
   /** Tissington Trail tunnel mouth — hillside cutting, not a tourist maze. */
   private drawTunnelPortal(): void {
     const mark = this.world.map.places.find((p) => p.kind === 'tunnel');
-    if (!mark) return;
+    if (!mark || this.hasLandmarkSprite(mark.id)) return;
     const g = this.mapGfx;
     const x = mark.position.x;
     const y = mark.position.y;
@@ -1292,7 +1402,14 @@ export class GameScene extends Phaser.Scene {
     for (const p of this.world.map.places) {
       if (p.kind === 'inn-sign') continue;
       const size = p.kind === 'brook' || p.kind === 'trail' ? '16px' : '14px';
-      const lift = p.kind === 'tunnel' ? -36 : p.kind === 'brook' ? -6 : -18;
+      const art = this.landmarkNativeSize(p.id);
+      const lift = art
+        ? -(art.h / 2 + 8)
+        : p.kind === 'tunnel'
+          ? -36
+          : p.kind === 'brook'
+            ? -6
+            : -18;
       const label = this.add
         .text(p.position.x, p.position.y + lift, p.name.toUpperCase(), {
           fontFamily: FONT,
