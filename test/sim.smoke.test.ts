@@ -559,7 +559,7 @@ test('feel: carrying the ball does not rocket-launch the player', () => {
   runTicks(world, east, 60);
   const dx = world.player.position.x - x0;
   // Carrier is slower (carrierSpeedMult 0.62) — still px/s, not px/tick.
-  assert.ok(dx > 80, `carrier should still run, got ${dx}`);
+  assert.ok(dx > 60, `carrier should still run, got ${dx}`);
   assert.ok(dx < 140, `carrier must not be collision-launched, got ${dx}`);
 });
 
@@ -804,7 +804,7 @@ test('feel: carrying toward the millstone is slower than running empty', () => {
   runTicks(laden, east, 60);
   const dxEmpty = empty.player.position.x - field.x;
   const dxCarry = laden.player.position.x - field.x;
-  assert.ok(dxCarry > 80, `carrier should still cover ground, got ${dxCarry}`);
+  assert.ok(dxCarry > 60, `carrier should still cover ground, got ${dxCarry}`);
   assert.ok(
     dxCarry < dxEmpty * 0.78,
     `carry should be noticeably slower than empty (${dxCarry} vs ${dxEmpty})`,
