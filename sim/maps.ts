@@ -32,18 +32,54 @@ export interface Circle {
   radius: number;
 }
 
-/** High-street frontage — pubs and shops, not blank boxes. */
-export type BuildingKind = 'pub' | 'shop';
+/**
+ * High-street frontage plus civic massing.
+ * `id` is the stable art key — Game Art can swap a sprite without moving the footprint.
+ */
+export type BuildingKind = 'pub' | 'shop' | 'church' | 'school' | 'market' | 'hall' | 'trailhead';
+
+export const CIVIC_KINDS: readonly BuildingKind[] = [
+  'church',
+  'school',
+  'market',
+  'hall',
+  'trailhead',
+];
 
 export interface Building extends RectZone {
   name: string;
   kind: BuildingKind;
+  /** Stable slug for later landmark sprites. Layout stays; art keys off this. */
+  id: string;
+}
+
+/** Labeled place — render / art swap. Collision lives on OOB or a matching Building. */
+export type PlaceKind = 'brook' | 'plaza' | 'trail' | 'tunnel' | 'inn-sign';
+
+export interface PlaceMark {
+  id: string;
+  kind: PlaceKind;
+  name: string;
+  position: Vec2Like;
 }
 
 export type Obstacle = Building | Circle;
 
 export function isBuilding(o: Obstacle): o is Building {
   return 'kind' in o && 'name' in o;
+}
+
+export function isCivicBuilding(o: Obstacle): o is Building {
+  return isBuilding(o) && CIVIC_KINDS.includes(o.kind);
+}
+
+/** Homage slug — art key, not a trademark or street address. */
+export function landmarkId(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -69,8 +105,8 @@ export interface GoalMarker {
 
 export interface Bridge extends RectZone {}
 
-/** Town street vs millstone-approach track. Visual / later landmarks — not collision. */
-export type RoadKind = 'street' | 'lane';
+/** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
+export type RoadKind = 'street' | 'lane' | 'trail';
 
 /** Soft winding strip — polyline of short segments, not an axis-aligned slab. */
 export interface RoadSegment {
@@ -109,6 +145,11 @@ export interface TownMap {
   roads: RoadSegment[];
   /** Lamp posts on the road network. Render-only; glow is a client Nightfall hook. */
   streetLights: StreetLight[];
+  /**
+   * Named places that orient the town (brook, plaza, trail, tunnel).
+   * Labels + massing in the client; art swap keys off `id`. Not collision.
+   */
+  places: PlaceMark[];
   /** Two millstones, one per team. */
   goals: GoalMarker[];
   /** "Turn-up" point — where the ball spawns at match start. */
@@ -141,6 +182,8 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
 
 /** Buildings move with the parish but do not become fortresses. */
 const BUILDING_SIZE = 1.25;
+/** Civic massing reads from a screenshot without walling off hug routes. */
+const LANDMARK_SIZE = 1.65;
 function sbuilding(
   x: number,
   y: number,
@@ -150,12 +193,35 @@ function sbuilding(
   kind: BuildingKind,
 ): Building {
   return {
+    id: landmarkId(name),
     position: sxy(x, y),
     width: w * BUILDING_SIZE,
     height: h * BUILDING_SIZE,
     name,
     kind,
   };
+}
+
+function slandmark(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  name: string,
+  kind: BuildingKind,
+): Building {
+  return {
+    id: landmarkId(name),
+    position: sxy(x, y),
+    width: w * LANDMARK_SIZE,
+    height: h * LANDMARK_SIZE,
+    name,
+    kind,
+  };
+}
+
+function smark(x: number, y: number, name: string, kind: PlaceKind): PlaceMark {
+  return { id: landmarkId(name), kind, name, position: sxy(x, y) };
 }
 
 function slight(x: number, y: number): StreetLight {
@@ -281,20 +347,19 @@ function hedgeCol(
 // three bridge lanes and east/west along the banks — slower than the river.
 //
 //   ┌─────────────────────────────────────────────────────────────┐
-//   │ [churchyard]          ══ hedge ══             [open field]  │
-//   │   OOB                                                       │
+//   │ [St Oswald's] ══ hedge ══  [Old Grammar]   [Trail / Tunnel] │
+//   │   churchyard                                                │
 //   │      ▲ lane 1                  ▲ lane 3                      │
-//   │   ▒▒▒▒┼▒▒▒▒▒▒▒▒▒▒RIVER▒▒▒▒▒▒▒▒▒▒┼▒▒▒▒                       │
+//   │   ▒▒▒▒┼▒▒▒▒ HENMORE BROOK ▒▒▒▒▒▒┼▒▒▒▒                       │
 //   │      │             ▲ lane 2 (turn-up)          │              │
 //   │   ══ hedge ══                                      ══ hedge ═│
-//   │              ┌──┐                                             │
-//   │              │T │ town core                                   │
+//   │              ┌──┐  Green Man / high street                    │
+//   │              │T │  Market Place / Town Hall (south)           │
 //   │              └──┘                                             │
 //   │                              [open field]              [memorial]│
 //   └─────────────────────────────────────────────────────────────┘
 //
-//   Up'Ards millstone ◄────────  center  ────────► Down'Ards millstone
-//   (team 0, left)                                  (team 1, right)
+//   Clifton (Down score, west) ◄── Henmore ──► Sturston (Up score, east)
 // ---------------------------------------------------------------------------
 
 const BRIDGE_XS = [400, 1200, 2000];
@@ -320,10 +385,15 @@ export const ASHBOURNE_TOWN: TownMap = {
     // South of the river (between turn-up bridge and Down'Ards half)
     sbuilding(1080, 1080, 100, 80, 'The Vaults', 'pub'),
     sbuilding(1260, 1140, 90, 90, 'The White Hart', 'pub'),
-    sbuilding(1380, 1080, 70, 110, 'Market Hall', 'shop'),
+    slandmark(1380, 1080, 78, 112, 'Market Hall', 'market'),
+    slandmark(1464, 1088, 72, 86, 'Town Hall', 'hall'),
     // Flank inns — readable from a millstone run, not blocking the stones
     sbuilding(600, 1280, 90, 70, 'The Wheel', 'pub'),
     sbuilding(1820, 320, 110, 80, 'The Coach & Horses', 'pub'),
+    // Civic landmarks — homage names, not crests or street addresses.
+    slandmark(250, 360, 118, 86, "St Oswald's", 'church'),
+    slandmark(740, 400, 150, 72, 'Old Grammar', 'school'),
+    slandmark(1654, 228, 78, 64, 'The Baths', 'trailhead'),
   ],
 
   // OOB — players & ball physically can't enter (well, ball gets bounced back).
@@ -348,9 +418,10 @@ export const ASHBOURNE_TOWN: TownMap = {
   // so play is channelled, not sealed. Rows sit outside the 0.18–0.46 /
   // 0.62–0.84 placement bands so 17v17 does not spawn inside a crawl.
   hedges: [
-    ...hedgeRow(200, 36, 80, 2320, BRIDGE_XS, LANE_GAP_HALF),
+    ...hedgeRow(200, 36, 80, 2320, [...BRIDGE_XS, 1680], LANE_GAP_HALF),
     ...hedgeRow(1480, 36, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
-    ...hedgeCol(360, 28, 320, 1460, [880], RIVER_GAP_HALF),
+    // Starts south of the church/school lanes so those stubs are not a hedge crawl.
+    ...hedgeCol(360, 28, 600, 1460, [880], RIVER_GAP_HALF),
     ...hedgeCol(2080, 28, 320, 1280, [880], RIVER_GAP_HALF),
     // Goal approaches — hedges flank the millstone lanes, clear of the stones.
     srect(355, 754, 270, 22),
@@ -463,6 +534,32 @@ export const ASHBOURNE_TOWN: TownMap = {
       [2000, 828],
       [2000, 880],
     ]),
+    // Church gate — west-bridge lane up to St Oswald's (stops short of the yard).
+    sroad('lane', 36, [
+      [508, 758],
+      [400, 580],
+      [300, 440],
+      [250, 380],
+    ]),
+    // Old Grammar — north off the George / west-bridge lane.
+    sroad('lane', 36, [
+      [668, 712],
+      [710, 540],
+      [740, 420],
+    ]),
+    // Tissington Trail — former railway cutting, joins the Coach lane.
+    sroad('trail', 34, [
+      [1630, 48],
+      [1650, 140],
+      [1688, 240],
+      [1740, 340],
+      [1764, 418],
+    ]),
+    // Market Place east — Town Hall fronts the same square as Market Hall.
+    sroad('street', 40, [
+      [1408, 1094],
+      [1464, 1088],
+    ], 0),
   ],
 
   // Verge lamps — sit on the new lanes, not in the Henmore, not on the stones.
@@ -494,6 +591,21 @@ export const ASHBOURNE_TOWN: TownMap = {
     slight(1200, 808),
     slight(1200, 952),
     slight(428, 968),
+    slight(360, 540),
+    slight(268, 400),
+    slight(708, 548),
+    slight(736, 428),
+    slight(1660, 160),
+    slight(1728, 320),
+    slight(1460, 1096),
+  ],
+
+  places: [
+    smark(720, 818, 'Henmore Brook', 'brook'),
+    smark(1288, 1104, 'Market Place', 'plaza'),
+    smark(1708, 168, 'Tissington Trail', 'trail'),
+    smark(1630, 52, 'The Tunnel', 'tunnel'),
+    smark(1080, 600, 'Green Man', 'inn-sign'),
   ],
 
   // Millstones sit on the north bank (river spans design y 820–940), inland

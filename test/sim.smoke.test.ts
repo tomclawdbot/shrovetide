@@ -20,6 +20,7 @@ import {
   HUG_MIN_SHOVE,
   hugShoveAuthority,
   isBuilding,
+  isCivicBuilding,
   isCarrierAtOpponentGoal,
   isInHedge,
   isInHedgeSlow,
@@ -985,7 +986,45 @@ test('map: buildings read as named Ashbourne pubs and shops', () => {
   assert.ok(names.includes('Gingerbread Shop'), 'Ashbourne gingerbread shop should be on the map');
   for (const b of buildings) {
     assert.ok(b.name.length >= 4 && b.name.length <= 24, `${b.name} should be a short readable sign`);
+    assert.ok(b.id.length >= 3, `${b.name} needs a stable art id`);
   }
+});
+
+test('map: Ashbourne landmarks orient church, school, trail, and market', () => {
+  const map = ASHBOURNE_TOWN;
+  const civic = map.obstacles.filter(isCivicBuilding);
+  const byKind = Object.fromEntries(civic.map((b) => [b.kind, b]));
+  assert.ok(byKind.church, 'St Oswald’s–inspired church footprint');
+  assert.ok(byKind.school, 'Old Grammar footprint');
+  assert.ok(byKind.market, 'Market Hall footprint');
+  assert.ok(byKind.hall, 'Town Hall massing');
+  assert.ok(byKind.trailhead, 'trailhead / baths cue');
+  assert.equal(byKind.church!.name, "St Oswald's");
+  assert.equal(byKind.school!.name, 'Old Grammar');
+  assert.equal(byKind.market!.name, 'Market Hall');
+  assert.equal(byKind.church!.id, 'st-oswalds');
+  assert.equal(byKind.school!.id, 'old-grammar');
+
+  const riverY = map.river.position.y;
+  assert.ok(byKind.church!.position.y < riverY, 'church sits north of the Henmore');
+  assert.ok(byKind.church!.position.x < map.width * 0.35, 'church reads on the Clifton / west side');
+  assert.ok(byKind.school!.position.y < riverY, 'school sits north of the Henmore');
+  assert.ok(byKind.market!.position.y > riverY, 'market sits south of the Henmore');
+  assert.ok(byKind.trailhead!.position.y < riverY, 'trailhead is on the north cutting');
+  assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
+
+  assert.ok(map.roads.some((r) => r.kind === 'trail'), 'Tissington Trail is a trail strip');
+  const placeNames = map.places.map((p) => p.name);
+  for (const name of ['Henmore Brook', 'Market Place', 'Tissington Trail', 'The Tunnel']) {
+    assert.ok(placeNames.includes(name), `place label ${name}`);
+  }
+
+  for (const goal of map.goals) {
+    assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
+    assert.equal(isInObstacle(goal.position, map), false);
+  }
+  assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up still on the centre deck');
+  assert.equal(isWalkable({ x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE }, map), true, 'NW field stays playable');
 });
 
 test('map: 17v17 placement stays out of walls and OOB', () => {
