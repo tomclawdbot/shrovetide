@@ -15,6 +15,7 @@ import { hugStaminaMultForBuild } from './builds.js';
 import { difficultyTuning } from './difficulty.js';
 import { isInHugZone } from './hug.js';
 import { goalFor, opponentGoalFor, speedMultiplierAt } from './maps.js';
+import { isOpposingPickupBlocked } from './pass.js';
 import { MATTER_VELOCITY_SCALE } from './physics.js';
 import { getSpeedMultiplier, updateStamina } from './stamina.js';
 import type { NPC, Team, Vec2 } from './types.js';
@@ -185,7 +186,11 @@ export function npcSpeedCap(
   const tune = difficultyTuning(world.difficulty);
   const speedBase = PLAYER_MAX_SPEED * (opp ? tune.opponentSpeedMult : 1);
   const looseMult = opp ? tune.opponentLooseBoost : LOOSE_BALL_SPEED_MULT;
-  const looseBoost = canBurst && world.ball.ownerId === null && aimingAtLoose ? looseMult : 1;
+  // Player Rip/kick window: no hot opposing chase — stone stays readable.
+  const looseBoost =
+    canBurst && world.ball.ownerId === null && aimingAtLoose && !(opp && isOpposingPickupBlocked(world))
+      ? looseMult
+      : 1;
   const carryMult = carrying ? MOVEMENT.carrierSpeedMult : 1;
   const driveBoost = carrying
     ? opp
@@ -310,8 +315,8 @@ function holdTarget(npc: NPC, world: World): Vec2 {
 
   if (world.ball.ownerId === null) {
     const helpCount = holdLooseHelpCount(npc, world);
-    const help =
-      range < HOLD_LOOSE_ENGAGE_DISTANCE || isAmongClosestHolders(npc, world, helpCount);
+    const engage = holdLooseEngageDistance(npc, world);
+    const help = range < engage || isAmongClosestHolders(npc, world, helpCount);
     return help ? world.ball.position : { x: home.x, y: home.y };
   }
 
@@ -336,8 +341,17 @@ function holdReclaimCount(npc: NPC, world: World): number {
 }
 
 function holdLooseHelpCount(npc: NPC, world: World): number {
-  if (isOpponent(npc, world)) return difficultyTuning(world.difficulty).opponentLooseHelpCount;
+  if (isOpponent(npc, world)) {
+    if (isOpposingPickupBlocked(world)) return 1;
+    return difficultyTuning(world.difficulty).opponentLooseHelpCount;
+  }
   return HOLD_LOOSE_HELP_COUNT;
+}
+
+/** During the player breakaway window, distant opposing holders stay home. */
+function holdLooseEngageDistance(npc: NPC, world: World): number {
+  if (isOpponent(npc, world) && isOpposingPickupBlocked(world)) return 280;
+  return HOLD_LOOSE_ENGAGE_DISTANCE;
 }
 
 /** Nearest `count` hold-role NPCs on this team to the contest, stable by id. */

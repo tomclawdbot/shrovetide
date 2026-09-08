@@ -109,8 +109,12 @@ export {
   pickupReach,
   tryPickupBall,
   passChargeRatio,
+  beginPlayerReleaseWindow,
+  isOpposingPickupBlocked,
   PASS_PICKUP_IMMUNITY_TICKS,
+  PLAYER_RELEASE_OPP_PICKUP_TICKS,
   PICKUP_PADDING,
+  RELEASE_CLEARANCE,
   MIN_CHARGE_SECONDS,
   MAX_CHARGE_SECONDS,
 } from './pass.js';

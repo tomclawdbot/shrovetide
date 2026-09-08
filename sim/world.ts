@@ -137,6 +137,11 @@ export interface World extends SimState {
   _ripGraceTicks: number;
   /** While `tick < this`, the popped stone is a sensor so it cannot re-glue. */
   _ripGhostUntilTick: number;
+  /**
+   * After a player Rip/kick, opposing chase cannot claim until this tick.
+   * Time-gated breakaway window — not a permanent AI nerf.
+   */
+  _oppPickupBlockedUntilTick: number;
   /** NPC currently holding Rip on a carrier, or null. */
   _npcRipId: string | null;
   /** 0..1 NPC Rip contest. */
@@ -326,6 +331,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     _ripPressure: 0,
     _ripGraceTicks: 0,
     _ripGhostUntilTick: 0,
+    _oppPickupBlockedUntilTick: 0,
     _npcRipId: null,
     _npcRipPressure: 0,
     _npcRipGraceTicks: 0,

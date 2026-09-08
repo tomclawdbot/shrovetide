@@ -6,6 +6,11 @@
 //   - pickup checks distance from the controlled character (world.player),
 //     not the hardcoded 'player' literal.
 //   - carried-ball lock uses the carrier's current physics body.
+//
+// Breakaway window (snap-back feel): after a *player* Rip or kick, opposing
+// chase cannot claim for PLAYER_RELEASE_OPP_PICKUP_TICKS. Clearance /
+// kicker immunity only stop the releaser; this gate is what keeps the
+// stone readable. Not a permanent AI nerf — dawdling still loses.
 
 import Matter from 'matter-js';
 import { clearPositionImpulse, setBallSensor, toMatterVelocity } from './physics.js';
@@ -13,8 +18,11 @@ import type { Vec2 } from './types.js';
 import type { World } from './world.js';
 
 export const PICKUP_PADDING = 10;
-/** Extra gap past pickup range so the kicker does not re-grab on the next tick. */
-const RELEASE_CLEARANCE = 8;
+/**
+ * Extra gap past pickup range so the kick starts outside the hug bubble.
+ * 8px left the first frame inside opposing reach; 18px gives a readable pop.
+ */
+export const RELEASE_CLEARANCE = 18;
 export const MIN_CHARGE_SECONDS = 0.2;
 export const MAX_CHARGE_SECONDS = 1.5;
 const MIN_PASS_SPEED = 120;
@@ -26,8 +34,13 @@ export function passChargeRatio(chargeSeconds: number): number {
   return (clamped - MIN_CHARGE_SECONDS) / (MAX_CHARGE_SECONDS - MIN_CHARGE_SECONDS);
 }
 
-/** ~0.3s at 60 Hz — covers the first kick's pickup bubble. */
-export const PASS_PICKUP_IMMUNITY_TICKS = 18;
+/** ~0.5s at 60 Hz — kicker cannot re-grab while the stone is leaving. */
+export const PASS_PICKUP_IMMUNITY_TICKS = 30;
+/**
+ * After a *player* Rip or kick, opposing chase cannot claim (~1.6s at 60 Hz).
+ * Gives a readable breakaway without a permanent AI nerf; dawdling still loses.
+ */
+export const PLAYER_RELEASE_OPP_PICKUP_TICKS = 96;
 
 export function pickupReach(radius: number, ballRadius: number): number {
   return radius + ballRadius + PICKUP_PADDING;
@@ -35,6 +48,16 @@ export function pickupReach(radius: number, ballRadius: number): number {
 
 function isPickupImmune(world: World, id: string): boolean {
   return world.passImmuneId === id && world.tick < world.passImmuneUntilTick;
+}
+
+/** True while opposing chase must not claim a player-released stone. */
+export function isOpposingPickupBlocked(world: World): boolean {
+  return world.tick < world._oppPickupBlockedUntilTick;
+}
+
+/** Start the short post-Rip / post-kick window (player release only). */
+export function beginPlayerReleaseWindow(world: World): void {
+  world._oppPickupBlockedUntilTick = world.tick + PLAYER_RELEASE_OPP_PICKUP_TICKS;
 }
 
 /**
@@ -69,8 +92,10 @@ export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}
 
   consider(player.id, player.position, player.radius, true);
   if (includeNpcs) {
+    const blockOpp = isOpposingPickupBlocked(world);
     for (const npc of world.npcs) {
       if (npc.role !== 'chase') continue;
+      if (blockOpp && npc.team !== world.player.team) continue;
       consider(npc.id, npc.position, npc.radius, false);
     }
   }
@@ -126,6 +151,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
     ball.ownerId = null;
     world.passImmuneId = player.id;
     world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
+    beginPlayerReleaseWindow(world);
     setBallSensor(physics, false);
     Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
     return false;
@@ -148,6 +174,7 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   ball.ownerId = null;
   world.passImmuneId = player.id;
   world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
+  beginPlayerReleaseWindow(world);
 
   // Solid again before the kick impulse so the ball interacts with the pitch.
   setBallSensor(physics, false);
