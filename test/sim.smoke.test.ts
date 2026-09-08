@@ -202,6 +202,24 @@ test('smoke: town map — runs 1000 ticks with a 17v17 roster, no errors, no NaN
   }
 });
 
+test('builds: each side fields 9 runners and 8 huggers', () => {
+  const world = createWorld();
+  const bodies = [world.player, ...world.npcs];
+  for (const team of [0, 1] as const) {
+    const side = bodies.filter((b) => b.team === team);
+    assert.equal(side.length, SQUAD_SIZE, `team ${team} has a full squad`);
+    const runners = side.filter((b) => b.build === 'runner').length;
+    const huggers = side.filter((b) => b.build === 'hugger').length;
+    assert.equal(runners, 9, `team ${team} has 9 runners`);
+    assert.equal(huggers, 8, `team ${team} has 8 huggers`);
+  }
+  assert.equal(
+    world.player.radius,
+    PLAYER_RADIUS * radiusMultForBuild(world.player.build),
+    'physics radius stays the build-scaled PLAYER_RADIUS',
+  );
+});
+
 test('smoke: runs 1000 ticks moving + sprinting with ball', () => {
   const world = createWorld();
   startMatch(world);
