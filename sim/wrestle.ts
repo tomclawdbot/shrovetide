@@ -14,7 +14,7 @@
 import Matter from 'matter-js';
 import { isInMapBounds, isInObstacle, isOutOfBounds, nearestLegalPoint } from './maps.js';
 import { CHAR_FRICTION, CHAR_FRICTION_STATIC, setBallSensor, toMatterVelocity } from './physics.js';
-import { PASS_PICKUP_IMMUNITY_TICKS } from './pass.js';
+import { beginPlayerReleaseWindow } from './pass.js';
 import {
   countBodiesNear,
   countHugNeighbors,
@@ -42,15 +42,15 @@ export const RIP_CARRIER_MIN_NEIGHBORS = 2;
 export const RIP_SUCCESS_SECONDS = 1.0;
 /** Pop speed (px/s) after the stone is already placed outside the pack. */
 export const RIP_POP_SPEED = 340;
-/** Ripper cannot re-grab while the stone is leaving the scrum. */
-export const RIP_IMMUNITY_TICKS = 48;
+/** Ripper cannot re-grab while the stone is leaving the scrum (~1s at 60 Hz). */
+export const RIP_IMMUNITY_TICKS = 60;
 /**
  * Ticks the popped stone ignores character collisions so the first physics
- * step cannot bounce it back into the bodies it just left.
+ * step cannot bounce it back into the bodies it just left (~0.3s).
  */
-export const RIP_GHOST_TICKS = 12;
+export const RIP_GHOST_TICKS = 18;
 /** Extra gap past the pack's outer skin so the stone is visibly free. */
-export const RIP_CLEAR_PADDING = 26;
+export const RIP_CLEAR_PADDING = 30;
 /** Keep a live Rip contest this many ticks after a jostle leaves Rip range. */
 export const RIP_GRACE_TICKS = 24;
 /** After an NPC pops the stone, nobody NPC-rips again until this many ticks (normal). */
@@ -243,6 +243,7 @@ export function popBallFree(world: World, dir: Vec2, speed: number, ripperId?: s
   world.passImmuneId = ripper;
   world.passImmuneUntilTick = world.tick + RIP_IMMUNITY_TICKS;
   world._ripGhostUntilTick = world.tick + RIP_GHOST_TICKS;
+  if (ripper === world.player.id) beginPlayerReleaseWindow(world);
 
   setBallSensor(physics, true);
   Matter.Body.setPosition(physics.ballBody, { x: pose.pos.x, y: pose.pos.y });

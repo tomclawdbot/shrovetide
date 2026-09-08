@@ -118,6 +118,7 @@ export function tossUpBall(world: World): void {
   world._ripPressure = 0;
   world._ripGraceTicks = 0;
   world._ripGhostUntilTick = 0;
+  world._oppPickupBlockedUntilTick = 0;
   world._npcRipId = null;
   world._npcRipPressure = 0;
   world._npcRipGraceTicks = 0;
