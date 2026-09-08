@@ -10,6 +10,7 @@ import {
   createWorld,
   EXHAUSTED_SPEED_MULT,
   goalFor,
+  groundBall,
   isAmongClosestHolders,
   isCarrierAtOpponentGoal,
   isTurnUpSwarm,
@@ -72,6 +73,7 @@ function parkBall(world: World, x: number, y: number): void {
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
   world.ball.position = { x, y };
   world.ball.velocity = { x: 0, y: 0 };
+  groundBall(world);
 }
 
 /** Park everyone else far from `keepId` so they cannot shove the test subject. */

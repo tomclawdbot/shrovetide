@@ -78,6 +78,10 @@ export interface Ball extends Body {
   readonly id: 'ball';
   readonly kind: 'ball';
   ownerId: string | null;
+  /** Height above the pitch (px). 0 = on the ground; plinth sit / throw-up. */
+  height: number;
+  /** Spin angle in radians — seeded on throw-up, sim-owned for render. */
+  spin: number;
 }
 
 /**
@@ -154,6 +158,11 @@ export interface SimState {
    * Day clock is paused while this is > 0 so sides can run back into place.
    */
   recoveryTimeRemaining: number;
+  /**
+   * Match-start "turned up" ritual. Day clock pauses while this is > 0.
+   * Pickup is blocked only while the stone is still airborne (`ball.height`).
+   */
+  kickoffTimeRemaining: number;
   /** Aggregate [team0Score, team1Score] across both days. */
   score: [number, number];
   /** Goaling tap-progress state. */

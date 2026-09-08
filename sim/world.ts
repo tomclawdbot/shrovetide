@@ -26,7 +26,7 @@ import { createPhysicsWorld, setBallSensor, stepPhysics, toMatterVelocity, MATTE
 import { getSpeedMultiplier, getSprintMultiplier, updateStamina } from './stamina.js';
 import { isTurnUpSwarm, steerNPCs, tickNpcStamina, clampNpcVelocities } from './npc.js';
 import { tryPickupBall, syncCarriedBall } from './pass.js';
-import { tickMatch } from './match.js';
+import { isBallAirborne, PLINTH_HEIGHT, tickMatch, tickThrowUp } from './match.js';
 import { tapGoal, tickNpcGoalTap } from './goaling.js';
 import { autoPlaceHome, autoPlaceOpponents } from './placement.js';
 import { hugShoveAt, isInHugZone } from './hug.js';
@@ -152,6 +152,10 @@ export interface World extends SimState {
   _npcRipCooldownUntilTick: number;
   /** Opponent pressure preset chosen on the title screen. */
   difficulty: Difficulty;
+  /** Throw-up vertical velocity (px/s, positive = up). */
+  _ballHeightVel: number;
+  /** Throw-up / settle spin rate (rad/s). */
+  _ballSpinRate: number;
 }
 
 export interface CreateWorldOptions {
@@ -291,6 +295,8 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     velocity: { x: 0, y: 0 },
     radius: BALL_RADIUS,
     ownerId: null,
+    height: PLINTH_HEIGHT,
+    spin: 0,
   };
 
   // Build physics for every character + ball.
@@ -323,6 +329,7 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     },
     winState: null,
     recoveryTimeRemaining: 0,
+    kickoffTimeRemaining: 0,
     physics,
     _rng: rng,
     _controlVel: { x: 0, y: 0 },
@@ -337,6 +344,8 @@ export function createWorld(opts: CreateWorldOptions = {}): World {
     _npcRipGraceTicks: 0,
     _npcRipCooldownUntilTick: 0,
     difficulty,
+    _ballHeightVel: 0,
+    _ballSpinRate: 0,
   };
 
   // Default strategy-phase placement — player can re-place teammates + re-role.
@@ -469,17 +478,18 @@ function pinOnPitch(
  *
  * Order of operations (matters for determinism):
  *   1. Tick match state machine (timer + end-on-expiry).
- *   2. Update wrestle (player Rip / Wriggle, then NPC Rip) and stamina
+ *   2. Integrate throw-up height / spin (pickup blocked while airborne).
+ *   3. Update wrestle (player Rip / Wriggle, then NPC Rip) and stamina
  *      (player + NPCs share the same Breath economy).
- *   3. Lock carried ball to carrier.
- *   4. Integrate + apply controlled character velocity (Wriggle adds inward).
- *   5. Steer NPCs (role-based AI).
- *   6. Step matter.js physics.
- *   7. Sync sim positions/velocities from physics bodies.
- *   8. Handle ball OOB (teleport to nearest legal point).
- *   9. Try ball pickup unless a wrestle hold is live.
- *   10. Register goal tap if input.goalTap.
- *   11. Increment tick.
+ *   4. Lock carried ball to carrier.
+ *   5. Integrate + apply controlled character velocity (Wriggle adds inward).
+ *   6. Steer NPCs (role-based AI).
+ *   7. Step matter.js physics.
+ *   8. Sync sim positions/velocities from physics bodies.
+ *   9. Handle ball OOB (teleport to nearest legal point).
+ *   10. Try ball pickup unless a wrestle hold is live or the stone is airborne.
+ *   11. Register goal tap if input.goalTap.
+ *   12. Increment tick.
  *
  * During matchState 'placement' or 'over', this function is a no-op.
  */
@@ -493,6 +503,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   if ((world.matchState as string) === 'over') return;
 
   const { player, npcs, ball, map, physics } = world;
+
+  // 1b. Turn-up throw: height / spin before wrestle + pickup.
+  tickThrowUp(world, dt);
 
   // 2. Wrestle mode (Rip / Wriggle) then stamina.
   // Rip may pop the stone here so physics carries the squirt this tick.
@@ -523,8 +536,9 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   // 3. Lock carried ball to carrier (must come before step so physics uses correct pos)
   syncCarriedBall(world);
   // A just-ripped stone stays a sensor for a few ticks so the scrum cannot
-  // bounce it straight back into the bodies it left.
-  if (world.tick < world._ripGhostUntilTick) {
+  // bounce it straight back into the bodies it left. Airborne throw-up is
+  // also a sensor so the stone flies over the packing hug.
+  if (world.tick < world._ripGhostUntilTick || isBallAirborne(world)) {
     setBallSensor(physics, true);
   }
 
@@ -619,11 +633,12 @@ export function stepWorld(world: World, input: Input, dt: number = SIM_DT): void
   }
 
   // 9. Wriggle inward correction (undo pack ejection), then pickup —
-  // skipped while a wrestle hold is live so Rip can finish.
+  // skipped while a wrestle hold is live so Rip can finish, and skipped
+  // while the stone is still in the air after the turn-up throw.
   if (wrestle.wriggleDir && player.stamina > 0) {
     applyWriggleProgress(world, wrestle.wriggleDir, wriggleDistBefore);
   }
-  if (!wrestle.suppressPickup) {
+  if (!wrestle.suppressPickup && !isBallAirborne(world)) {
     tryPickupBall(world, { includeNpcs: !isTurnUpSwarm(world) });
   }
 

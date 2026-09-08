@@ -9,6 +9,7 @@ import {
   canWriggle,
   countHugNeighbors,
   createWorld,
+  groundBall,
   hugPackExtent,
   inRipContest,
   NPC_RIP_SUCCESS_SECONDS,
@@ -93,6 +94,7 @@ function packHug(
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
   world.ball.position = { x, y };
   world.ball.velocity = { x: 0, y: 0 };
+  groundBall(world);
 
   let packed = 0;
   for (let i = 0; i < world.npcs.length; i++) {
@@ -117,6 +119,7 @@ test('rip: eligible only when empty-handed, near the stone, in a dense pack', ()
   world.ball.position = { x: field.x + 8, y: field.y };
   world.player.hasBall = false;
   world.ball.ownerId = null;
+  groundBall(world);
   assert.equal(canRip(world), false, 'isolated near the ball is not a hug');
   assert.equal(wrestleMode(world), 'none');
 
@@ -270,6 +273,7 @@ test('wriggle: eligible on the rim of a dense hug, not when isolated or carrying
   parkIsolated(world, field.x + 70, field.y);
   Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
   world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
   assert.equal(canWriggle(world), false, 'no pack to burrow into');
 
   packHug(world, field.x, field.y, 8, { x: 72, y: 0 });

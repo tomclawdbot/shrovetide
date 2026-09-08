@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import Matter from 'matter-js';
 import {
   createWorld,
+  groundBall,
   isOpposingPickupBlocked,
   pickupReach,
   PLAYER_RELEASE_OPP_PICKUP_TICKS,
@@ -71,6 +72,7 @@ function packHug(
   Matter.Body.setVelocity(world.physics.ballBody, { x: 0, y: 0 });
   world.ball.position = { x, y };
   world.ball.velocity = { x: 0, y: 0 };
+  groundBall(world);
 
   let packed = 0;
   for (let i = 0; i < world.npcs.length; i++) {
