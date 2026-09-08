@@ -487,14 +487,13 @@ export const ASHBOURNE_TOWN: TownMap = {
     slight(792, 1196),
     slight(2200, 766),
     slight(2000, 766),
-    slight(1820, 404),
+    slight(1788, 380),
     slight(1688, 536),
     slight(1704, 740),
     slight(1916, 792),
     slight(1200, 808),
     slight(1200, 952),
-    slight(400, 996),
-    slight(2000, 996),
+    slight(428, 968),
   ],
 
   // Millstones sit on the north bank (river spans design y 820–940), inland

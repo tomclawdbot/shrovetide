@@ -920,7 +920,7 @@ test('map: roads are winding connectors, not dead-end grid stubs', () => {
   const map = ASHBOURNE_TOWN;
   const empty = [
     { name: 'NW field', x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE },
-    { name: 'NE field', x: 2100 * TOWN_SCALE, y: 200 * TOWN_SCALE },
+    { name: 'NE field', x: 2100 * TOWN_SCALE, y: 480 * TOWN_SCALE },
     { name: 'old south-highway stub', x: 1680 * TOWN_SCALE, y: 960 * TOWN_SCALE },
     { name: 'far SW grass', x: 180 * TOWN_SCALE, y: 1200 * TOWN_SCALE },
   ];
