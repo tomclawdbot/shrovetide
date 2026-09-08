@@ -543,6 +543,15 @@ export class GameScene extends Phaser.Scene {
     return this.world.kickoffTimeRemaining > 0;
   }
 
+  /** Early-goal recovery throw — same plinth ritual as kickoff, no sim timer. */
+  private inRecoveryThrow(): boolean {
+    return this.world.recoveryTimeRemaining > 0 && isBallAirborne(this.world);
+  }
+
+  private inPlinthThrow(): boolean {
+    return this.inKickoff() || this.inRecoveryThrow();
+  }
+
   private applyLookKeys(dt: number): void {
     const k = this.keys;
     if (!k || this.camFollow || this.flow === 'title') return;
@@ -570,7 +579,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyCamera(): void {
-    if (this.flow === 'playing' && this.inKickoff()) {
+    if (this.flow === 'playing' && this.inPlinthThrow()) {
       this.frameKickoff();
       return;
     }
@@ -2176,11 +2185,7 @@ export class GameScene extends Phaser.Scene {
       this.hitStopLeft = Math.max(this.hitStopLeft, 0.2);
       const up = this.world.score[0] > this.lastScore[0];
       const side = up ? "Up'Ards" : "Down'Ards";
-      if (this.world.recoveryTimeRemaining > 0) {
-        this.flash(`${side} goal — 10s to get back`);
-      } else {
-        this.flash(`${side} goal`);
-      }
+      this.flash(`${side} goal`);
     }
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
@@ -2231,6 +2236,10 @@ export class GameScene extends Phaser.Scene {
           ? `${day}Turned up`
           : `${day}Turned up — play to ${mill}`,
       );
+      return;
+    }
+    if (this.inRecoveryThrow()) {
+      this.setCaption('Turned up');
       return;
     }
     if (this.world.recoveryTimeRemaining > 0) {
