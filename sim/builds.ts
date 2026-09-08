@@ -22,7 +22,7 @@ export const HUGGER_HUG_STAMINA_MULT = 0.55;
 export const RUNNER_SHOVE_MULT = 0.75;
 export const HUGGER_SHOVE_MULT = 1.45;
 
-/** Draw scale hint for the client (runners leaner, huggers thicker). */
+/** Physics radius scale vs baseline (runners leaner, huggers thicker). Client kit/silhouette is the readable cue. */
 export const RUNNER_RADIUS_MULT = 0.92;
 export const HUGGER_RADIUS_MULT = 1.08;
 

@@ -113,6 +113,8 @@ const PALETTE = {
   /** Cream/ivory jersey — Down'ards kit, distinct from black trousers and hair. */
   teamDownKit: 0xe8dcc8,
   youRing: 0xfff6e8,
+  /** Cream kit cue — sash/cap (runner) vs belt (hugger). Reads on both kits. */
+  kitCue: 0xf3ead4,
   ball: 0xf3ead4,
   ballEdge: 0x1a140c,
   shadow: 0x000000,
@@ -150,7 +152,7 @@ function buildTag(build: Build): string {
 const FONT = '"Palatino Linotype", Palatino, Georgia, serif';
 
 type Flow = 'title' | 'placing' | 'playing';
-type Teach = 'move' | 'ball' | 'kick' | 'sprint' | 'breath' | 'goal' | 'done';
+type Teach = 'move' | 'build' | 'ball' | 'kick' | 'sprint' | 'breath' | 'goal' | 'done';
 
 interface KeyState {
   W: Phaser.Input.Keyboard.Key;
@@ -249,6 +251,7 @@ export class GameScene extends Phaser.Scene {
   private spaceReady = false;
   private eatPointer = false;
   private teach: Teach = 'move';
+  private buildTeachAt = 0;
   private playStartedAt = 0;
   private hitStopLeft = 0;
   private lastGoalingTaps = 0;
@@ -308,6 +311,7 @@ export class GameScene extends Phaser.Scene {
     this.flow = 'title';
     this.difficulty = DEFAULT_DIFFICULTY;
     this.teach = 'move';
+    this.buildTeachAt = 0;
     this.scoredJuice = false;
     this.lastGoalingTaps = 0;
     this.lastScore = [0, 0];
@@ -1370,20 +1374,18 @@ export class GameScene extends Phaser.Scene {
   private handleTab = (): void => {
     if (this.flow === 'title') return;
     if (this.flow !== 'placing' && this.flow !== 'playing') return;
+    const prev = this.world.player.build;
     const newId = cycleTeammate(this.world);
     if (!newId) return;
-    this.clearPassCharge();
-    this.retargetPlace();
-    this.punchCamera();
+    this.onSwitched(prev);
   };
 
   private handleQuickSwitch = (): void => {
     if (this.flow !== 'placing' && this.flow !== 'playing') return;
+    const prev = this.world.player.build;
     const newId = quickSwitch(this.world);
     if (!newId) return;
-    this.clearPassCharge();
-    this.retargetPlace();
-    this.punchCamera();
+    this.onSwitched(prev);
   };
 
   private handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
@@ -1473,11 +1475,32 @@ export class GameScene extends Phaser.Scene {
     if (this.flow !== 'placing' && this.flow !== 'playing') return false;
     const tappedMate = teammateAtPoint(this.world, x, y, this.tapSlop());
     if (!tappedMate) return false;
+    const prev = this.world.player.build;
     if (!switchControl(this.world, tappedMate)) return false;
+    this.onSwitched(prev);
+    return true;
+  }
+
+  private onSwitched(prevBuild: Build): void {
     this.clearPassCharge();
     this.retargetPlace();
     this.punchCamera();
-    return true;
+    this.announceBuild(prevBuild);
+  }
+
+  /** Short switch beat — skip kickoff / recovery / millstone climax. */
+  private announceBuild(prevBuild: Build): void {
+    const build = this.world.player.build;
+    if (build === prevBuild) return;
+    if (this.flow !== 'playing') return;
+    if (this.world.matchState === 'over') return;
+    if (this.inKickoff()) return;
+    if (this.world.recoveryTimeRemaining > 0) return;
+    if (this.millstoneClimax()) return;
+    const copy =
+      build === 'runner' ? 'Runner — pace in the open' : 'Hugger — shove the pack';
+    this.flash(copy, 2400);
+    if (this.teach === 'build') this.teach = 'ball';
   }
 
   private handleWheel = (
@@ -1640,6 +1663,7 @@ export class GameScene extends Phaser.Scene {
     this.flow = 'playing';
     this.playStartedAt = this.now();
     this.teach = 'move';
+    this.buildTeachAt = 0;
     this.lastWall = this.now();
     this.lastScore = [...this.world.score];
     this.lastEventDay = this.world.eventDay;
@@ -1769,7 +1793,10 @@ export class GameScene extends Phaser.Scene {
     const len = Math.hypot(mx, my);
     if (shouldCommitAim({ x: mx, y: my })) {
       this.lastAim = { x: mx / len, y: my / len };
-      if (this.teach === 'move' && this.flow === 'playing') this.teach = 'ball';
+      if (this.teach === 'move' && this.flow === 'playing') {
+        this.teach = 'build';
+        this.buildTeachAt = this.now();
+      }
     }
     this.inputState.move = { x: mx, y: my };
     this.inputState.sprint = !!k?.SHIFT.isDown || !!this.touch?.sprint;
@@ -1784,7 +1811,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private advanceTeach(): void {
-    if (this.world.player.hasBall && this.teach === 'ball') this.teach = 'kick';
+    if (this.teach === 'build' && this.buildTeachAt > 0 && this.now() - this.buildTeachAt > 4500) {
+      this.teach = 'ball';
+    }
+    if (this.world.player.hasBall && (this.teach === 'ball' || this.teach === 'build')) {
+      this.teach = 'kick';
+    }
     if (this.teach === 'breath' && this.world.player.stamina < this.world.player.maxStamina * 0.85) {
       this.teach = 'goal';
     }
@@ -1892,6 +1924,90 @@ export class GameScene extends Phaser.Scene {
     const ty = Math.min(c.y, headY) - headR - 12;
     this.markerGfx.fillStyle(ring, 1);
     this.markerGfx.fillTriangle(c.x - 8, ty - 9, c.x + 8, ty - 9, c.x, ty);
+  }
+
+  /**
+   * Cream sash/cap vs belt on the sprite — kit cue without redrawing capsules.
+   * Chevron (runner) / block (hugger) sits at the feet so a scrum still reads.
+   */
+  private drawKitCue(c: RenderChar): void {
+    const g = this.markerGfx;
+    const hugger = c.build === 'hugger';
+    const pxSize = c.controlled ? PLAYER_SPRITE_PX : NPC_SPRITE_PX;
+    const { x: ux, y: uy } = this.facingOf(c);
+    const px = -uy;
+    const py = ux;
+    const half = pxSize * 0.36;
+    const cueW = Math.max(2.8, pxSize * 0.08);
+    if (hugger) {
+      const bx = c.x - ux * pxSize * 0.05;
+      const by = c.y - uy * pxSize * 0.05;
+      g.lineStyle(cueW, PALETTE.kitCue, 0.95);
+      g.lineBetween(bx - px * half, by - py * half, bx + px * half, by + py * half);
+      const cx = c.x + ux * pxSize * 0.16;
+      const cy = c.y + uy * pxSize * 0.16;
+      g.lineStyle(Math.max(2.2, pxSize * 0.06), PALETTE.kitCue, 0.9);
+      g.lineBetween(
+        cx - px * half * 0.7,
+        cy - py * half * 0.7,
+        cx + px * half * 0.7,
+        cy + py * half * 0.7,
+      );
+    } else {
+      g.lineStyle(cueW, PALETTE.kitCue, 0.95);
+      g.lineBetween(
+        c.x - px * half - ux * pxSize * 0.1,
+        c.y - py * half - uy * pxSize * 0.1,
+        c.x + px * half + ux * pxSize * 0.1,
+        c.y + py * half + uy * pxSize * 0.1,
+      );
+      g.fillStyle(PALETTE.kitCue, 0.95);
+      g.fillCircle(c.x + ux * pxSize * 0.22, c.y + uy * pxSize * 0.22, Math.max(2.6, pxSize * 0.09));
+    }
+    this.drawBuildMark(c, ux, uy, px, py, c.radius * (c.controlled ? 1.22 : 1));
+  }
+
+  /** World-space glyph: chevron (runner) vs block (hugger). Survives a scrum. */
+  private drawBuildMark(
+    c: RenderChar,
+    ux: number,
+    uy: number,
+    px: number,
+    py: number,
+    r: number,
+  ): void {
+    const g = this.markerGfx;
+    const mx = c.x - ux * r * 0.95;
+    const my = c.y - uy * r * 0.95;
+    const s = Math.max(5.5, r * 0.42);
+    g.fillStyle(PALETTE.kitCue, c.controlled ? 1 : 0.92);
+    g.lineStyle(1.6, PALETTE.ballEdge, 0.9);
+    if (c.build === 'hugger') {
+      const half = s * 0.72;
+      g.fillRect(mx - half, my - half, half * 2, half * 2);
+      g.strokeRect(mx - half, my - half, half * 2, half * 2);
+    } else {
+      const tipX = mx + ux * s * 1.15;
+      const tipY = my + uy * s * 1.15;
+      const backX = mx - ux * s * 0.55;
+      const backY = my - uy * s * 0.55;
+      g.fillTriangle(
+        tipX,
+        tipY,
+        backX - px * s * 0.7,
+        backY - py * s * 0.7,
+        backX + px * s * 0.7,
+        backY + py * s * 0.7,
+      );
+      g.strokeTriangle(
+        tipX,
+        tipY,
+        backX - px * s * 0.7,
+        backY - py * s * 0.7,
+        backX + px * s * 0.7,
+        backY + py * s * 0.7,
+      );
+    }
   }
 
   private prunePersonSprites(chars: RenderChar[]): void {
@@ -2004,6 +2120,7 @@ export class GameScene extends Phaser.Scene {
       const shadow = this.shadowSprites.get(c.id);
       if (shadow) shadow.setPosition(c.x, c.y + c.radius * 0.7);
       this.syncPersonSprite(c, 2 + i * 0.01);
+      this.drawKitCue(c);
       if (c.controlled) this.drawYouRing(c);
     }
     this.syncBuildLabels(chars);
@@ -2220,6 +2337,7 @@ export class GameScene extends Phaser.Scene {
     this.eatPointer = true;
     this.hitStopLeft = 0;
     this.teach = 'move';
+    this.buildTeachAt = 0;
     this.scoredJuice = false;
     this.lastScore = [...this.world.score];
     this.lastEventDay = 2;
@@ -2365,6 +2483,7 @@ export class GameScene extends Phaser.Scene {
     const mill = scoringGoalMarker(this.world.player.team, this.world.map).name;
     const copy: Record<Teach, string> = {
       move: touch ? 'Stick — run' : 'WASD — run',
+      build: touch ? 'Sash = runner. Belt = hugger.' : 'Sash = runner (open). Belt = hugger (pack). Tab to switch',
       ball: 'Get the stone',
       kick: touch ? 'Hold Kick' : 'Hold Space — kick',
       sprint: touch ? 'Hold Sprint — burst' : 'Shift — burst',
