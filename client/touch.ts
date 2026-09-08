@@ -11,6 +11,31 @@ export interface StickVec {
 }
 
 const STICK_RADIUS = 56;
+/**
+ * Same as MOVEMENT.inputDeadzone. Analog stick recenter on Chrome iOS leaves
+ * a tiny residual; treating that as aim sent kicks backwards vs desktop WASD.
+ */
+export const KICK_AIM_DEADZONE = 0.15;
+
+/** Unit kick aim: live stick if committed, else last committed aim, else facing. */
+export function resolveKickAim(
+  move: StickVec,
+  lastAim: StickVec,
+  facing: StickVec,
+  deadzone = KICK_AIM_DEADZONE,
+): StickVec {
+  const moveLen = Math.hypot(move.x, move.y);
+  if (moveLen > deadzone) return { x: move.x / moveLen, y: move.y / moveLen };
+  const aimLen = Math.hypot(lastAim.x, lastAim.y);
+  if (aimLen > deadzone) return { x: lastAim.x / aimLen, y: lastAim.y / aimLen };
+  const faceLen = Math.hypot(facing.x, facing.y);
+  if (faceLen > 1e-6) return { x: facing.x / faceLen, y: facing.y / faceLen };
+  return { x: 1, y: 0 };
+}
+
+export function shouldCommitAim(move: StickVec, deadzone = KICK_AIM_DEADZONE): boolean {
+  return Math.hypot(move.x, move.y) > deadzone;
+}
 
 /**
  * Map a pointer offset (px) inside the stick well to a 0..1 move vector.

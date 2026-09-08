@@ -10,6 +10,7 @@ import {
   groundBall,
   isOpposingPickupBlocked,
   pickupReach,
+  PASS_GHOST_TICKS,
   PLAYER_RELEASE_OPP_PICKUP_TICKS,
   releasePass,
   RIP_SUCCESS_SECONDS,
@@ -218,4 +219,81 @@ test('breakaway: opposing chase can reclaim after the window if the player dawdl
   const after = unownedTicksWhilePinned(world, 8);
   assert.ok(after < 8, `dawdling must allow opposing reclaim (unowned ${after} more ticks)`);
   assert.equal(opposingOwner(world), true, 'an opposing chase should claim once the window ends');
+});
+
+test('breakaway: kick from a packed hug stays unowned and travels along aim', () => {
+  const world = createWorld({ seed: 11 });
+  startMatch(world);
+  const field = openField(world);
+  packHug(world, field.x, field.y, 8);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
+  world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
+
+  assert.equal(releasePass(world, { x: 1, y: 0 }, 0.2), true, 'tap kick must fire');
+  const releaseX = world.ball.position.x;
+  assert.ok(releaseX > field.x + 20, `kick must spawn along aim (releaseX=${releaseX.toFixed(0)} from ${field.x})`);
+  assert.equal(world.ball.ownerId, null);
+  assert.equal(isOpposingPickupBlocked(world), true);
+  assert.ok(world._ripGhostUntilTick >= world.tick + PASS_GHOST_TICKS - 1, 'kick reuses ghost so the pack cannot bounce it');
+
+  const chaseTicks = PLAYER_RELEASE_OPP_PICKUP_TICKS;
+  let unowned = 0;
+  let minX = releaseX;
+  for (let i = 0; i < chaseTicks; i++) {
+    stepWorld(world, IDLE, 1 / 60);
+    minX = Math.min(minX, world.ball.position.x);
+    if (world.ball.ownerId === null) unowned += 1;
+    else break;
+  }
+
+  assert.equal(world.ball.ownerId, null, 'packed teammates/opposition must not eat the kick');
+  assert.ok(
+    unowned >= chaseTicks,
+    `kicked stone must stay unowned ~1.6s so it can be chased (unowned=${unowned} need=${chaseTicks})`,
+  );
+  assert.ok(
+    world.ball.position.x > releaseX + 40,
+    `stone must travel east along aim (dx=${(world.ball.position.x - releaseX).toFixed(0)})`,
+  );
+  assert.ok(
+    minX >= releaseX - 12,
+    `stone must not snap back west of the kick (minDx=${(minX - releaseX).toFixed(0)})`,
+  );
+  assert.equal(opposingOwner(world), false);
+});
+
+test('breakaway: kick west from a pack does not reverse east into opposition', () => {
+  const world = createWorld({ seed: 7, playerTeam: 1 });
+  startMatch(world);
+  const field = openField(world);
+  packHug(world, field.x, field.y, 8);
+  world.player.hasBall = true;
+  world.ball.ownerId = world.player.id;
+  Matter.Body.setPosition(world.physics.ballBody, { x: field.x, y: field.y });
+  world.ball.position = { x: field.x, y: field.y };
+  groundBall(world);
+
+  assert.equal(releasePass(world, { x: -1, y: 0 }, 0.8), true);
+  const releaseX = world.ball.position.x;
+  assert.ok(releaseX < field.x - 20, 'west kick must spawn west of the kicker');
+
+  let maxX = releaseX;
+  for (let i = 0; i < PLAYER_RELEASE_OPP_PICKUP_TICKS; i++) {
+    stepWorld(world, IDLE, 1 / 60);
+    maxX = Math.max(maxX, world.ball.position.x);
+    if (world.ball.ownerId !== null) break;
+  }
+
+  assert.equal(world.ball.ownerId, null, 'west kick must stay unowned through the window');
+  assert.ok(
+    world.ball.position.x < releaseX - 40,
+    `stone must keep travelling west (dx=${(world.ball.position.x - releaseX).toFixed(0)})`,
+  );
+  assert.ok(
+    maxX <= releaseX + 12,
+    `west kick must not bounce back east (maxDx=${(maxX - releaseX).toFixed(0)})`,
+  );
 });

@@ -7,10 +7,10 @@
 //     not the hardcoded 'player' literal.
 //   - carried-ball lock uses the carrier's current physics body.
 //
-// Breakaway window (snap-back feel): after a *player* Rip or kick, opposing
-// chase cannot claim for PLAYER_RELEASE_OPP_PICKUP_TICKS. Clearance /
-// kicker immunity only stop the releaser; this gate is what keeps the
-// stone readable. Not a permanent AI nerf — dawdling still loses.
+// Breakaway window (snap-back feel): after a *player* Rip or kick, *no* NPC
+// chase can claim for PLAYER_RELEASE_OPP_PICKUP_TICKS. Immunity / clearance
+// only stop the releaser; teammates eating a kick felt like instant reclaim.
+// Not a permanent AI nerf — dawdling still loses.
 
 import Matter from 'matter-js';
 import { clearPositionImpulse, setBallSensor, toMatterVelocity } from './physics.js';
@@ -37,7 +37,13 @@ export function passChargeRatio(chargeSeconds: number): number {
 /** ~0.5s at 60 Hz — kicker cannot re-grab while the stone is leaving. */
 export const PASS_PICKUP_IMMUNITY_TICKS = 30;
 /**
- * After a *player* Rip or kick, opposing chase cannot claim (~1.6s at 60 Hz).
+ * Ticks a kicked stone ignores character collisions (~0.4s). Same job as
+ * RIP_GHOST_TICKS: the first physics steps must not bounce it back into the pack.
+ * Kick is slower than a Rip pop, so this is a few frames longer.
+ */
+export const PASS_GHOST_TICKS = 24;
+/**
+ * After a *player* Rip or kick, NPC chase cannot claim (~1.6s at 60 Hz).
  * Gives a readable breakaway without a permanent AI nerf; dawdling still loses.
  */
 export const PLAYER_RELEASE_OPP_PICKUP_TICKS = 96;
@@ -50,7 +56,7 @@ function isPickupImmune(world: World, id: string): boolean {
   return world.passImmuneId === id && world.tick < world.passImmuneUntilTick;
 }
 
-/** True while opposing chase must not claim a player-released stone. */
+/** True while NPC chase must not claim a player-released stone. */
 export function isOpposingPickupBlocked(world: World): boolean {
   return world.tick < world._oppPickupBlockedUntilTick;
 }
@@ -58,6 +64,11 @@ export function isOpposingPickupBlocked(world: World): boolean {
 /** Start the short post-Rip / post-kick window (player release only). */
 export function beginPlayerReleaseWindow(world: World): void {
   world._oppPickupBlockedUntilTick = world.tick + PLAYER_RELEASE_OPP_PICKUP_TICKS;
+}
+
+/** Sensor frames so a kick/drop is not bounced back by the bodies it left. */
+function beginPassGhost(world: World): void {
+  world._ripGhostUntilTick = world.tick + PASS_GHOST_TICKS;
 }
 
 /**
@@ -92,10 +103,12 @@ export function tryPickupBall(world: World, opts: { includeNpcs?: boolean } = {}
 
   consider(player.id, player.position, player.radius, true);
   if (includeNpcs) {
-    const blockOpp = isOpposingPickupBlocked(world);
+    // Window blocks every NPC, not only opposition — a packed teammate
+    // claiming on tick 1 made kicks feel like instant reclaim.
+    const blockNpcClaim = isOpposingPickupBlocked(world);
     for (const npc of world.npcs) {
       if (npc.role !== 'chase') continue;
-      if (blockOpp && npc.team !== world.player.team) continue;
+      if (blockNpcClaim) continue;
       consider(npc.id, npc.position, npc.radius, false);
     }
   }
@@ -152,8 +165,11 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
     world.passImmuneId = player.id;
     world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
     beginPlayerReleaseWindow(world);
-    setBallSensor(physics, false);
+    beginPassGhost(world);
+    setBallSensor(physics, true);
     Matter.Body.setVelocity(physics.ballBody, { x: 0, y: 0 });
+    ball.velocity.x = 0;
+    ball.velocity.y = 0;
     return false;
   }
 
@@ -175,18 +191,20 @@ export function releasePass(world: World, aim: Vec2, chargeSeconds: number): boo
   world.passImmuneId = player.id;
   world.passImmuneUntilTick = world.tick + PASS_PICKUP_IMMUNITY_TICKS;
   beginPlayerReleaseWindow(world);
+  beginPassGhost(world);
 
-  // Solid again before the kick impulse so the ball interacts with the pitch.
-  setBallSensor(physics, false);
+  // Sensor while ghosting so the first physics steps cannot bounce the stone
+  // back into the pack. stepWorld keeps the flag until PASS_GHOST_TICKS elapse.
+  setBallSensor(physics, true);
   Matter.Body.setPosition(physics.ballBody, { x: releaseX, y: releaseY });
   // Pass speeds are authored in px/s; Matter wants px per baseDelta.
-  Matter.Body.setVelocity(
-    physics.ballBody,
-    toMatterVelocity({
-      x: Math.cos(angle) * speed,
-      y: Math.sin(angle) * speed,
-    }),
-  );
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+  Matter.Body.setVelocity(physics.ballBody, toMatterVelocity({ x: vx, y: vy }));
+  ball.position.x = releaseX;
+  ball.position.y = releaseY;
+  ball.velocity.x = vx;
+  ball.velocity.y = vy;
 
   return true;
 }

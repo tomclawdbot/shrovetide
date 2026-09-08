@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { stickVector } from '../client/touch.js';
+import { resolveKickAim, shouldCommitAim, stickVector } from '../client/touch.js';
 import { allowsPageScroll, readVisibleBox } from '../client/shell.js';
 
 test('stick: rest at origin, full tilt matches WASD magnitude 1', () => {
@@ -30,6 +30,23 @@ test('stick: half tilt is analog (sim applies the WASD damping)', () => {
   const v = stickVector(28, 0, 56);
   assert.ok(Math.abs(v.x - 0.5) < 1e-9);
   assert.equal(v.y, 0);
+});
+
+test('kick aim: live stick above deadzone wins', () => {
+  const aim = resolveKickAim({ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 });
+  assert.ok(Math.abs(aim.x - 1) < 1e-9);
+  assert.ok(Math.abs(aim.y) < 1e-9);
+});
+
+test('kick aim: stick recenter noise does not overwrite last committed aim', () => {
+  assert.equal(shouldCommitAim({ x: 0.04, y: -0.02 }), false);
+  const aim = resolveKickAim({ x: 0.04, y: -0.02 }, { x: 1, y: 0 }, { x: -1, y: 0 });
+  assert.ok(aim.x > 0.99 && Math.abs(aim.y) < 0.01, `recenter must keep last east aim, got ${aim.x},${aim.y}`);
+});
+
+test('kick aim: idle stick falls back to facing (Down Ards west)', () => {
+  const aim = resolveKickAim({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: -1, y: 0 });
+  assert.ok(aim.x < -0.99 && Math.abs(aim.y) < 0.01);
 });
 
 test('visible box: falls back to inner size when visualViewport is missing', () => {

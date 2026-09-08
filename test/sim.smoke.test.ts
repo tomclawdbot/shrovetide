@@ -572,7 +572,7 @@ test('pass: kicker cannot instantly re-grab the ball', () => {
   world.ball.ownerId = world.player.id;
   assert.equal(releasePass(world, { x: 1, y: 0 }, 0.8), true);
   assert.equal(world.player.hasBall, false);
-  assert.equal(world.physics.ballBody.isSensor, false);
+  assert.equal(world.physics.ballBody.isSensor, true, 'kick ghosts so the pack cannot bounce it back');
   runTicks(world, IDLE, PASS_PICKUP_IMMUNITY_TICKS - 1);
   assert.equal(world.player.hasBall, false, 'still immune');
   assert.equal(world.ball.ownerId, null);
@@ -598,7 +598,7 @@ test('pass: a second kick works after picking the ball up again', () => {
   assert.equal(releasePass(world, { x: 0, y: 1 }, 0.6), true);
   assert.equal(world.player.hasBall, false);
   assert.equal(world.ball.ownerId, null);
-  assert.equal(world.physics.ballBody.isSensor, false);
+  assert.equal(world.physics.ballBody.isSensor, true);
 });
 
 test('feel: sprint is faster than a walk and drains Breath without the ball', () => {
