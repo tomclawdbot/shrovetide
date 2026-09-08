@@ -74,10 +74,10 @@ const PALETTE = {
   grass: 0x3a4a28,
   grassAlt: 0x2f3e20,
   grassDark: 0x243218,
-  fieldA: 0x4a6030,
-  fieldB: 0x334422,
-  fieldC: 0x516834,
-  plough: 0x2a3818,
+  fieldA: 0x3a4a28,
+  fieldB: 0x2f3e20,
+  fieldC: 0x243218,
+  plough: 0x243218,
   mud: 0x5a3d28,
   mudDark: 0x3d291a,
   building: 0x6a4c36,
@@ -96,10 +96,10 @@ const PALETTE = {
   chimney: 0x4a3028,
   cobble: 0x6a5a48,
   cobbleEdge: 0x4a3e30,
-  /** Packed grit / worn tarmac — not Lego cobble, not white seams. */
-  tarmac: 0x4a4640,
-  tarmacWear: 0x3c3934,
-  grit: 0x5a5348,
+  /** Dark UK carriageway — not pale grey, not US asphalt blue. */
+  tarmac: 0x3a3228,
+  tarmacWear: 0x2a2218,
+  grit: 0x32281e,
   verge: 0x3a3c28,
   lampPole: 0x2a2218,
   lampHead: 0x3a3428,
@@ -807,6 +807,8 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    this.drawApproachMud();
+
     const rx = map.river.position.x - map.river.width / 2;
     const ry = map.river.position.y - map.river.height / 2;
     this.mapGfx.fillStyle(PALETTE.water, 1);
@@ -877,6 +879,34 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
+  /** Worn mud toward the millstones — channels the approach, does not seal it. */
+  private drawApproachMud(): void {
+    const g = this.mapGfx;
+    let s = 0x5a3d28;
+    const rand = (): number => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (const m of this.world.map.goals) {
+      const towardMid = m.position.x < this.world.map.width * 0.5 ? 1 : -1;
+      const x = m.position.x;
+      const y = m.position.y;
+      g.fillStyle(PALETTE.mud, 0.42);
+      g.fillEllipse(x + towardMid * 90, y + 8, 280, 150);
+      g.fillStyle(PALETTE.mudDark, 0.28);
+      g.fillEllipse(x + towardMid * 40, y + 18, 160, 90);
+      g.fillStyle(PALETTE.mud, 0.22);
+      for (let i = 0; i < 18; i++) {
+        const ox = (rand() - 0.5) * 240 + towardMid * 50;
+        const oy = (rand() - 0.5) * 110;
+        g.fillCircle(x + ox, y + oy, 8 + rand() * 16);
+      }
+    }
+  }
+
   /** English hedge-bordered parcels — slightly different grass, faint plough. */
   private drawFields(rand: () => number): void {
     const g = this.mapGfx;
@@ -887,7 +917,7 @@ export class GameScene extends Phaser.Scene {
       const y = f.position.y - f.height / 2;
       g.fillStyle(tints[i % tints.length]!, 1);
       g.fillRect(x, y, f.width, f.height);
-      g.lineStyle(2, PALETTE.plough, 0.35);
+      g.lineStyle(2, PALETTE.plough, 0.22);
       const rows = Math.max(4, Math.floor(f.height / 20));
       for (let r = 1; r < rows; r++) {
         const py = y + (r / rows) * f.height;
@@ -991,31 +1021,32 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** UK lane paint: dashed centre line, give-way at T / roundabout entries. */
+  /** UK lane paint: broken white centre, optional edge, give-way dashes on the minor arm. */
   private drawRoadMarkings(): void {
     const g = this.mapGfx;
     const map = this.world.map;
     for (const road of map.roads) {
       if (road.kind === 'trail') continue;
-      this.dashCentreLine(g, road.points, road.width);
+      this.dashCentreLine(g, road.points);
+      if (road.kind === 'street') this.strokeEdgeLines(g, road.points, road.width);
       this.paintGiveWays(g, road, map.roads, map.roundabouts);
     }
     for (const rbt of map.roundabouts) {
-      g.lineStyle(3, PALETTE.paintWorn, 0.85);
-      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.radius - 5);
+      g.lineStyle(4, PALETTE.paintWorn, 0.9);
+      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.radius - 6);
     }
   }
 
   private dashCentreLine(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
-    width: number,
   ): void {
-    const on = 22;
-    const off = 16;
-    const hw = 1.7;
+    // Fat enough to read at ~0.35× camera zoom; UK broken white, not US yellow.
+    const on = 28;
+    const off = 20;
+    const hw = 3.6;
     let phase = 0;
-    g.fillStyle(PALETTE.paint, 0.92);
+    g.fillStyle(PALETTE.paint, 0.95);
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i]!;
       const b = points[i + 1]!;
@@ -1032,7 +1063,7 @@ export class GameScene extends Phaser.Scene {
         const cycle = on + off;
         const pos = (phase + d) % cycle;
         if (pos < on) {
-          const remain = Math.min(on - pos, len - d, 18);
+          const remain = Math.min(on - pos, len - d, 22);
           const x0 = a.x + ux * d;
           const y0 = a.y + uy * d;
           const x1 = a.x + ux * (d + remain);
@@ -1050,7 +1081,37 @@ export class GameScene extends Phaser.Scene {
         }
       }
       phase = (phase + len) % (on + off);
-      void width;
+    }
+  }
+
+  /** Thin solid white kerb line on streets — skipped on lanes/trails so zoom stays quiet. */
+  private strokeEdgeLines(
+    g: Phaser.GameObjects.Graphics,
+    points: { x: number; y: number }[],
+    width: number,
+  ): void {
+    const inset = width * 0.42;
+    g.lineStyle(3, PALETTE.paintWorn, 0.55);
+    for (const side of [-1, 1]) {
+      g.beginPath();
+      let started = false;
+      for (let i = 0; i < points.length; i++) {
+        const cur = points[i]!;
+        const prev = points[Math.max(0, i - 1)]!;
+        const next = points[Math.min(points.length - 1, i + 1)]!;
+        const dx = next.x - prev.x;
+        const dy = next.y - prev.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = (-dy / len) * inset * side;
+        const ny = (dx / len) * inset * side;
+        if (!started) {
+          g.moveTo(cur.x + nx, cur.y + ny);
+          started = true;
+        } else {
+          g.lineTo(cur.x + nx, cur.y + ny);
+        }
+      }
+      g.strokePath();
     }
   }
 
@@ -1095,17 +1156,11 @@ export class GameScene extends Phaser.Scene {
       const cy = end.p.y - uy * back;
       const half = road.width * 0.38;
       g.fillStyle(PALETTE.paint, 0.95);
-      for (const offset of [-5, 5]) {
+      for (const offset of [-6, 6]) {
         const ox = cx + ux * offset;
         const oy = cy + uy * offset;
         this.paintDashRow(g, ox, oy, nx, ny, half);
       }
-      g.beginPath();
-      g.moveTo(cx + ux * 10, cy + uy * 10);
-      g.lineTo(cx - nx * 9 - ux * 4, cy - ny * 9 - uy * 4);
-      g.lineTo(cx + nx * 9 - ux * 4, cy + ny * 9 - uy * 4);
-      g.closePath();
-      g.fillPath();
     }
   }
 
@@ -1124,10 +1179,10 @@ export class GameScene extends Phaser.Scene {
       const a = t;
       const b = Math.min(t + dash, half);
       g.beginPath();
-      g.moveTo(x + nx * a, y + ny * a - 1.2);
-      g.lineTo(x + nx * b, y + ny * b - 1.2);
-      g.lineTo(x + nx * b, y + ny * b + 1.2);
-      g.lineTo(x + nx * a, y + ny * a + 1.2);
+      g.moveTo(x + nx * a, y + ny * a - 2.4);
+      g.lineTo(x + nx * b, y + ny * b - 2.4);
+      g.lineTo(x + nx * b, y + ny * b + 2.4);
+      g.lineTo(x + nx * a, y + ny * a + 2.4);
       g.closePath();
       g.fillPath();
       t += dash + gap;
