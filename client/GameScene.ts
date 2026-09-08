@@ -11,6 +11,7 @@ import {
   cycleTeammate,
   DEFAULT_DIFFICULTY,
   formatDayClock,
+  hugPackExtent,
   isBuilding,
   isBallAirborne,
   isCarrierAtOpponentGoal,
@@ -118,6 +119,14 @@ const PALETTE = {
 const SKIN = [0xe8c4a0, 0xd4a07a, 0xc48a62, 0x8d5a3c] as const;
 const HAIR = [0x1a120c, 0x2a1a12, 0x3d2914, 0x5a3a22] as const;
 
+/** Visual overscale vs sim BALL_RADIUS (10). Physics diameter stays 20px. */
+const BALL_DRAW_PX = 24;
+const BALL_TEX = 'ball-24';
+const BALL_ROLL_TEX = 'ball-roll-sheet';
+const BALL_ROLL_ANIM = 'ball-roll';
+/** Loose stone slower than this stays on the static floral frame. */
+const BALL_ROLL_MIN_SPEED = 18;
+
 function hashId(id: string): number {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
@@ -197,7 +206,7 @@ export class GameScene extends Phaser.Scene {
   private hudPad = { l: 16, r: 16, t: 16, b: 16 };
   private shadowSprites = new Map<string, Phaser.GameObjects.Ellipse>();
   private lastFacing = new Map<string, { x: number; y: number }>();
-  private ballSprite!: Phaser.GameObjects.Arc;
+  private ballSprite!: Phaser.GameObjects.Sprite;
   private ballShadow!: Phaser.GameObjects.Ellipse;
   private ballBlotch!: Phaser.GameObjects.Arc;
   private mapGfx!: Phaser.GameObjects.Graphics;
@@ -263,6 +272,14 @@ export class GameScene extends Phaser.Scene {
 
   constructor() {
     super('GameScene');
+  }
+
+  preload(): void {
+    this.load.image(BALL_TEX, 'sprites/ball/ball-24.png');
+    this.load.spritesheet(BALL_ROLL_TEX, 'sprites/ball/ball-roll-sheet-24.png', {
+      frameWidth: BALL_DRAW_PX,
+      frameHeight: BALL_DRAW_PX,
+    });
   }
 
   /** Wall clock. Phaser game time can race and skip the kickoff beat. */
@@ -366,6 +383,10 @@ export class GameScene extends Phaser.Scene {
     });
     this.scale.on('resize', this.layoutHud, this);
     window.visualViewport?.addEventListener('resize', this.layoutHud);
+
+    this.textures.get(BALL_TEX).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.textures.get(BALL_ROLL_TEX).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.ensureBallRollAnim();
 
     this.drawMapStatic();
     this.createSprites();
@@ -918,13 +939,8 @@ export class GameScene extends Phaser.Scene {
     this.adoptWorld(this.ballShadow);
 
     this.ballSprite = this.add
-      .circle(
-        this.world.ball.position.x,
-        this.world.ball.position.y,
-        this.world.ball.radius,
-        PALETTE.ball,
-      )
-      .setStrokeStyle(3, PALETTE.ballEdge)
+      .sprite(this.world.ball.position.x, this.world.ball.position.y, BALL_TEX)
+      .setDisplaySize(BALL_DRAW_PX, BALL_DRAW_PX)
       .setDepth(4);
     this.adoptWorld(this.ballSprite);
 
@@ -943,6 +959,57 @@ export class GameScene extends Phaser.Scene {
     this.adoptWorld(this.peopleGfx);
     this.markerGfx = this.add.graphics().setDepth(5);
     this.adoptWorld(this.markerGfx);
+  }
+
+  private ensureBallRollAnim(): void {
+    if (this.anims.exists(BALL_ROLL_ANIM)) return;
+    this.anims.create({
+      key: BALL_ROLL_ANIM,
+      frames: this.anims.generateFrameNumbers(BALL_ROLL_TEX, { start: 0, end: 3 }),
+      frameRate: 10,
+      repeat: -1,
+    });
+  }
+
+  /** Patterned cork sprite with throw-up lift/shadow; roll only on open ground. */
+  private syncBallSprite(b: World['ball']): void {
+    const h = b.height;
+    const lift = h * 0.55;
+    const scale = 1 + h / 180;
+    const airborne = isBallAirborne(this.world);
+
+    this.ballSprite.setPosition(b.position.x, b.position.y - lift);
+    this.ballShadow.setPosition(b.position.x + h * 0.06, b.position.y + 6 + h * 0.12);
+    this.ballShadow.setAlpha(Math.max(0.08, 0.32 * (1 - Math.min(0.75, h / 240))));
+    this.ballShadow.setScale(1 + h / 280, 1);
+
+    const hugged = hugPackExtent(this.world, b.position) !== null;
+    const speed = Math.hypot(b.velocity.x, b.velocity.y);
+    const rolling = !airborne && b.ownerId === null && !hugged && speed > BALL_ROLL_MIN_SPEED;
+
+    if (rolling) {
+      if (this.ballSprite.anims.currentAnim?.key !== BALL_ROLL_ANIM) {
+        this.ballSprite.play(BALL_ROLL_ANIM);
+      }
+      this.ballSprite.setDisplaySize(BALL_DRAW_PX, BALL_DRAW_PX);
+      this.ballSprite.setScale(scale);
+      this.ballSprite.setRotation(0);
+      this.ballSprite.anims.timeScale = Math.min(1.8, Math.max(0.55, speed / 90));
+    } else {
+      if (this.ballSprite.anims.isPlaying) this.ballSprite.anims.stop();
+      if (this.ballSprite.texture.key !== BALL_TEX) this.ballSprite.setTexture(BALL_TEX);
+      this.ballSprite.setDisplaySize(BALL_DRAW_PX, BALL_DRAW_PX);
+      this.ballSprite.setScale(scale);
+      this.ballSprite.setRotation(airborne ? b.spin : 0);
+    }
+
+    const br = b.radius * scale;
+    this.ballBlotch.setPosition(
+      b.position.x + Math.cos(b.spin) * br * 0.38,
+      b.position.y - lift + Math.sin(b.spin) * br * 0.38,
+    );
+    this.ballBlotch.setScale(scale);
+    this.ballBlotch.setVisible(b.ownerId === null);
   }
 
   private collectCharacters(): RenderChar[] {
@@ -1877,21 +1944,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     const b = this.world.ball;
-    const h = b.height;
-    const lift = h * 0.55;
-    const scale = 1 + h / 180;
-    this.ballSprite.setPosition(b.position.x, b.position.y - lift);
-    this.ballSprite.setScale(scale);
-    this.ballShadow.setPosition(b.position.x + h * 0.06, b.position.y + 6 + h * 0.12);
-    this.ballShadow.setAlpha(Math.max(0.08, 0.32 * (1 - Math.min(0.75, h / 240))));
-    this.ballShadow.setScale(1 + h / 280, 1);
-    const br = b.radius * scale;
-    this.ballBlotch.setPosition(
-      b.position.x + Math.cos(b.spin) * br * 0.38,
-      b.position.y - lift + Math.sin(b.spin) * br * 0.38,
-    );
-    this.ballBlotch.setScale(scale);
-    this.ballBlotch.setVisible(carrierId === null);
+    this.syncBallSprite(b);
     if (carrierId === null) {
       const pulse = 2 + Math.sin(this.now() / 90) * 2;
       this.markerGfx.lineStyle(2, PALETTE.ball, isBallAirborne(this.world) ? 0.9 : 0.6);
