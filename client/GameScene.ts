@@ -74,10 +74,10 @@ const PALETTE = {
   grass: 0x3a4a28,
   grassAlt: 0x2f3e20,
   grassDark: 0x243218,
-  fieldA: 0x3e522c,
-  fieldB: 0x354826,
-  fieldC: 0x44582e,
-  plough: 0x2c3a1c,
+  fieldA: 0x4a6030,
+  fieldB: 0x334422,
+  fieldC: 0x516834,
+  plough: 0x2a3818,
   mud: 0x5a3d28,
   mudDark: 0x3d291a,
   building: 0x6a4c36,
@@ -769,13 +769,13 @@ export class GameScene extends Phaser.Scene {
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    this.drawFields(rand);
     for (let i = 0; i < 2800; i++) {
       const x = rand() * map.width;
       const y = rand() * map.height;
       this.mapGfx.fillStyle(rand() > 0.5 ? PALETTE.grassAlt : PALETTE.grassDark, 0.28);
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
+    this.drawFields(rand);
 
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
@@ -887,16 +887,14 @@ export class GameScene extends Phaser.Scene {
       const y = f.position.y - f.height / 2;
       g.fillStyle(tints[i % tints.length]!, 1);
       g.fillRect(x, y, f.width, f.height);
-      g.lineStyle(1, PALETTE.plough, 0.18);
-      const rows = Math.max(3, Math.floor(f.height / 22));
+      g.lineStyle(2, PALETTE.plough, 0.35);
+      const rows = Math.max(4, Math.floor(f.height / 20));
       for (let r = 1; r < rows; r++) {
         const py = y + (r / rows) * f.height;
-        g.lineBetween(x + 6, py, x + f.width - 6, py);
+        g.lineBetween(x + 8, py, x + f.width - 8, py);
       }
-      if (rand() > 0.45) {
-        g.fillStyle(PALETTE.grassDark, 0.12);
-        g.fillRect(x + f.width * 0.08, y + f.height * 0.12, f.width * 0.28, f.height * 0.22);
-      }
+      g.lineStyle(2, PALETTE.hedgeEdge, 0.15);
+      g.strokeRect(x + 2, y + 2, f.width - 4, f.height - 4);
     }
   }
 
@@ -1136,7 +1134,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Stone packhorse decks + arches in the Henmore, before the roadway paint. */
+  /** Stone packhorse decks + river arches, before the roadway paint. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
     for (const b of this.world.map.bridges) {
@@ -1146,27 +1144,36 @@ export class GameScene extends Phaser.Scene {
       const h = b.height;
       const bx = x - w / 2;
       const by = y - h / 2;
-      g.fillStyle(PALETTE.archShadow, 0.85);
-      g.fillEllipse(x, y, w * 0.92, h * 0.62);
+      const parapet = 28;
+      // Arch voids in the Henmore — water showing under a single packhorse span.
+      g.fillStyle(PALETTE.archShadow, 0.92);
+      g.fillEllipse(x, y + 4, w * 0.72, h * 0.78);
+      g.fillStyle(PALETTE.water, 0.7);
+      g.fillEllipse(x, y + 6, w * 0.5, 22);
+      // Bank abutments
       g.fillStyle(PALETTE.stoneDark, 1);
-      g.fillRect(bx - 14, by - 10, w + 28, 22);
-      g.fillRect(bx - 14, by + h - 12, w + 28, 22);
+      g.fillRect(bx - 18, by - 16, w + 36, 28);
+      g.fillRect(bx - 18, by + h - 12, w + 36, 28);
       g.fillStyle(PALETTE.stone, 1);
-      g.fillRect(bx, by, w, h);
-      g.lineStyle(2, PALETTE.stoneMortar, 0.65);
-      for (let py = by + 8; py < by + h - 4; py += 11) {
-        g.lineBetween(bx + 16, py, bx + w - 16, py);
+      g.fillRect(bx - 12, by - 12, w + 24, 18);
+      g.fillRect(bx - 12, by + h - 6, w + 24, 18);
+      // Walkable stone cheeks beside the tarmac (not a full plank deck).
+      g.fillStyle(PALETTE.stone, 1);
+      g.fillRect(bx, by, parapet + 6, h);
+      g.fillRect(bx + w - parapet - 6, by, parapet + 6, h);
+      g.lineStyle(2, PALETTE.stoneMortar, 0.75);
+      for (let py = by + 6; py < by + h; py += 14) {
+        g.lineBetween(bx + 3, py, bx + parapet + 2, py);
+        g.lineBetween(bx + w - parapet - 2, py, bx + w - 3, py);
       }
-      g.lineStyle(3, PALETTE.stoneDark, 0.8);
+      g.lineStyle(4, PALETTE.stoneDark, 0.9);
       g.beginPath();
-      g.arc(x, y + 6, w * 0.28, Math.PI, 0, false);
+      g.arc(x, y + 10, w * 0.34, Math.PI * 1.05, -0.05, false);
       g.strokePath();
-      g.fillStyle(PALETTE.water, 0.55);
-      g.fillEllipse(x, y + 8, w * 0.42, 16);
     }
   }
 
-  /** Parapets sit on the deck edges after the lane so the roadway stays continuous. */
+  /** Chunkier stone parapets + cutwaters after the lane so the roadway stays continuous. */
   private drawStoneBridgeParapets(): void {
     const g = this.mapGfx;
     for (const b of this.world.map.bridges) {
@@ -1174,34 +1181,37 @@ export class GameScene extends Phaser.Scene {
       const y = b.position.y;
       const w = b.width;
       const h = b.height;
-      const parapet = 18;
+      const parapet = 22;
       const bx = x - w / 2;
       const by = y - h / 2;
       const drawWall = (wx: number): void => {
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(wx - 1, by - 6, parapet + 2, h + 12);
+        g.fillRect(wx - 3, by - 10, parapet + 6, h + 20);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(wx, by - 4, parapet, h + 8);
-        g.lineStyle(1, PALETTE.stoneMortar, 0.7);
-        for (let py = by; py < by + h; py += 12) {
+        g.fillRect(wx, by - 6, parapet, h + 12);
+        g.lineStyle(1.5, PALETTE.stoneMortar, 0.8);
+        for (let py = by; py < by + h; py += 11) {
           g.lineBetween(wx + 2, py, wx + parapet - 2, py);
         }
+        for (let i = 0; i < 3; i++) {
+          g.lineBetween(wx + 4 + i * 6, by, wx + 4 + i * 6, by + h);
+        }
         g.fillStyle(PALETTE.stoneLite, 1);
-        g.fillRect(wx - 2, by - 6, parapet + 4, 5);
-        g.fillRect(wx - 2, by + h + 1, parapet + 4, 5);
-        for (let py = by + 8; py < by + h; py += 22) {
-          g.fillStyle(PALETTE.stoneLite, 1);
-          g.fillRect(wx - 3, py, parapet + 6, 7);
+        g.fillRect(wx - 3, by - 10, parapet + 6, 7);
+        g.fillRect(wx - 3, by + h + 3, parapet + 6, 7);
+        for (let py = by + 10; py < by + h - 4; py += 26) {
+          g.fillRect(wx - 5, py, parapet + 10, 9);
         }
       };
       drawWall(bx);
       drawWall(bx + w - parapet);
+      // Cutwaters pointing upstream / downstream.
       g.fillStyle(PALETTE.stoneLite, 1);
-      g.fillCircle(bx - 4, y, 10);
-      g.fillCircle(bx + w + 4, y, 10);
-      g.fillStyle(PALETTE.stoneDark, 0.9);
-      g.fillTriangle(bx - 8, y, bx + 6, y - 18, bx + 6, y + 18);
-      g.fillTriangle(bx + w + 8, y, bx + w - 6, y - 18, bx + w - 6, y + 18);
+      g.fillTriangle(bx - 10, y, bx + 12, y - 22, bx + 12, y + 22);
+      g.fillTriangle(bx + w + 10, y, bx + w - 12, y - 22, bx + w - 12, y + 22);
+      g.fillStyle(PALETTE.stoneDark, 0.85);
+      g.fillCircle(bx + 8, y, 7);
+      g.fillCircle(bx + w - 8, y, 7);
     }
   }
 

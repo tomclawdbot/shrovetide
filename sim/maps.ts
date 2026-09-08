@@ -595,17 +595,17 @@ const TOWN_FIELDS: FieldParcel[] = [
 ];
 
 const TOWN_HEDGES: RectZone[] = [
-  ...parcelHedges(520, 300, 400, 240, 18),
-  ...parcelHedges(980, 220, 360, 180, 16, { s: [980] }),
-  ...parcelHedges(2140, 420, 400, 320, 18),
-  ...parcelHedges(1980, 160, 280, 200, 16, { w: [160] }),
-  ...parcelHedges(260, 1280, 200, 200, 18),
-  ...parcelHedges(1320, 1320, 300, 250, 18, { n: [1320], e: [1320], w: [1320] }, 80),
-  ...parcelHedges(1700, 1320, 420, 260, 18, { n: [1700], w: [1320], e: [1700] }, 80),
-  ...parcelHedges(2140, 1200, 360, 240, 18),
-  ...parcelHedges(820, 1360, 280, 180, 16, { n: [820] }),
-  ...parcelHedges(280, 1040, 260, 160, 16, { e: [1040] }),
-  ...hedgeRow(1480, 28, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
+  ...parcelHedges(520, 300, 400, 240, 26),
+  ...parcelHedges(980, 220, 360, 180, 24, { s: [980] }),
+  ...parcelHedges(2140, 420, 400, 320, 26),
+  ...parcelHedges(1980, 160, 280, 200, 24, { w: [160] }),
+  ...parcelHedges(260, 1280, 200, 200, 26),
+  ...parcelHedges(1320, 1320, 300, 250, 26, { n: [1320], e: [1320], w: [1320] }, 80),
+  ...parcelHedges(1700, 1320, 420, 260, 26, { n: [1700], w: [1320], e: [1700] }, 80),
+  ...parcelHedges(2140, 1200, 360, 240, 26),
+  ...parcelHedges(820, 1360, 280, 180, 24, { n: [820] }),
+  ...parcelHedges(280, 1040, 260, 160, 24, { e: [1040] }),
+  ...hedgeRow(1480, 32, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
   ...hedgeCol(360, 22, 620, 1120, [790, 880], RIVER_GAP_HALF),
   ...hedgeCol(2080, 22, 520, 1120, [790, 880], RIVER_GAP_HALF),
   // Goal approaches — hedges flank the millstone lanes, clear of the stones.
