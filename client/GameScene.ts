@@ -312,7 +312,7 @@ function mitredStripPolygon(
   return [...left, ...right.reverse()];
 }
 
-type RoadRef = { points: { x: number; y: number }[]; width: number };
+type RoadRef = { points: { x: number; y: number }[]; width: number; kind?: string };
 type JunctionArm = { ux: number; uy: number; hw: number };
 type Junction = { x: number; y: number; arms: JunctionArm[] };
 
@@ -383,7 +383,9 @@ function collectJunctions(
     }
   }
   for (const stem of roads) {
-    if (stem.points.length < 2) continue;
+    // A trail end or a bare dead-end stub is not a junction — only a metalled
+    // road whose end actually lands on the *body* of another road makes a T.
+    if (stem.points.length < 2 || stem.kind === 'trail') continue;
     const ends = [
       { p: stem.points[0]!, q: stem.points[1]! },
       { p: stem.points[stem.points.length - 1]!, q: stem.points[stem.points.length - 2]! },
@@ -393,9 +395,19 @@ function collectJunctions(
         continue;
       }
       for (const other of roads) {
-        if (other === stem) continue;
+        if (other === stem || other.kind === 'trail') continue;
         const near = roadClosestSeg(other, end.p);
         if (!near || near.d > other.width / 2 + 10) continue;
+        // Endpoint meeting another road's own endpoint is a bend / continuation,
+        // not a side road joining a through road — don't fillet a plain corner.
+        const oHead = other.points[0]!;
+        const oTail = other.points[other.points.length - 1]!;
+        if (
+          Math.hypot(end.p.x - oHead.x, end.p.y - oHead.y) < other.width ||
+          Math.hypot(end.p.x - oTail.x, end.p.y - oTail.y) < other.width
+        ) {
+          continue;
+        }
         const jn = bump(end.p.x, end.p.y);
         const along = dirUnit(near.b.x - near.a.x, near.b.y - near.a.y);
         pushArm(jn.arms, along.x, along.y, other.width / 2);
@@ -1302,7 +1314,11 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Tarmac quarter-circles + white kerb at T / cross inner corners. */
+  /**
+   * Asphalt quarter-circles that round the inner corners of a true T / cross so
+   * the carriageways blend instead of meeting as square sausages. Tarmac only —
+   * UK junctions have a concrete kerb radius, not a painted white curve.
+   */
   private drawJunctionFillets(): void {
     const g = this.mapGfx;
     const map = this.world.map;
@@ -1311,7 +1327,8 @@ export class GameScene extends Phaser.Scene {
       const arms = j.arms
         .map((a) => ({ ...a, ang: Math.atan2(a.uy, a.ux) }))
         .sort((a, b) => a.ang - b.ang);
-      if (arms.length < 2) continue;
+      // 2 arms is a bend (already smoothed by roundedCorners) — need a real fork.
+      if (arms.length < 3) continue;
       for (let i = 0; i < arms.length; i++) {
         const a = arms[i]!;
         const b = arms[(i + 1) % arms.length]!;
@@ -1348,23 +1365,27 @@ export class GameScene extends Phaser.Scene {
         g.arc(cx, cy, R, a0, a0 + sweep, sweep < 0);
         g.closePath();
         g.fillPath();
-        g.lineStyle(3, PALETTE.paint, 0.9);
-        g.beginPath();
-        g.arc(cx, cy, R, a0, a0 + sweep, sweep < 0);
-        g.strokePath();
       }
     }
   }
 
-  /** UK lane paint: broken white centre, optional edge, give-way dashes on the minor arm. */
+  /**
+   * UK carriageway paint, hierarchy-aware:
+   *   trunk ('street') — broken white centre + worn edge lines
+   *   lane            — no through markings; just give-way dashes where it
+   *                     actually meets a trunk (minor arm gives way)
+   *   trail           — unmarked packed strip
+   */
   private drawRoadMarkings(): void {
     const g = this.mapGfx;
     const map = this.world.map;
     const junctions = collectJunctions(map.roads, map.roundabouts);
     for (const road of map.roads) {
       if (road.kind === 'trail') continue;
-      this.dashCentreLine(g, road.points, junctions, map.roundabouts);
-      this.strokeEdgeLines(g, road.points, road.width, junctions, map.roundabouts);
+      if (road.kind === 'street') {
+        this.dashCentreLine(g, road.points, junctions, map.roundabouts);
+        this.strokeEdgeLines(g, road.points, road.width, junctions, map.roundabouts);
+      }
       this.paintGiveWays(g, road, map.roads, map.roundabouts);
     }
     for (const rbt of map.roundabouts) {
