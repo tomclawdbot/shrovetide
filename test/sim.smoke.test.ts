@@ -26,6 +26,7 @@ import {
   isInHedgeSlow,
   isInObstacle,
   isInWater,
+  distanceToRoad,
   isNearRoad,
   isOnBridge,
   isOnRoad,
@@ -989,6 +990,55 @@ test('map: buildings read as named Ashbourne pubs and shops', () => {
   for (const b of buildings) {
     assert.ok(b.name.length >= 4 && b.name.length <= 24, `${b.name} should be a short readable sign`);
     assert.ok(b.id.length >= 3, `${b.name} needs a stable art id`);
+  }
+});
+
+test('map: every building fronts a road and footprints do not overlap', () => {
+  const map = ASHBOURNE_TOWN;
+  const buildings = map.obstacles.filter(isBuilding);
+  for (const b of buildings) {
+    const d = distanceToRoad(b.position, map);
+    const reach = Math.max(b.width, b.height) / 2 + 18;
+    assert.ok(
+      isNearRoad(b.position, map, reach),
+      `${b.name} must sit on a road front (d=${d.toFixed(1)} pad=${reach.toFixed(1)})`,
+    );
+    assert.equal(isInObstacle(map.goals[0]!.position, map), false);
+  }
+  const gap = 6;
+  for (let i = 0; i < buildings.length; i++) {
+    for (let j = i + 1; j < buildings.length; j++) {
+      const a = buildings[i]!;
+      const b = buildings[j]!;
+      const overlapX = Math.abs(a.position.x - b.position.x) < (a.width + b.width) / 2 + gap;
+      const overlapY = Math.abs(a.position.y - b.position.y) < (a.height + b.height) / 2 + gap;
+      assert.equal(overlapX && overlapY, false, `${a.name} overlaps ${b.name}`);
+    }
+  }
+});
+
+test('map: Ashbourne core and mill villages have house fabric', () => {
+  const map = ASHBOURNE_TOWN;
+  const houses = map.obstacles.filter((o) => isBuilding(o) && o.kind === 'house');
+  assert.ok(houses.length >= 12, `expected terrace/cottage fabric, got ${houses.length}`);
+  const riverY = map.river.position.y;
+  const core = houses.filter((h) => h.position.y < riverY && h.position.x > 700 * TOWN_SCALE && h.position.x < 1800 * TOWN_SCALE);
+  assert.ok(core.length >= 6, `core should read as a town, got ${core.length} houses`);
+  const clifton = map.goals.find((g) => g.name === MILL_CLIFTON)!.position;
+  const sturston = map.goals.find((g) => g.name === MILL_STURSTON)!.position;
+  const nearWest = houses.filter((h) => Math.hypot(h.position.x - 400 * TOWN_SCALE, h.position.y - 790 * TOWN_SCALE) < 520);
+  const nearEast = houses.filter((h) => Math.hypot(h.position.x - 2000 * TOWN_SCALE, h.position.y - 790 * TOWN_SCALE) < 520);
+  assert.ok(nearWest.length >= 3, `Clifton village cluster, got ${nearWest.length}`);
+  assert.ok(nearEast.length >= 3, `Sturston village cluster, got ${nearEast.length}`);
+  for (const h of nearWest) {
+    assert.ok(Math.hypot(h.position.x - clifton.x, h.position.y - clifton.y) > 90, 'leave Clifton stone clear');
+  }
+  for (const h of nearEast) {
+    assert.ok(Math.hypot(h.position.x - sturston.x, h.position.y - sturston.y) > 90, 'leave Sturston stone clear');
+  }
+  for (const goal of map.goals) {
+    assert.equal(isInObstacle(goal.position, map), false, `${goal.name} not inside a house`);
+    assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
   }
 });
 

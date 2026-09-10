@@ -77,6 +77,9 @@ const PALETTE = {
   fieldA: 0x4a582c,
   fieldB: 0x334620,
   fieldC: 0x5a6234,
+  cottage: 0x8c7a64,
+  cottageRoof: 0x4a3428,
+  cottageLite: 0xb0a088,
   forestFloor: 0x142412,
   canopy: 0x1f3a1a,
   canopyDeep: 0x0e220e,
@@ -865,6 +868,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const o of map.obstacles) {
       if (!isBuilding(o)) continue;
+      if (o.kind === 'house') continue;
       const civic = isCivicBuilding(o);
       const oy = o.position.y - o.height / 2;
       const fasciaH = Math.min(18, o.height * 0.22);
@@ -1522,6 +1526,10 @@ export class GameScene extends Phaser.Scene {
         this.drawTrailhead(o);
         return;
       }
+      if (o.kind === 'house') {
+        this.drawCottage(o);
+        return;
+      }
     }
     const ox = o.position.x - o.width / 2;
     const oy = o.position.y - o.height / 2;
@@ -1638,6 +1646,42 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(PALETTE.windowLite, 0.35);
       g.fillRect(ox + 8, oy + o.height * 0.62, o.width - 16, o.height * 0.18);
     }
+  }
+
+  /** Ordinary terrace / cottage — town fabric, not a named landmark. */
+  private drawCottage(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.cobble, 0.22);
+    g.fillRect(ox - 4, oy + o.height - 2, o.width + 8, 8);
+    g.fillStyle(PALETTE.cottageRoof, 1);
+    g.fillTriangle(ox - 4, oy + 6, o.position.x, oy - 14, ox + o.width + 4, oy + 6);
+    g.fillRect(ox + 3, oy - 2, o.width - 6, 10);
+    g.fillStyle(PALETTE.chimney, 1);
+    g.fillRect(ox + o.width * 0.7, oy - 16, 6, 12);
+    g.fillStyle(PALETTE.cottage, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(2, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.lineStyle(1, PALETTE.cottageLite, 0.45);
+    g.lineBetween(ox + 2, oy + o.height * 0.38, ox + o.width - 2, oy + o.height * 0.38);
+    const winW = Math.min(10, o.width * 0.2);
+    const winH = Math.min(10, o.height * 0.28);
+    const winY = oy + o.height * 0.28;
+    for (const t of [0.28, 0.72]) {
+      const wx = ox + o.width * t - winW / 2;
+      g.fillStyle(PALETTE.window, 1);
+      g.fillRect(wx, winY, winW, winH);
+      g.lineStyle(1, PALETTE.timberBeam, 0.8);
+      g.strokeRect(wx, winY, winW, winH);
+    }
+    const doorW = Math.min(12, o.width * 0.22);
+    const doorH = Math.min(18, o.height * 0.42);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - doorW / 2, oy + o.height - doorH - 1, doorW, doorH);
+    g.lineStyle(1, PALETTE.timberBeam, 1);
+    g.strokeRect(o.position.x - doorW / 2, oy + o.height - doorH - 1, doorW, doorH);
   }
 
   /** St Oswald's–inspired nave + tall recessed spire. Collision is the nave; spire is massing. */

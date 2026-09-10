@@ -36,7 +36,15 @@ export interface Circle {
  * High-street frontage plus civic massing.
  * `id` is the stable art key — Game Art can swap a sprite without moving the footprint.
  */
-export type BuildingKind = 'pub' | 'shop' | 'church' | 'school' | 'market' | 'hall' | 'trailhead';
+export type BuildingKind =
+  | 'pub'
+  | 'shop'
+  | 'church'
+  | 'school'
+  | 'market'
+  | 'hall'
+  | 'trailhead'
+  | 'house';
 
 export const CIVIC_KINDS = [
   'church',
@@ -247,6 +255,89 @@ function slandmark(
     name,
     kind,
   };
+}
+
+const HOUSE_SIZE = 1;
+/** Verge gap so a footprint kisses the tarmac without sitting in the lane. */
+const FRONT_GAP = 8;
+
+function makeBuilding(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  name: string,
+  kind: BuildingKind,
+): Building {
+  return { id: landmarkId(name), position: { x, y }, width: w, height: h, name, kind };
+}
+
+/** Horizontal road frontage. `side` +1 = south of the carriageway. */
+function frontY(
+  x: number,
+  roadY: number,
+  roadHalf: number,
+  w: number,
+  h: number,
+  side: 1 | -1,
+  name: string,
+  kind: BuildingKind,
+  scale = BUILDING_SIZE,
+): Building {
+  const bw = w * scale;
+  const bh = h * scale;
+  return makeBuilding(
+    sx(x),
+    sx(roadY) + side * (sx(roadHalf) + bh / 2 + FRONT_GAP),
+    bw,
+    bh,
+    name,
+    kind,
+  );
+}
+
+/** Vertical road frontage. `side` +1 = east of the carriageway. */
+function frontX(
+  y: number,
+  roadX: number,
+  roadHalf: number,
+  w: number,
+  h: number,
+  side: 1 | -1,
+  name: string,
+  kind: BuildingKind,
+  scale = BUILDING_SIZE,
+): Building {
+  const bw = w * scale;
+  const bh = h * scale;
+  return makeBuilding(
+    sx(roadX) + side * (sx(roadHalf) + bw / 2 + FRONT_GAP),
+    sx(y),
+    bw,
+    bh,
+    name,
+    kind,
+  );
+}
+
+function shouseY(
+  x: number,
+  roadY: number,
+  roadHalf: number,
+  side: 1 | -1,
+  name: string,
+): Building {
+  return frontY(x, roadY, roadHalf, 54, 38, side, name, 'house', HOUSE_SIZE);
+}
+
+function shouseX(
+  y: number,
+  roadX: number,
+  roadHalf: number,
+  side: 1 | -1,
+  name: string,
+): Building {
+  return frontX(y, roadX, roadHalf, 54, 38, side, name, 'house', HOUSE_SIZE);
 }
 
 function smark(x: number, y: number, name: string, kind: PlaceKind): PlaceMark {
@@ -520,12 +611,6 @@ const TOWN_ROADS: RoadSegment[] = [
     [400, 1140],
     [2000, 1140],
   ]),
-  // The Wheel — L off the Compton / west-column T.
-  sroad('lane', 40, [
-    [400, 1140],
-    [400, 1280],
-    [600, 1280],
-  ]),
   // Church gate — St Oswald's (stops short of the churchyard OOB).
   sroad('lane', 36, [
     [240, 500],
@@ -627,29 +712,75 @@ function townLamps(): StreetLight[] {
   });
 }
 
+const HS_Y = 660;
+const HS_HALF = 26;
+const PLAZA_Y = 520;
+const PLAZA_HALF = 23;
+const CENTRE_X = 1200;
+const CENTRE_HALF = 26;
+const COMPTON_Y = 1140;
+const COMPTON_HALF = 22;
+const WEST_X = 400;
+const WEST_HALF = 22;
+const EAST_X = 2000;
+const EAST_HALF = 22;
+const COACH_Y = 280;
+const COACH_HALF = 20;
+const TRAIL_X = 1660;
+const TRAIL_HALF = 17;
+
+const TOWN_BUILDINGS: Building[] = [
+  // High street — south verge, spaced so boxes never stack.
+  frontY(760, HS_Y, HS_HALF, 84, 68, 1, 'The George & Dragon', 'pub'),
+  frontY(980, HS_Y, HS_HALF, 88, 76, 1, 'The Green Man', 'pub'),
+  frontY(1140, HS_Y, HS_HALF, 92, 58, 1, "Smith's Butcher", 'shop'),
+  frontY(1340, HS_Y, HS_HALF, 80, 70, 1, 'The Horns', 'pub'),
+  frontY(1560, HS_Y, HS_HALF, 90, 60, 1, 'Station Stores', 'shop'),
+  // Market Place — halls on the north verge, shop on the south.
+  frontY(1080, PLAZA_Y, PLAZA_HALF, 78, 88, -1, 'Market Hall', 'market', LANDMARK_SIZE),
+  frontY(1300, PLAZA_Y, PLAZA_HALF, 72, 80, -1, 'Town Hall', 'hall', LANDMARK_SIZE),
+  frontY(1120, PLAZA_Y, PLAZA_HALF, 100, 62, 1, 'Gingerbread Shop', 'shop'),
+  // Compton — south of the brook, on the south trunk (not in a mid-band field).
+  frontY(1080, COMPTON_Y, COMPTON_HALF, 96, 70, 1, 'The Vaults', 'pub'),
+  frontY(1340, COMPTON_Y, COMPTON_HALF, 88, 72, 1, 'The White Hart', 'pub'),
+  frontY(620, COMPTON_Y, COMPTON_HALF, 86, 64, 1, 'The Wheel', 'pub'),
+  // Destinations on their own lanes.
+  frontY(1900, COACH_Y, COACH_HALF, 104, 72, 1, 'The Coach & Horses', 'pub'),
+  frontX(160, TRAIL_X, TRAIL_HALF, 78, 64, 1, 'The Baths', 'trailhead', LANDMARK_SIZE),
+  slandmark(240, 500, 118, 86, "St Oswald's", 'church'),
+  frontY(700, HS_Y, HS_HALF, 140, 68, -1, 'Old Grammar', 'school', LANDMARK_SIZE),
+  // Ordinary terrace / cottage markers — core density, not landmarks.
+  shouseY(900, HS_Y, HS_HALF, -1, 'High St 1'),
+  shouseY(1040, HS_Y, HS_HALF, -1, 'High St 2'),
+  shouseY(1360, HS_Y, HS_HALF, -1, 'High St 3'),
+  shouseY(1500, HS_Y, HS_HALF, -1, 'High St 4'),
+  shouseY(870, HS_Y, HS_HALF, 1, 'High St 5'),
+  shouseY(1440, HS_Y, HS_HALF, 1, 'High St 6'),
+  shouseY(1280, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
+  shouseX(615, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
+  shouseX(615, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
+  shouseX(760, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
+  shouseY(780, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
+  shouseY(1520, COMPTON_Y, COMPTON_HALF, 1, 'Compton 2'),
+  // Clifton village — west column east verge, clear of the millstone hedges.
+  shouseX(560, WEST_X, WEST_HALF, 1, 'Clifton 1'),
+  shouseX(640, WEST_X, WEST_HALF, 1, 'Clifton 2'),
+  shouseX(680, WEST_X, WEST_HALF, 1, 'Clifton 3'),
+  shouseX(715, WEST_X, WEST_HALF, 1, 'Clifton 4'),
+  // Sturston village — east column west verge + high-street end.
+  shouseX(675, EAST_X, EAST_HALF, -1, 'Sturston 1'),
+  shouseX(705, EAST_X, EAST_HALF, -1, 'Sturston 2'),
+  shouseX(735, EAST_X, EAST_HALF, -1, 'Sturston 3'),
+  shouseY(1880, HS_Y, HS_HALF, 1, 'Sturston 4'),
+];
+
+const GREEN_MAN = TOWN_BUILDINGS.find((b) => b.id === 'the-green-man')!;
+
 export const ASHBOURNE_TOWN: TownMap = {
   width: sx(2400),
   height: sx(1600),
 
-  obstacles: [
-    // Historic core — destinations along the high street / plaza, not a tangle.
-    sbuilding(1000, 720, 90, 90, 'The Green Man', 'pub'),
-    sbuilding(1120, 580, 110, 70, 'Gingerbread Shop', 'shop'),
-    sbuilding(1340, 720, 80, 80, 'The Horns', 'pub'),
-    sbuilding(1040, 730, 100, 60, "Smith's Butcher", 'shop'),
-    sbuilding(820, 720, 84, 70, 'The George & Dragon', 'pub'),
-    sbuilding(1580, 720, 90, 64, 'Station Stores', 'shop'),
-    // Compton — south of the brook.
-    sbuilding(1100, 1080, 100, 80, 'The Vaults', 'pub'),
-    sbuilding(1340, 1180, 90, 90, 'The White Hart', 'pub'),
-    slandmark(1080, 500, 78, 112, 'Market Hall', 'market'),
-    slandmark(1320, 500, 72, 86, 'Town Hall', 'hall'),
-    sbuilding(600, 1280, 90, 70, 'The Wheel', 'pub'),
-    sbuilding(1940, 280, 110, 80, 'The Coach & Horses', 'pub'),
-    slandmark(220, 500, 118, 86, "St Oswald's", 'church'),
-    slandmark(700, 540, 150, 72, 'Old Grammar', 'school'),
-    slandmark(1710, 160, 78, 64, 'The Baths', 'trailhead'),
-  ],
+  obstacles: TOWN_BUILDINGS,
 
   outOfBounds: [
     srect(180, 240, 200, 200),
@@ -681,7 +812,7 @@ export const ASHBOURNE_TOWN: TownMap = {
     smark(1200, 600, 'Market Place', 'plaza'),
     smark(1670, 150, 'Tissington Trail', 'trail'),
     smark(1660, 48, 'The Tunnel', 'tunnel'),
-    smark(1000, 720, 'Green Man', 'inn-sign'),
+    { id: 'green-man', kind: 'inn-sign', name: 'Green Man', position: { ...GREEN_MAN.position } },
   ],
 
   goals: [
