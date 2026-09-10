@@ -898,7 +898,7 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   }
 
   const northStreet = { x: 1200 * TOWN_SCALE, y: 660 * TOWN_SCALE };
-  const southStreet = { x: 1230 * TOWN_SCALE, y: 1110 * TOWN_SCALE };
+  const southStreet = { x: 1200 * TOWN_SCALE, y: 1110 * TOWN_SCALE };
   assert.equal(isOnRoad(northStreet, map), true, 'north pubs sit on a street');
   assert.equal(isOnRoad(southStreet, map), true, 'south pubs sit on a street');
   assert.equal(isInObstacle(northStreet, map), false, 'street runs between footprints');
@@ -917,7 +917,7 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   assert.equal(speedMultiplierAt(field, map), 1);
 });
 
-test('map: roads are winding connectors, not dead-end grid stubs', () => {
+test('map: roads are intentional connectors, not dead-end stubs', () => {
   const map = ASHBOURNE_TOWN;
   const empty = [
     { name: 'NW field', x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE },
@@ -1046,15 +1046,23 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.equal(isWalkable({ x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE }, map), true, 'NW field stays playable');
 });
 
-test('map: roundabouts sit on the civic network', () => {
+test('map: at most two mini-roundabouts, none on the plinth', () => {
   const map = ASHBOURNE_TOWN;
-  assert.ok(map.roundabouts.length >= 1 && map.roundabouts.length <= 2, '1–2 mini-roundabouts');
+  assert.ok(map.roundabouts.length <= 2, '0–2 mini-roundabouts');
   for (const rbt of map.roundabouts) {
     assert.ok(rbt.radius > rbt.island + 10, 'carriageway ring around the island');
     assert.equal(isOnRoad(rbt.position, map), false, 'island is not tarmac');
     const ring = { x: rbt.position.x + (rbt.island + rbt.radius) / 2, y: rbt.position.y };
     assert.equal(isOnRoad(ring, map), true, 'roundabout ring is part of the network');
+    const dPlinth = Math.hypot(rbt.position.x - map.turnUp.x, rbt.position.y - map.turnUp.y);
+    assert.ok(dPlinth > rbt.radius + 280, 'roundabout stays off the kickoff plinth');
   }
+  // Plinth approach is a through-lane, not a junction circus.
+  const north = { x: map.turnUp.x, y: map.turnUp.y - 160 };
+  const south = { x: map.turnUp.x, y: map.turnUp.y + 160 };
+  assert.equal(isOnRoad(map.turnUp, map), true, 'plinth sits on the centre street');
+  assert.equal(isOnRoad(north, map), true, 'clear approach north of the plinth');
+  assert.equal(isOnRoad(south, map), true, 'clear approach south of the plinth');
 });
 
 test('map: fields are hedge-bordered English parcels', () => {

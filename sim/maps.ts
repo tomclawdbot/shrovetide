@@ -107,7 +107,10 @@ export interface GoalMarker {
 
 export interface Bridge extends RectZone {}
 
-/** Mini-roundabout — tarmac ring around a grass/cobble island. Visual — not collision. */
+/**
+ * UK mini-roundabout — tarmac ring around a grass island. Visual — not collision.
+ * Optional (0–2). Never sits on the turn-up / kickoff plinth.
+ */
 export interface Roundabout {
   position: Vec2Like;
   /** Outer kerb radius. */
@@ -122,12 +125,12 @@ export interface FieldParcel extends RectZone {}
 /** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
 export type RoadKind = 'street' | 'lane' | 'trail';
 
-/** Polyline lane. Joints are mitred in the client — keep vertices on junctions. */
+/** Polyline lane. Joints are mitred in the client — keep vertices on junctions / ring entries. */
 export interface RoadSegment {
   kind: RoadKind;
   /** Full width of the strip in sim px. */
   width: number;
-  /** Vertices in sim space. */
+  /** Vertices in sim space. Prefer axis-aligned runs; L / T / 4-way only. */
   points: Vec2Like[];
 }
 
@@ -147,7 +150,10 @@ export interface TownMap {
   river: RectZone;
   /** Walkable segments crossing the river. Fast movement. */
   bridges: Bridge[];
-  /** Mini-roundabouts on the lane network. Soft — same as roads. */
+  /**
+   * Optional UK mini-roundabouts (0–2). Soft — same as roads.
+   * Must not sit on the turn-up; plinth approach is a through-lane.
+   */
   roundabouts: Roundabout[];
   /**
    * Hedgerows. Walkable at a crawl (HEDGE_SPEED_MULT) — slower than river.
@@ -443,18 +449,21 @@ function hedgeCol(
 // ---------------------------------------------------------------------------
 // ASHBOURNE TOWN — Derbyshire market-town homage (not GPS).
 //
-// Henmore along the south edge of the historic core. Long main street and
-// triangular Market Place north of the brook. St Oswald’s west. Compton
-// crossings south toward Clifton (W) and Sturston (E). Tissington Trail
-// and tunnel on the north cutting. Mini-roundabouts at Market/Compton and
-// the trailhead. Fields are hedge-bordered rectangles outside the core.
+// Layout grammar (from the overworld refs, not their dirt / fantasy props):
+//   trunk streets on a cross, secondary lanes as L / T, generous grass cells,
+//   landmarks as destinations on short spurs. One UK mini-roundabout at the
+//   trailhead only — never a circle on the kickoff plinth.
 //
-//   [Tunnel / Trail]  (R2)  [Baths]
-//   [St Oswald's]  Market Place △  [Old Grammar]     Coach
-//        churchyard   Green Man / Halls
-//              (R1) ── centre bridge / turn-up
+// Henmore along the south edge of the historic core. High street and Market
+// Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
+// Tissington Trail + tunnel on the north cutting. Clifton (W) / Sturston (E).
+//
+//   [Tunnel]──trail──(R)──[Baths]──lane──[Coach]
+//   [St Oswald's]── [Old Grammar]  Market Place △
+//        churchyard      Green Man / halls
+//              ║  centre street (through plinth — no circus)
 //   ▒▒▒▒▒▒▒▒▒▒▒ HENMORE ▒▒▒▒▒▒▒▒▒▒▒  stone bridges
-//        Compton  Vaults / White Hart
+//        Compton  Vaults / White Hart     [Wheel]
 //   Clifton ◄──────────────────────────► Sturston
 // ---------------------------------------------------------------------------
 
@@ -462,149 +471,110 @@ const BRIDGE_XS = [400, 1200, 2000];
 const LANE_GAP_HALF = 80;
 const RIVER_GAP_HALF = 140;
 
-/** Market / Compton mini-roundabout — south of the square, on the centre crossing. */
-const MARKET_RBT = sroundabout(1200, 760, 70, 30);
-/** Trailhead mini-roundabout — Baths / Tissington / Coach. */
-const TRAIL_RBT = sroundabout(1660, 300, 56, 24);
+/** Trailhead mini-roundabout — Baths / Tissington / Coach. Far from the plinth. */
+const TRAIL_RBT = sroundabout(1660, 280, 64, 26);
+const TRAIL_R = 64;
 
-const TOWN_ROUNDABOUTS: Roundabout[] = [MARKET_RBT, TRAIL_RBT];
+const TOWN_ROUNDABOUTS: Roundabout[] = [TRAIL_RBT];
 
 const TOWN_ROADS: RoadSegment[] = [
-  // St John / high street west — church through George to R1 west entry.
-  sroad('street', 50, [
-    [320, 530],
-    [420, 560],
-    [580, 630],
-    [740, 670],
-    [920, 720],
-    [1130, 760],
+  // Trunk — high street, east–west through the core (4-way at 1200,660).
+  sroad('street', 52, [
+    [400, 660],
+    [2000, 660],
   ]),
-  // R1 north arm through Market Place (keeps 1200,660 on tarmac).
-  sroad('street', 48, [
-    [1200, 690],
-    [1200, 660],
-    [1200, 620],
-    [1140, 600],
-    [1080, 590],
+  // Trunk — centre street through Market Place, plinth, Compton. No circle.
+  sroad('street', 52, [
+    [1200, 520],
+    [1200, 1140],
   ]),
-  // Market Place frontage — Green Man / halls, T-joins the north arm.
+  // Civic plaza frontage — halls sit on this short street, T onto the centre.
   sroad('street', 46, [
-    [980, 650],
-    [1080, 630],
-    [1140, 620],
-    [1240, 610],
-    [1260, 600],
+    [1060, 520],
+    [1340, 520],
   ]),
-  // R1 east — Station Stores toward the east (Sturston) bridge.
-  sroad('street', 48, [
-    [1270, 760],
-    [1420, 720],
-    [1520, 680],
-    [1640, 660],
-    [1840, 720],
-    [2000, 830],
+  // West column — church T, high street T, mill T, west bridge, Compton T.
+  sroad('lane', 44, [
+    [400, 500],
+    [400, 1140],
+  ]),
+  // East column — high street T through the east (Sturston) bridge.
+  sroad('lane', 44, [
+    [2000, 660],
     [2000, 880],
   ]),
-  // R1 south — Compton crossing / turn-up deck / south street.
-  sroad('street', 48, [
-    [1200, 830],
-    [1200, 880],
-    [1200, 1040],
-    [1230, 1110],
-    [1280, 1160],
-  ]),
-  // Clifton millstone → west bridge (hedge corridor — keep straight).
+  // Clifton millstone → west column (hedge corridor — keep straight).
   sroad('lane', 48, [
     [150, 790],
-    [250, 790],
-    [320, 790],
     [400, 790],
-    [400, 880],
   ]),
-  // West T — bridge north into the high street at (580, 630).
-  sroad('lane', 42, [
-    [400, 848],
-    [500, 720],
-    [580, 630],
-  ]),
-  // West T — bridge south to The Wheel.
-  sroad('lane', 42, [
-    [400, 912],
-    [520, 1100],
-    [600, 1280],
-  ]),
-  // Compton west — Wheel along to the south street sample (1230, 1110).
-  sroad('lane', 42, [
-    [600, 1280],
-    [860, 1180],
-    [1080, 1120],
-    [1230, 1110],
-  ]),
-  // Sturston millstone → east bridge.
+  // Sturston millstone → east column.
   sroad('lane', 48, [
     [2250, 790],
-    [2168, 790],
-    [2080, 790],
     [2000, 790],
-    [2000, 880],
   ]),
-  // Church gate — high street west up to St Oswald's (stops short of the yard).
+  // Compton — west column across the centre street to The White Hart.
+  sroad('lane', 44, [
+    [400, 1140],
+    [1400, 1140],
+  ]),
+  // The Wheel — L off the Compton / west-column T.
+  sroad('lane', 40, [
+    [400, 1140],
+    [400, 1280],
+    [600, 1280],
+  ]),
+  // Church gate — St Oswald's (stops short of the churchyard OOB).
   sroad('lane', 36, [
-    [320, 530],
-    [280, 510],
     [240, 500],
+    [400, 500],
   ]),
-  // Old Grammar — north off the high street.
+  // Old Grammar — destination spur north of the high street.
   sroad('lane', 36, [
-    [740, 670],
-    [720, 600],
     [700, 540],
+    [700, 660],
   ]),
-  // Tissington Trail — tunnel to R2 north entry.
+  // Tissington Trail — tunnel south to the trailhead ring.
   sroad('trail', 34, [
     [1660, 48],
-    [1660, 140],
-    [1660, 244],
+    [1660, 280 - TRAIL_R],
   ]),
-  // R2 east — Baths/Coach, then south to join the east high street at (1640, 660).
+  // Trailhead south — straight to the high street (T), not a winding stub.
   sroad('lane', 42, [
-    [1716, 300],
-    [1820, 360],
-    [1740, 500],
-    [1640, 660],
+    [1660, 280 + TRAIL_R],
+    [1660, 660],
   ]),
-  // R2 south stub onto the Coach lane (three-arm mini-roundabout).
+  // Coach destination — east off the trailhead ring.
   sroad('lane', 40, [
-    [1660, 356],
-    [1680, 380],
-    [1820, 360],
+    [1660 + TRAIL_R, 280],
+    [1880, 280],
   ]),
 ];
 
 const TOWN_FIELDS: FieldParcel[] = [
-  sfield(520, 300, 400, 240),
-  sfield(980, 220, 360, 180),
-  sfield(2140, 420, 400, 320),
-  sfield(1980, 160, 280, 200),
-  sfield(260, 1280, 200, 200),
-  sfield(1320, 1320, 300, 250),
-  sfield(1700, 1320, 420, 260),
-  sfield(2140, 1200, 360, 240),
-  sfield(820, 1360, 280, 180),
-  sfield(280, 1040, 260, 160),
+  sfield(560, 280, 420, 240),
+  sfield(1000, 240, 380, 200),
+  sfield(2200, 300, 320, 220),
+  sfield(1880, 140, 240, 160),
+  sfield(260, 1360, 220, 200),
+  sfield(820, 1400, 300, 200),
+  sfield(1520, 1400, 400, 240),
+  sfield(2140, 1280, 360, 240),
+  sfield(260, 1040, 200, 140),
+  sfield(1580, 1080, 280, 120),
 ];
 
 const TOWN_HEDGES: RectZone[] = [
-  ...parcelHedges(520, 300, 400, 240, 26),
-  ...parcelHedges(980, 220, 360, 180, 24, { s: [980] }),
-  ...parcelHedges(2140, 420, 400, 320, 26),
-  ...parcelHedges(1980, 160, 280, 200, 24, { w: [160] }),
-  ...parcelHedges(260, 1280, 200, 200, 26),
-  ...parcelHedges(1320, 1320, 300, 250, 26, { n: [1320], e: [1320], w: [1320] }, 80),
-  ...parcelHedges(1700, 1320, 420, 260, 26, { n: [1700], w: [1320], e: [1700] }, 80),
-  ...parcelHedges(2140, 1200, 360, 240, 26),
-  ...parcelHedges(820, 1360, 280, 180, 24, { n: [820] }),
-  ...parcelHedges(280, 1040, 260, 160, 24, { e: [1040] }),
+  ...parcelHedges(560, 280, 420, 240, 26),
+  ...parcelHedges(1000, 240, 380, 200, 24, { s: [1000] }),
+  ...parcelHedges(2200, 300, 320, 220, 26),
+  ...parcelHedges(1880, 140, 240, 160, 24, { s: [1880] }),
+  ...parcelHedges(260, 1360, 220, 200, 26),
+  ...parcelHedges(820, 1400, 300, 200, 24, { n: [820] }),
+  ...parcelHedges(1520, 1400, 400, 240, 26, { n: [1520] }, 80),
+  ...parcelHedges(2140, 1280, 360, 240, 26),
+  ...parcelHedges(260, 1040, 200, 140, 24, { e: [1040] }),
+  ...parcelHedges(1580, 1080, 280, 120, 24),
   ...hedgeRow(1480, 32, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
   ...hedgeCol(360, 22, 620, 1120, [790, 880], RIVER_GAP_HALF),
   ...hedgeCol(2080, 22, 520, 1120, [790, 880], RIVER_GAP_HALF),
@@ -629,7 +599,8 @@ function townLamps(): StreetLight[] {
     slight(1200, 808),
     slight(1200, 952),
     slight(1660, 160),
-    slight(1140, 640),
+    slight(1200, 600),
+    slight(700, 600),
   ];
   return [...lamps, ...extra].filter((l) => {
     const inRiver = Math.abs(l.position.y - riverY) < riverH;
@@ -647,23 +618,23 @@ export const ASHBOURNE_TOWN: TownMap = {
   height: sx(1600),
 
   obstacles: [
-    // Historic core — north of the Henmore / Market Place.
-    sbuilding(1000, 660, 90, 90, 'The Green Man', 'pub'),
-    sbuilding(1100, 560, 110, 70, 'Gingerbread Shop', 'shop'),
-    sbuilding(1280, 660, 80, 80, 'The Horns', 'pub'),
-    sbuilding(1040, 710, 100, 60, "Smith's Butcher", 'shop'),
-    sbuilding(840, 640, 84, 70, 'The George & Dragon', 'pub'),
-    sbuilding(1520, 640, 90, 64, 'Station Stores', 'shop'),
+    // Historic core — destinations along the high street / plaza, not a tangle.
+    sbuilding(1000, 720, 90, 90, 'The Green Man', 'pub'),
+    sbuilding(1120, 580, 110, 70, 'Gingerbread Shop', 'shop'),
+    sbuilding(1340, 720, 80, 80, 'The Horns', 'pub'),
+    sbuilding(1040, 730, 100, 60, "Smith's Butcher", 'shop'),
+    sbuilding(820, 720, 84, 70, 'The George & Dragon', 'pub'),
+    sbuilding(1580, 720, 90, 64, 'Station Stores', 'shop'),
     // Compton — south of the brook.
     sbuilding(1100, 1080, 100, 80, 'The Vaults', 'pub'),
-    sbuilding(1280, 1160, 90, 90, 'The White Hart', 'pub'),
-    slandmark(1080, 580, 78, 112, 'Market Hall', 'market'),
-    slandmark(1260, 590, 72, 86, 'Town Hall', 'hall'),
+    sbuilding(1340, 1180, 90, 90, 'The White Hart', 'pub'),
+    slandmark(1080, 500, 78, 112, 'Market Hall', 'market'),
+    slandmark(1320, 500, 72, 86, 'Town Hall', 'hall'),
     sbuilding(600, 1280, 90, 70, 'The Wheel', 'pub'),
-    sbuilding(1820, 360, 110, 80, 'The Coach & Horses', 'pub'),
+    sbuilding(1940, 280, 110, 80, 'The Coach & Horses', 'pub'),
     slandmark(220, 500, 118, 86, "St Oswald's", 'church'),
     slandmark(700, 540, 150, 72, 'Old Grammar', 'school'),
-    slandmark(1700, 200, 78, 64, 'The Baths', 'trailhead'),
+    slandmark(1710, 160, 78, 64, 'The Baths', 'trailhead'),
   ],
 
   outOfBounds: [
@@ -691,10 +662,10 @@ export const ASHBOURNE_TOWN: TownMap = {
 
   places: [
     smark(640, 818, 'Henmore Brook', 'brook'),
-    smark(1140, 640, 'Market Place', 'plaza'),
+    smark(1200, 600, 'Market Place', 'plaza'),
     smark(1670, 150, 'Tissington Trail', 'trail'),
     smark(1660, 48, 'The Tunnel', 'tunnel'),
-    smark(1000, 660, 'Green Man', 'inn-sign'),
+    smark(1000, 720, 'Green Man', 'inn-sign'),
   ],
 
   goals: [

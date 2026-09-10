@@ -96,10 +96,10 @@ const PALETTE = {
   chimney: 0x4a3028,
   cobble: 0x6a5a48,
   cobbleEdge: 0x4a3e30,
-  /** Dark UK carriageway — not pale grey, not US asphalt blue. */
-  tarmac: 0x3a3228,
-  tarmacWear: 0x2a2218,
-  grit: 0x32281e,
+  /** Grey UK asphalt — #38–#39 carriageway, not dirt / tan paths. */
+  tarmac: 0x4a4640,
+  tarmacWear: 0x3c3934,
+  grit: 0x5a5348,
   verge: 0x3a3c28,
   lampPole: 0x2a2218,
   lampHead: 0x3a3428,
@@ -939,7 +939,7 @@ export class GameScene extends Phaser.Scene {
         g,
         road.points,
         road.width,
-        trail ? PALETTE.trail : street ? PALETTE.tarmac : PALETTE.grit,
+        trail ? PALETTE.trail : PALETTE.tarmac,
         0.96,
       );
       this.drawMitredStrip(
@@ -1000,24 +1000,25 @@ export class GameScene extends Phaser.Scene {
   private drawRoundaboutDiscs(): void {
     const g = this.mapGfx;
     for (const rbt of this.world.map.roundabouts) {
-      g.fillStyle(PALETTE.verge, 0.55);
-      g.fillCircle(rbt.position.x, rbt.position.y, rbt.radius + 8);
+      g.fillStyle(PALETTE.verge, 0.7);
+      g.fillCircle(rbt.position.x, rbt.position.y, rbt.radius + 10);
       g.fillStyle(PALETTE.tarmac, 1);
       g.fillCircle(rbt.position.x, rbt.position.y, rbt.radius);
+      g.fillStyle(PALETTE.tarmacWear, 0.22);
+      g.fillCircle(rbt.position.x, rbt.position.y, (rbt.radius + rbt.island) / 2);
     }
   }
 
+  /** UK mini-roundabout — grass island + white kerb, not a cobble/crystal blob. */
   private drawRoundaboutIslands(): void {
     const g = this.mapGfx;
     for (const rbt of this.world.map.roundabouts) {
       g.fillStyle(PALETTE.grass, 1);
       g.fillCircle(rbt.position.x, rbt.position.y, rbt.island);
-      g.fillStyle(PALETTE.cobble, 0.45);
-      g.fillCircle(rbt.position.x, rbt.position.y, rbt.island * 0.72);
-      g.fillStyle(PALETTE.hedgeLeaf, 0.7);
-      g.fillCircle(rbt.position.x, rbt.position.y, rbt.island * 0.32);
-      g.lineStyle(3, PALETTE.paint, 0.95);
-      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.island + 3);
+      g.fillStyle(PALETTE.grassAlt, 0.45);
+      g.fillCircle(rbt.position.x, rbt.position.y, rbt.island * 0.62);
+      g.lineStyle(4, PALETTE.paint, 0.95);
+      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.island + 2);
     }
   }
 
@@ -1028,12 +1029,12 @@ export class GameScene extends Phaser.Scene {
     for (const road of map.roads) {
       if (road.kind === 'trail') continue;
       this.dashCentreLine(g, road.points);
-      if (road.kind === 'street') this.strokeEdgeLines(g, road.points, road.width);
+      this.strokeEdgeLines(g, road.points, road.width);
       this.paintGiveWays(g, road, map.roads, map.roundabouts);
     }
     for (const rbt of map.roundabouts) {
-      g.lineStyle(4, PALETTE.paintWorn, 0.9);
-      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.radius - 6);
+      g.lineStyle(3.5, PALETTE.paintWorn, 0.92);
+      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.radius - 5);
     }
   }
 
@@ -1084,7 +1085,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Thin solid white kerb line on streets — skipped on lanes/trails so zoom stays quiet. */
+  /** Thin solid white kerb line on tarmac — skipped on the packed-trail strip. */
   private strokeEdgeLines(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
