@@ -1372,8 +1372,9 @@ export class GameScene extends Phaser.Scene {
   /**
    * UK carriageway paint, hierarchy-aware:
    *   trunk ('street') — broken white centre + worn edge lines
-   *   lane            — no through markings; just give-way dashes where it
-   *                     actually meets a trunk (minor arm gives way)
+   *   lane            — no through markings; give-way dashes on the narrower
+   *                     arm at a T (equal-width lane yields to street), or at
+   *                     a roundabout; the wider/priority arm stays unmarked
    *   trail           — unmarked packed strip
    */
   private drawRoadMarkings(): void {
@@ -1502,8 +1503,8 @@ export class GameScene extends Phaser.Scene {
 
   private paintGiveWays(
     g: Phaser.GameObjects.Graphics,
-    road: { points: { x: number; y: number }[]; width: number },
-    roads: { points: { x: number; y: number }[]; width: number }[],
+    road: { points: { x: number; y: number }[]; width: number; kind?: string },
+    roads: { points: { x: number; y: number }[]; width: number; kind?: string }[],
     roundabouts: { position: { x: number; y: number }; radius: number }[],
   ): void {
     if (road.points.length < 2) return;
@@ -1520,7 +1521,11 @@ export class GameScene extends Phaser.Scene {
             const d0 = Math.hypot(end.p.x - other.points[0]!.x, end.p.y - other.points[0]!.y);
             const last = other.points[other.points.length - 1]!;
             const d1 = Math.hypot(end.p.x - last.x, end.p.y - last.y);
-            if (d0 > other.width && d1 > other.width) junction = true;
+            // Narrower arm yields; equal-width lane yields to a street.
+            const yields =
+              road.width < other.width ||
+              (road.width === other.width && road.kind === 'lane' && other.kind === 'street');
+            if (d0 > other.width && d1 > other.width && yields) junction = true;
           }
         }
       }

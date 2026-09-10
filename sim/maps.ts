@@ -644,20 +644,21 @@ const TOWN_ROADS: RoadSegment[] = [
     [1420, 520],
     [1420, 660],
   ], { radius: 48 }),
-  // Secondary wrap — church T south, Compton, east column up to the high street.
-  sroad('lane', 44, [
+  // Secondary through street — church T south, Compton wrap, east column up to
+  // the high street. A real through route (not a minor lane): broken-white centre.
+  sroad('street', 44, [
     [400, 548],
     [400, 1140],
     [2000, 1140],
     [2000, 660],
   ], { radius: 72 }),
   // Clifton millstone — hedge corridor, then off the west edge.
-  sroad('lane', 48, [
+  sroad('lane', 44, [
     [0, 790],
     [400, 790],
   ]),
   // Sturston millstone — hedge corridor, then off the east edge.
-  sroad('lane', 48, [
+  sroad('lane', 44, [
     [2000, 790],
     [2400, 790],
   ]),
