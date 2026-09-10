@@ -119,6 +119,7 @@ export interface TownMap {
   river: RectZone;          // water — 50% speed
   bridges: RectZone[];      // walkable crossings over the river
   hedges: RectZone[];       // crawl — slower than river (~0.22×)
+  forests: RectZone[];      // edge woodland — visual, not a hard OOB
   roads: RoadSegment[];     // structured UK lanes — visual, no collision
   streetLights: StreetLight[]; // lamp posts; client glows them at Nightfall
   goals: { team: 0 | 1; position: Vec2 }[]; // millstones
@@ -131,8 +132,9 @@ millstones (one per team), horizontal river through the middle with
 three bridges, hedgerows that crawl slower than water, structured UK asphalt
 lanes (trunk + T/L junctions, optional trailhead mini-roundabout — never on
 the kickoff plinth) linking pubs/shops ↔ bridges ↔ millstones (hedge-flanked
-at both stones), street lights that read at Nightfall, civic landmarks as
-destinations, two OOB zones (churchyard + memorial).
+at both stones), large adjacent hedged fields, edge woodland, street lights
+that read at Nightfall, civic landmarks as destinations, two OOB zones
+(churchyard + memorial).
 
 ### Zone helpers (pure functions in `sim/maps.ts`)
 

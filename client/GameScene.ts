@@ -77,6 +77,10 @@ const PALETTE = {
   fieldA: 0x3a4a28,
   fieldB: 0x2f3e20,
   fieldC: 0x243218,
+  forestFloor: 0x1e3218,
+  canopy: 0x2a4a22,
+  canopyDeep: 0x163016,
+  trunk: 0x3a2a18,
   plough: 0x243218,
   mud: 0x5a3d28,
   mudDark: 0x3d291a,
@@ -776,6 +780,7 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
     this.drawFields(rand);
+    this.drawForests(rand);
 
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
@@ -903,6 +908,29 @@ export class GameScene extends Phaser.Scene {
         const ox = (rand() - 0.5) * 240 + towardMid * 50;
         const oy = (rand() - 0.5) * 110;
         g.fillCircle(x + ox, y + oy, 8 + rand() * 16);
+      }
+    }
+  }
+
+  /** English woodland mass — canopy clumps, not scattered prop trees. */
+  private drawForests(rand: () => number): void {
+    const g = this.mapGfx;
+    for (const stand of this.world.map.forests) {
+      const x = stand.position.x - stand.width / 2;
+      const y = stand.position.y - stand.height / 2;
+      g.fillStyle(PALETTE.forestFloor, 1);
+      g.fillRect(x, y, stand.width, stand.height);
+      const n = Math.max(10, Math.floor((stand.width * stand.height) / 2800));
+      for (let i = 0; i < n; i++) {
+        const tx = x + 10 + rand() * Math.max(8, stand.width - 20);
+        const ty = y + 10 + rand() * Math.max(8, stand.height - 20);
+        const r = 12 + rand() * 16;
+        g.fillStyle(PALETTE.trunk, 0.85);
+        g.fillRect(tx - 2, ty + r * 0.15, 4, 8);
+        g.fillStyle(i % 3 === 0 ? PALETTE.canopyDeep : PALETTE.canopy, 0.92);
+        g.fillCircle(tx, ty, r);
+        g.fillStyle(PALETTE.hedgeLeaf, 0.35);
+        g.fillCircle(tx - r * 0.2, ty - r * 0.15, r * 0.55);
       }
     }
   }
@@ -1190,7 +1218,21 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Stone packhorse decks + river arches, before the roadway paint. */
+  /** Width of the tarmac that actually crosses this deck. */
+  private crossingRoadWidth(x: number, y: number): number {
+    const map = this.world.map;
+    let best = 0;
+    for (const r of map.roads) {
+      for (let i = 0; i < r.points.length - 1; i++) {
+        if (distToSegment({ x, y }, r.points[i]!, r.points[i + 1]!) <= r.width * 0.65) {
+          if (r.width > best) best = r.width;
+        }
+      }
+    }
+    return best || 88;
+  }
+
+  /** Packhorse deck hugged to the carriageway — no fat stone collar. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
     for (const b of this.world.map.bridges) {
@@ -1200,36 +1242,34 @@ export class GameScene extends Phaser.Scene {
       const h = b.height;
       const bx = x - w / 2;
       const by = y - h / 2;
-      const parapet = 28;
-      // Arch voids in the Henmore — water showing under a single packhorse span.
+      const roadW = this.crossingRoadWidth(x, y);
+      const cheek = Math.max(7, (w - roadW) / 2);
       g.fillStyle(PALETTE.archShadow, 0.92);
-      g.fillEllipse(x, y + 4, w * 0.72, h * 0.78);
+      g.fillEllipse(x, y + 4, Math.min(w * 0.88, roadW + 10), h * 0.7);
       g.fillStyle(PALETTE.water, 0.7);
-      g.fillEllipse(x, y + 6, w * 0.5, 22);
-      // Bank abutments
+      g.fillEllipse(x, y + 6, roadW * 0.42, 16);
       g.fillStyle(PALETTE.stoneDark, 1);
-      g.fillRect(bx - 18, by - 16, w + 36, 28);
-      g.fillRect(bx - 18, by + h - 12, w + 36, 28);
+      g.fillRect(bx - 3, by - 8, w + 6, 14);
+      g.fillRect(bx - 3, by + h - 6, w + 6, 14);
       g.fillStyle(PALETTE.stone, 1);
-      g.fillRect(bx - 12, by - 12, w + 24, 18);
-      g.fillRect(bx - 12, by + h - 6, w + 24, 18);
-      // Walkable stone cheeks beside the tarmac (not a full plank deck).
+      g.fillRect(bx - 1, by - 5, w + 2, 8);
+      g.fillRect(bx - 1, by + h - 3, w + 2, 8);
       g.fillStyle(PALETTE.stone, 1);
-      g.fillRect(bx, by, parapet + 6, h);
-      g.fillRect(bx + w - parapet - 6, by, parapet + 6, h);
-      g.lineStyle(2, PALETTE.stoneMortar, 0.75);
-      for (let py = by + 6; py < by + h; py += 14) {
-        g.lineBetween(bx + 3, py, bx + parapet + 2, py);
-        g.lineBetween(bx + w - parapet - 2, py, bx + w - 3, py);
+      g.fillRect(bx, by, cheek, h);
+      g.fillRect(bx + w - cheek, by, cheek, h);
+      g.lineStyle(1.5, PALETTE.stoneMortar, 0.75);
+      for (let py = by + 5; py < by + h; py += 12) {
+        g.lineBetween(bx + 1, py, bx + cheek - 1, py);
+        g.lineBetween(bx + w - cheek + 1, py, bx + w - 1, py);
       }
-      g.lineStyle(4, PALETTE.stoneDark, 0.9);
+      g.lineStyle(3, PALETTE.stoneDark, 0.9);
       g.beginPath();
-      g.arc(x, y + 10, w * 0.34, Math.PI * 1.05, -0.05, false);
+      g.arc(x, y + 8, Math.min(w * 0.42, roadW * 0.42), Math.PI * 1.05, -0.05, false);
       g.strokePath();
     }
   }
 
-  /** Chunkier stone parapets + cutwaters after the lane so the roadway stays continuous. */
+  /** Thin parapets + small cutwaters after the lane so the roadway stays continuous. */
   private drawStoneBridgeParapets(): void {
     const g = this.mapGfx;
     for (const b of this.world.map.bridges) {
@@ -1237,37 +1277,29 @@ export class GameScene extends Phaser.Scene {
       const y = b.position.y;
       const w = b.width;
       const h = b.height;
-      const parapet = 22;
+      const roadW = this.crossingRoadWidth(x, y);
+      const cheek = Math.max(7, (w - roadW) / 2);
+      const wall = Math.min(10, cheek);
       const bx = x - w / 2;
       const by = y - h / 2;
       const drawWall = (wx: number): void => {
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(wx - 3, by - 10, parapet + 6, h + 20);
+        g.fillRect(wx - 1, by - 6, wall + 2, h + 12);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(wx, by - 6, parapet, h + 12);
-        g.lineStyle(1.5, PALETTE.stoneMortar, 0.8);
-        for (let py = by; py < by + h; py += 11) {
-          g.lineBetween(wx + 2, py, wx + parapet - 2, py);
-        }
-        for (let i = 0; i < 3; i++) {
-          g.lineBetween(wx + 4 + i * 6, by, wx + 4 + i * 6, by + h);
+        g.fillRect(wx, by - 4, wall, h + 8);
+        g.lineStyle(1.2, PALETTE.stoneMortar, 0.8);
+        for (let py = by; py < by + h; py += 10) {
+          g.lineBetween(wx + 1, py, wx + wall - 1, py);
         }
         g.fillStyle(PALETTE.stoneLite, 1);
-        g.fillRect(wx - 3, by - 10, parapet + 6, 7);
-        g.fillRect(wx - 3, by + h + 3, parapet + 6, 7);
-        for (let py = by + 10; py < by + h - 4; py += 26) {
-          g.fillRect(wx - 5, py, parapet + 10, 9);
-        }
+        g.fillRect(wx - 1, by - 6, wall + 2, 5);
+        g.fillRect(wx - 1, by + h + 1, wall + 2, 5);
       };
       drawWall(bx);
-      drawWall(bx + w - parapet);
-      // Cutwaters pointing upstream / downstream.
+      drawWall(bx + w - wall);
       g.fillStyle(PALETTE.stoneLite, 1);
-      g.fillTriangle(bx - 10, y, bx + 12, y - 22, bx + 12, y + 22);
-      g.fillTriangle(bx + w + 10, y, bx + w - 12, y - 22, bx + w - 12, y + 22);
-      g.fillStyle(PALETTE.stoneDark, 0.85);
-      g.fillCircle(bx + 8, y, 7);
-      g.fillCircle(bx + w - 8, y, 7);
+      g.fillTriangle(bx - 4, y, bx + 7, y - 12, bx + 7, y + 12);
+      g.fillTriangle(bx + w + 4, y, bx + w - 7, y - 12, bx + w - 7, y + 12);
     }
   }
 
@@ -3402,6 +3434,15 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
+    g.fillStyle(PALETTE.forestFloor, 0.85);
+    for (const stand of map.forests) {
+      g.fillRect(
+        ox + (stand.position.x - stand.width / 2) * sx,
+        oy + (stand.position.y - stand.height / 2) * sy,
+        Math.max(2, stand.width * sx),
+        Math.max(2, stand.height * sy),
+      );
+    }
     g.fillStyle(PALETTE.fieldA, 0.55);
     for (const f of map.fields) {
       g.fillRect(

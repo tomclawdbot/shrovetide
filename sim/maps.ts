@@ -122,6 +122,9 @@ export interface Roundabout {
 /** Hedge-bordered English field parcel. Visual grass; hedges are the crawl. */
 export interface FieldParcel extends RectZone {}
 
+/** Edge woodland / tree belt. Visual boundary — not a hard OOB. */
+export interface ForestStand extends RectZone {}
+
 /** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
 export type RoadKind = 'street' | 'lane' | 'trail';
 
@@ -162,6 +165,8 @@ export interface TownMap {
   hedges: RectZone[];
   /** Rectangular English field parcels. Visual; hedges on the borders crawl. */
   fields: FieldParcel[];
+  /** Tree belts and edge woodland. Visual; pitch stays playable through them. */
+  forests: ForestStand[];
   /**
    * Soft paths between buildings and out to the millstones.
    * Not collision — hug / fields / Henmore stay playable off the tarmac.
@@ -332,7 +337,7 @@ function vergeLights(roads: RoadSegment[], roundabouts: Roundabout[]): StreetLig
       const ny = (b.x - a.x) / len;
       const verge = r.width / 2 + 10;
       const start = acc === 0 ? 48 : 0;
-      for (let d = start; d < len; d += 150) {
+      for (let d = start; d < len; d += 240) {
         const t = d / len;
         const side = out.length % 2 === 0 ? 1 : -1;
         out.push({
@@ -450,9 +455,9 @@ function hedgeCol(
 // ASHBOURNE TOWN — Derbyshire market-town homage (not GPS).
 //
 // Layout grammar (from the overworld refs, not their dirt / fantasy props):
-//   trunk streets on a cross, secondary lanes as L / T, generous grass cells,
-//   landmarks as destinations on short spurs. One UK mini-roundabout at the
-//   trailhead only — never a circle on the kickoff plinth.
+//   trunk streets on a cross, secondary lanes as L / T, large adjacent
+//   hedged fields, edge woodland belts, landmarks as destinations.
+//   One UK mini-roundabout at the trailhead — never a circle on the plinth.
 //
 // Henmore along the south edge of the historic core. High street and Market
 // Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
@@ -466,10 +471,6 @@ function hedgeCol(
 //        Compton  Vaults / White Hart     [Wheel]
 //   Clifton ◄──────────────────────────► Sturston
 // ---------------------------------------------------------------------------
-
-const BRIDGE_XS = [400, 1200, 2000];
-const LANE_GAP_HALF = 80;
-const RIVER_GAP_HALF = 140;
 
 /** Trailhead mini-roundabout — Baths / Tissington / Coach. Far from the plinth. */
 const TRAIL_RBT = sroundabout(1660, 280, 64, 26);
@@ -498,10 +499,10 @@ const TOWN_ROADS: RoadSegment[] = [
     [400, 500],
     [400, 1140],
   ]),
-  // East column — high street T through the east (Sturston) bridge.
+  // East column — high street through the east bridge to the south bank / Compton.
   sroad('lane', 44, [
     [2000, 660],
-    [2000, 880],
+    [2000, 1140],
   ]),
   // Clifton millstone → west column (hedge corridor — keep straight).
   sroad('lane', 48, [
@@ -513,10 +514,10 @@ const TOWN_ROADS: RoadSegment[] = [
     [2250, 790],
     [2000, 790],
   ]),
-  // Compton — west column across the centre street to The White Hart.
+  // Compton — south trunk from the west column to the east column.
   sroad('lane', 44, [
     [400, 1140],
-    [1400, 1140],
+    [2000, 1140],
   ]),
   // The Wheel — L off the Compton / west-column T.
   sroad('lane', 40, [
@@ -551,40 +552,51 @@ const TOWN_ROADS: RoadSegment[] = [
   ]),
 ];
 
+/** Adjacent hedged parcels — shared edges read as a patchwork, not scattered stamps. */
 const TOWN_FIELDS: FieldParcel[] = [
-  sfield(560, 280, 420, 240),
-  sfield(1000, 240, 380, 200),
-  sfield(2200, 300, 320, 220),
-  sfield(1880, 140, 240, 160),
-  sfield(260, 1360, 220, 200),
-  sfield(820, 1460, 300, 180),
-  sfield(1560, 1540, 340, 140),
-  sfield(2140, 1280, 360, 240),
-  sfield(260, 1040, 200, 140),
-  sfield(1580, 1080, 280, 120),
+  // North of the high street, west of the trail (two neighbours sharing x=960).
+  sfield(700, 280, 520, 400),
+  sfield(1290, 280, 660, 400),
+  // North-east of the trail.
+  sfield(2100, 200, 480, 280),
+  // Between Henmore south bank and Compton (cells between the N–S columns).
+  sfield(220, 1050, 280, 140),
+  sfield(700, 1050, 520, 140),
+  sfield(1600, 1050, 720, 140),
+  sfield(2200, 1050, 320, 140),
+  // South of Compton — one row of neighbouring parcels.
+  sfield(320, 1400, 480, 320),
+  sfield(800, 1400, 480, 320),
+  sfield(1280, 1400, 480, 320),
+  sfield(1760, 1400, 480, 320),
 ];
 
 const TOWN_HEDGES: RectZone[] = [
-  ...parcelHedges(560, 280, 420, 240, 26),
-  ...parcelHedges(1000, 240, 380, 200, 24, { s: [1000] }),
-  ...parcelHedges(2200, 300, 320, 220, 26),
-  ...parcelHedges(1880, 140, 240, 160, 24, { s: [1880] }),
-  ...parcelHedges(260, 1360, 220, 200, 26),
-  ...parcelHedges(820, 1460, 300, 180, 24, { n: [820] }),
-  ...parcelHedges(1560, 1540, 340, 140, 26, { n: [1560] }, 80),
-  ...parcelHedges(2140, 1280, 360, 240, 26),
-  ...parcelHedges(260, 1040, 200, 140, 24, { e: [1040] }),
-  ...parcelHedges(1580, 1080, 280, 120, 24),
-  ...hedgeRow(1480, 32, 80, 2080, BRIDGE_XS, LANE_GAP_HALF),
-  ...hedgeCol(360, 22, 620, 1120, [790, 880], RIVER_GAP_HALF),
-  ...hedgeCol(2080, 22, 520, 1120, [790, 880], RIVER_GAP_HALF),
+  ...parcelHedges(700, 280, 520, 400, 26),
+  ...parcelHedges(1290, 280, 660, 400, 26),
+  ...parcelHedges(2100, 200, 480, 280, 26),
+  ...parcelHedges(220, 1050, 280, 140, 24),
+  ...parcelHedges(700, 1050, 520, 140, 24),
+  ...parcelHedges(1600, 1050, 720, 140, 24),
+  ...parcelHedges(2200, 1050, 320, 140, 24),
+  ...parcelHedges(320, 1400, 480, 320, 26),
+  ...parcelHedges(800, 1400, 480, 320, 26),
+  ...parcelHedges(1280, 1400, 480, 320, 26),
+  ...parcelHedges(1760, 1400, 480, 320, 26),
   // Goal approaches — hedges flank the millstone lanes, clear of the stones.
   srect(355, 754, 270, 22),
   srect(355, 826, 270, 18),
   srect(2045, 754, 270, 22),
   srect(2045, 826, 270, 18),
-  srect(300, 980, 200, 28),
-  srect(2100, 980, 200, 28),
+];
+
+/** Ashbourne edge woodland — tree belts, not fantasy forest clutter. */
+const TOWN_FORESTS: ForestStand[] = [
+  srect(860, 58, 1480, 88),
+  srect(90, 520, 140, 280),
+  srect(2220, 140, 300, 200),
+  srect(80, 1480, 140, 200),
+  srect(2360, 700, 80, 520),
 ];
 
 function townLamps(): StreetLight[] {
@@ -600,7 +612,6 @@ function townLamps(): StreetLight[] {
     slight(1200, 952),
     slight(1660, 160),
     slight(1200, 600),
-    slight(700, 600),
   ];
   return [...lamps, ...extra].filter((l) => {
     const inRiver = Math.abs(l.position.y - riverY) < riverH;
@@ -645,9 +656,9 @@ export const ASHBOURNE_TOWN: TownMap = {
   river: srect(1200, 880, 2400, 120),
 
   bridges: [
-    srect(400, 880, 150, 140),
-    srect(1200, 880, 150, 140),
-    srect(2000, 880, 150, 140),
+    srect(400, 880, 64, 150),
+    srect(1200, 880, 72, 150),
+    srect(2000, 880, 64, 150),
   ],
 
   roundabouts: TOWN_ROUNDABOUTS,
@@ -655,6 +666,8 @@ export const ASHBOURNE_TOWN: TownMap = {
   hedges: TOWN_HEDGES,
 
   fields: TOWN_FIELDS,
+
+  forests: TOWN_FORESTS,
 
   roads: TOWN_ROADS,
 

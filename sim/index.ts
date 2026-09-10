@@ -54,6 +54,7 @@ export {
   type CivicKind,
   type Circle,
   type FieldParcel,
+  type ForestStand,
   type PlaceKind,
   type PlaceMark,
   type GoalMarker,
