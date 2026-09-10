@@ -310,16 +310,17 @@ function parcelHedges(
   thick: number,
   gaps: { n?: number[]; s?: number[]; e?: number[]; w?: number[] } = {},
   gapHalf = 56,
+  skip: { n?: boolean; s?: boolean; e?: boolean; w?: boolean } = {},
 ): RectZone[] {
   const x0 = cx - w / 2;
   const x1 = cx + w / 2;
   const y0 = cy - h / 2;
   const y1 = cy + h / 2;
   return [
-    ...hedgeRow(y0, thick, x0, x1, gaps.n ?? [], gapHalf),
-    ...hedgeRow(y1, thick, x0, x1, gaps.s ?? [], gapHalf),
-    ...hedgeCol(x0, thick, y0, y1, gaps.w ?? [], gapHalf),
-    ...hedgeCol(x1, thick, y0, y1, gaps.e ?? [], gapHalf),
+    ...(skip.n ? [] : hedgeRow(y0, thick, x0, x1, gaps.n ?? [], gapHalf)),
+    ...(skip.s ? [] : hedgeRow(y1, thick, x0, x1, gaps.s ?? [], gapHalf)),
+    ...(skip.w ? [] : hedgeCol(x0, thick, y0, y1, gaps.w ?? [], gapHalf)),
+    ...(skip.e ? [] : hedgeCol(x1, thick, y0, y1, gaps.e ?? [], gapHalf)),
   ];
 }
 
@@ -572,16 +573,17 @@ const TOWN_FIELDS: FieldParcel[] = [
 ];
 
 const TOWN_HEDGES: RectZone[] = [
-  ...parcelHedges(700, 280, 520, 400, 26),
+  // Shared edges get one hedge so the patchwork does not double-collar.
+  ...parcelHedges(700, 280, 520, 400, 26, {}, 56, { e: true }),
   ...parcelHedges(1290, 280, 660, 400, 26),
   ...parcelHedges(2100, 200, 480, 280, 26),
   ...parcelHedges(220, 1050, 280, 140, 24),
   ...parcelHedges(700, 1050, 520, 140, 24),
   ...parcelHedges(1600, 1050, 720, 140, 24),
   ...parcelHedges(2200, 1050, 320, 140, 24),
-  ...parcelHedges(320, 1400, 480, 320, 26),
-  ...parcelHedges(800, 1400, 480, 320, 26),
-  ...parcelHedges(1280, 1400, 480, 320, 26),
+  ...parcelHedges(320, 1400, 480, 320, 26, {}, 56, { e: true }),
+  ...parcelHedges(800, 1400, 480, 320, 26, {}, 56, { e: true }),
+  ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1760, 1400, 480, 320, 26),
   // Goal approaches — hedges flank the millstone lanes, clear of the stones.
   srect(355, 754, 270, 22),
@@ -590,13 +592,14 @@ const TOWN_HEDGES: RectZone[] = [
   srect(2045, 826, 270, 18),
 ];
 
-/** Ashbourne edge woodland — tree belts, not fantasy forest clutter. */
+/** Ashbourne edge woodland — readable tree blocks, not fantasy clutter. */
 const TOWN_FORESTS: ForestStand[] = [
-  srect(860, 58, 1480, 88),
-  srect(90, 520, 140, 280),
-  srect(2220, 140, 300, 200),
-  srect(80, 1480, 140, 200),
-  srect(2360, 700, 80, 520),
+  // North belt above the north parcels (trail cuts the gap to the NE block).
+  srect(620, 72, 1240, 168),
+  srect(2180, 170, 400, 280),
+  srect(70, 560, 168, 340),
+  srect(70, 1460, 200, 260),
+  srect(2384, 720, 128, 500),
 ];
 
 function townLamps(): StreetLight[] {

@@ -74,12 +74,12 @@ const PALETTE = {
   grass: 0x3a4a28,
   grassAlt: 0x2f3e20,
   grassDark: 0x243218,
-  fieldA: 0x3a4a28,
-  fieldB: 0x2f3e20,
-  fieldC: 0x243218,
-  forestFloor: 0x1e3218,
-  canopy: 0x2a4a22,
-  canopyDeep: 0x163016,
+  fieldA: 0x4a582c,
+  fieldB: 0x334620,
+  fieldC: 0x5a6234,
+  forestFloor: 0x142412,
+  canopy: 0x1f3a1a,
+  canopyDeep: 0x0e220e,
   trunk: 0x3a2a18,
   plough: 0x243218,
   mud: 0x5a3d28,
@@ -273,6 +273,30 @@ function mitredStripPolygon(
     right.push({ x: cur.x - mx * miter, y: cur.y - my * miter });
   }
   return [...left, ...right.reverse()];
+}
+
+/** Clip a segment to an inclusive Y band. Used to keep grass verge off the brook. */
+function clipSegY(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  minY: number,
+  maxY: number,
+): [{ x: number; y: number }, { x: number; y: number }] | null {
+  const dy = b.y - a.y;
+  const dx = b.x - a.x;
+  if (Math.abs(dy) < 1e-6) {
+    if (a.y < minY || a.y > maxY) return null;
+    return [a, b];
+  }
+  const tMin = (minY - a.y) / dy;
+  const tMax = (maxY - a.y) / dy;
+  const t0 = Math.max(0, Math.min(tMin, tMax));
+  const t1 = Math.min(1, Math.max(tMin, tMax));
+  if (t0 >= t1) return null;
+  return [
+    { x: a.x + dx * t0, y: a.y + dy * t0 },
+    { x: a.x + dx * t1, y: a.y + dy * t1 },
+  ];
 }
 
 function buildTag(build: Build): string {
@@ -780,7 +804,6 @@ export class GameScene extends Phaser.Scene {
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
     this.drawFields(rand);
-    this.drawForests(rand);
 
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
@@ -812,6 +835,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    this.drawForests(rand);
     this.drawApproachMud();
 
     const rx = map.river.position.x - map.river.width / 2;
@@ -912,25 +936,25 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** English woodland mass — canopy clumps, not scattered prop trees. */
+  /** English woodland mass — overlapping canopy, readable as a tree block. */
   private drawForests(rand: () => number): void {
     const g = this.mapGfx;
     for (const stand of this.world.map.forests) {
       const x = stand.position.x - stand.width / 2;
       const y = stand.position.y - stand.height / 2;
       g.fillStyle(PALETTE.forestFloor, 1);
-      g.fillRect(x, y, stand.width, stand.height);
-      const n = Math.max(10, Math.floor((stand.width * stand.height) / 2800));
+      g.fillRoundedRect(x, y, stand.width, stand.height, 18);
+      const n = Math.max(14, Math.floor((stand.width * stand.height) / 1600));
       for (let i = 0; i < n; i++) {
-        const tx = x + 10 + rand() * Math.max(8, stand.width - 20);
-        const ty = y + 10 + rand() * Math.max(8, stand.height - 20);
-        const r = 12 + rand() * 16;
-        g.fillStyle(PALETTE.trunk, 0.85);
-        g.fillRect(tx - 2, ty + r * 0.15, 4, 8);
-        g.fillStyle(i % 3 === 0 ? PALETTE.canopyDeep : PALETTE.canopy, 0.92);
+        const tx = x + 16 + rand() * Math.max(8, stand.width - 32);
+        const ty = y + 16 + rand() * Math.max(8, stand.height - 32);
+        const r = 22 + rand() * 28;
+        g.fillStyle(PALETTE.trunk, 0.9);
+        g.fillRect(tx - 3, ty + r * 0.2, 5, 10);
+        g.fillStyle(i % 3 === 0 ? PALETTE.canopyDeep : PALETTE.canopy, 0.96);
         g.fillCircle(tx, ty, r);
-        g.fillStyle(PALETTE.hedgeLeaf, 0.35);
-        g.fillCircle(tx - r * 0.2, ty - r * 0.15, r * 0.55);
+        g.fillStyle(PALETTE.hedgeLeaf, 0.28);
+        g.fillCircle(tx - r * 0.22, ty - r * 0.18, r * 0.5);
       }
     }
   }
@@ -959,10 +983,30 @@ export class GameScene extends Phaser.Scene {
   /** Mitred UK lanes — square caps, no sausage round-ends. */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
+    const river = this.world.map.river;
+    const riverTop = river.position.y - river.height / 2;
+    const riverBot = river.position.y + river.height / 2;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
-      this.drawMitredStrip(g, road.points, road.width + 14, trail ? PALETTE.trailEdge : PALETTE.verge, trail ? 0.4 : 0.55);
+      // Grass verge stays on the banks — never a fat collar across the Henmore.
+      for (let i = 0; i < road.points.length - 1; i++) {
+        const a = road.points[i]!;
+        const b = road.points[i + 1]!;
+        for (const band of [
+          clipSegY(a, b, -1e6, riverTop),
+          clipSegY(a, b, riverBot, 1e6),
+        ]) {
+          if (!band) continue;
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width + 14,
+            trail ? PALETTE.trailEdge : PALETTE.verge,
+            trail ? 0.4 : 0.55,
+          );
+        }
+      }
       this.drawMitredStrip(
         g,
         road.points,
@@ -1232,74 +1276,81 @@ export class GameScene extends Phaser.Scene {
     return best || 88;
   }
 
-  /** Packhorse deck hugged to the carriageway — no fat stone collar. */
+  /** Packhorse arch in the water — structure hugs the lane, no fat deck collar. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
+    const river = this.world.map.river;
     for (const b of this.world.map.bridges) {
       const x = b.position.x;
       const y = b.position.y;
-      const w = b.width;
       const h = b.height;
-      const bx = x - w / 2;
-      const by = y - h / 2;
       const roadW = this.crossingRoadWidth(x, y);
-      const cheek = Math.max(7, (w - roadW) / 2);
-      g.fillStyle(PALETTE.archShadow, 0.92);
-      g.fillEllipse(x, y + 4, Math.min(w * 0.88, roadW + 10), h * 0.7);
-      g.fillStyle(PALETTE.water, 0.7);
-      g.fillEllipse(x, y + 6, roadW * 0.42, 16);
-      g.fillStyle(PALETTE.stoneDark, 1);
-      g.fillRect(bx - 3, by - 8, w + 6, 14);
-      g.fillRect(bx - 3, by + h - 6, w + 6, 14);
-      g.fillStyle(PALETTE.stone, 1);
-      g.fillRect(bx - 1, by - 5, w + 2, 8);
-      g.fillRect(bx - 1, by + h - 3, w + 2, 8);
-      g.fillStyle(PALETTE.stone, 1);
-      g.fillRect(bx, by, cheek, h);
-      g.fillRect(bx + w - cheek, by, cheek, h);
-      g.lineStyle(1.5, PALETTE.stoneMortar, 0.75);
-      for (let py = by + 5; py < by + h; py += 12) {
-        g.lineBetween(bx + 1, py, bx + cheek - 1, py);
-        g.lineBetween(bx + w - cheek + 1, py, bx + w - 1, py);
+      const wall = 13;
+      const deck = roadW + wall * 2;
+      const pier = 22;
+      const archW = roadW + 36;
+      const riverH = river.height;
+      const by = y - h / 2;
+      // Piers sit in the brook beside the carriageway, not as a wide stone plaza.
+      for (const side of [-1, 1]) {
+        const px = x + side * (roadW / 2 + pier * 0.35);
+        g.fillStyle(PALETTE.stoneDark, 1);
+        g.fillRect(px - pier / 2, y - riverH * 0.42, pier, riverH * 0.84);
+        g.fillStyle(PALETTE.stone, 1);
+        g.fillRect(px - pier / 2 + 2, y - riverH * 0.38, pier - 4, riverH * 0.76);
       }
-      g.lineStyle(3, PALETTE.stoneDark, 0.9);
+      g.fillStyle(PALETTE.archShadow, 0.95);
+      g.fillEllipse(x, y + 6, archW * 0.92, riverH * 0.72);
+      g.fillStyle(PALETTE.water, 0.92);
+      g.fillEllipse(x, y + 10, roadW * 0.72, 22);
+      g.lineStyle(5, PALETTE.stone, 0.95);
       g.beginPath();
-      g.arc(x, y + 8, Math.min(w * 0.42, roadW * 0.42), Math.PI * 1.05, -0.05, false);
+      g.arc(x, y + 10, Math.min(archW * 0.36, roadW * 0.48), Math.PI * 1.02, -0.02, false);
       g.strokePath();
+      g.lineStyle(2.5, PALETTE.stoneDark, 0.85);
+      g.beginPath();
+      g.arc(x, y + 12, Math.min(archW * 0.36, roadW * 0.48) - 3, Math.PI * 1.02, -0.02, false);
+      g.strokePath();
+      // Bank abutments — same width as deck + parapet, not a flopping collar.
+      for (const top of [true, false]) {
+        const ay = top ? by - 6 : by + h - 4;
+        g.fillStyle(PALETTE.stoneDark, 1);
+        g.fillRect(x - deck / 2 - 2, ay, deck + 4, 14);
+        g.fillStyle(PALETTE.stone, 1);
+        g.fillRect(x - deck / 2, ay + 2, deck, 9);
+      }
     }
   }
 
-  /** Thin parapets + small cutwaters after the lane so the roadway stays continuous. */
+  /** Low parapets just outside the tarmac so the roadway stays continuous. */
   private drawStoneBridgeParapets(): void {
     const g = this.mapGfx;
     for (const b of this.world.map.bridges) {
       const x = b.position.x;
       const y = b.position.y;
-      const w = b.width;
       const h = b.height;
       const roadW = this.crossingRoadWidth(x, y);
-      const cheek = Math.max(7, (w - roadW) / 2);
-      const wall = Math.min(10, cheek);
-      const bx = x - w / 2;
+      const wall = 13;
       const by = y - h / 2;
-      const drawWall = (wx: number): void => {
+      const drawWall = (cx: number): void => {
+        const wx = cx - wall / 2;
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(wx - 1, by - 6, wall + 2, h + 12);
+        g.fillRect(wx - 1, by - 8, wall + 2, h + 16);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(wx, by - 4, wall, h + 8);
-        g.lineStyle(1.2, PALETTE.stoneMortar, 0.8);
-        for (let py = by; py < by + h; py += 10) {
+        g.fillRect(wx, by - 6, wall, h + 12);
+        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
+        for (let py = by; py < by + h; py += 11) {
           g.lineBetween(wx + 1, py, wx + wall - 1, py);
         }
         g.fillStyle(PALETTE.stoneLite, 1);
-        g.fillRect(wx - 1, by - 6, wall + 2, 5);
-        g.fillRect(wx - 1, by + h + 1, wall + 2, 5);
+        g.fillRect(wx - 1, by - 8, wall + 2, 6);
+        g.fillRect(wx - 1, by + h + 2, wall + 2, 6);
       };
-      drawWall(bx);
-      drawWall(bx + w - wall);
+      drawWall(x - roadW / 2 - wall / 2 + 1);
+      drawWall(x + roadW / 2 + wall / 2 - 1);
       g.fillStyle(PALETTE.stoneLite, 1);
-      g.fillTriangle(bx - 4, y, bx + 7, y - 12, bx + 7, y + 12);
-      g.fillTriangle(bx + w + 4, y, bx + w - 7, y - 12, bx + w - 7, y + 12);
+      g.fillTriangle(x - roadW / 2 - 10, y, x - roadW / 2 + 2, y - 11, x - roadW / 2 + 2, y + 11);
+      g.fillTriangle(x + roadW / 2 + 10, y, x + roadW / 2 - 2, y - 11, x + roadW / 2 - 2, y + 11);
     }
   }
 
