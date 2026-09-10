@@ -128,6 +128,12 @@ const PALETTE = {
   tunnelDark: 0x1a1612,
   tunnelRing: 0x4a443c,
   greenMan: 0x3a6a32,
+  bedSoil: 0x4a3424,
+  bloomPink: 0xd46a8a,
+  bloomYellow: 0xe8c45a,
+  bloomWhite: 0xf0ead8,
+  bloomRed: 0xc44a3a,
+  bloomPurple: 0x7a4e8a,
   bathsBlue: 0x3a6a78,
   window: 0x2a4050,
   windowLite: 0x8ab0c4,
@@ -202,8 +208,6 @@ const LANDMARK_SPRITE_IDS = [
   'town-hall',
   'the-baths',
   'the-tunnel',
-  'tissington-trail',
-  'henmore-brook',
   'market-place',
   'green-man',
   'the-george-dragon',
@@ -1115,16 +1119,41 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** UK mini-roundabout — grass island + white kerb, not a cobble/crystal blob. */
+  /** UK mini-roundabout — flowered island + white kerb, not empty asphalt. */
   private drawRoundaboutIslands(): void {
     const g = this.mapGfx;
+    const blooms = [
+      PALETTE.bloomPink,
+      PALETTE.bloomYellow,
+      PALETTE.bloomWhite,
+      PALETTE.bloomRed,
+      PALETTE.bloomPurple,
+    ];
     for (const rbt of this.world.map.roundabouts) {
+      const { x, y } = rbt.position;
       g.fillStyle(PALETTE.grass, 1);
-      g.fillCircle(rbt.position.x, rbt.position.y, rbt.island);
-      g.fillStyle(PALETTE.grassAlt, 0.45);
-      g.fillCircle(rbt.position.x, rbt.position.y, rbt.island * 0.62);
+      g.fillCircle(x, y, rbt.island);
+      g.fillStyle(PALETTE.bedSoil, 0.92);
+      g.fillCircle(x, y, rbt.island * 0.78);
+      g.fillStyle(PALETTE.grassAlt, 0.55);
+      g.fillCircle(x, y, rbt.island * 0.28);
+      let s = (Math.imul(Math.floor(x), 374761393) ^ Math.imul(Math.floor(y), 668265263)) >>> 0;
+      const rand = (): number => {
+        s = (s + 0x6d2b79f5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const n = 18;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rand() * 0.4;
+        const rr = rbt.island * (0.34 + rand() * 0.36);
+        g.fillStyle(blooms[i % blooms.length]!, 0.95);
+        g.fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 2.2 + rand() * 2.4);
+      }
       g.lineStyle(4, PALETTE.paint, 0.95);
-      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.island + 2);
+      g.strokeCircle(x, y, rbt.island + 2);
     }
   }
 
@@ -3592,6 +3621,8 @@ export class GameScene extends Phaser.Scene {
       g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(3, rbt.radius * sx));
       g.fillStyle(PALETTE.grass, 0.95);
       g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(1.5, rbt.island * sx));
+      g.fillStyle(PALETTE.bloomPink, 0.9);
+      g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(1, rbt.island * sx * 0.45));
       g.fillStyle(PALETTE.tarmac, 0.9);
     }
     g.fillStyle(PALETTE.hedge, 0.95);

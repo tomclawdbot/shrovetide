@@ -27,6 +27,7 @@ import {
   isInObstacle,
   isInWater,
   distanceToRoad,
+  distToSegment,
   isNearRoad,
   isOnBridge,
   isOnRoad,
@@ -936,6 +937,37 @@ test('map: roads are intentional connectors, not dead-end stubs', () => {
   assert.equal(isOnRoad({ x: 2000 * TOWN_SCALE, y: 980 * TOWN_SCALE }, map), true, 'east road finishes on the south bank');
 });
 
+test('map: every road end joins a junction or leaves the pitch', () => {
+  const map = ASHBOURNE_TOWN;
+  const edgePad = 12;
+  const joinPad = 18;
+  const onEdge = (p: { x: number; y: number }): boolean =>
+    p.x <= edgePad || p.x >= map.width - edgePad || p.y <= edgePad || p.y >= map.height - edgePad;
+  const onOtherRoad = (p: { x: number; y: number }, self: (typeof map.roads)[number]): boolean => {
+    for (const road of map.roads) {
+      if (road === self) continue;
+      const half = road.width / 2 + joinPad;
+      for (let i = 0; i < road.points.length - 1; i++) {
+        if (distToSegment(p, road.points[i]!, road.points[i + 1]!) <= half) return true;
+      }
+    }
+    for (const rbt of map.roundabouts) {
+      const d = Math.hypot(p.x - rbt.position.x, p.y - rbt.position.y);
+      if (Math.abs(d - rbt.radius) <= joinPad) return true;
+    }
+    return false;
+  };
+  for (const road of map.roads) {
+    const ends = [road.points[0]!, road.points[road.points.length - 1]!];
+    for (const end of ends) {
+      assert.ok(
+        onEdge(end) || onOtherRoad(end, road),
+        `road end ${end.x.toFixed(0)},${end.y.toFixed(0)} must join a junction or leave the map`,
+      );
+    }
+  }
+});
+
 test('map: street lights sit on the road network', () => {
   const map = ASHBOURNE_TOWN;
   assert.ok(map.streetLights.length >= 12, 'enough lamps to read at Nightfall');
@@ -1073,15 +1105,17 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(byKind.church!.position.x < byKind.market!.position.x, 'St Oswald’s reads west of the square');
   assert.ok(byKind.trailhead!.position.y < byKind.market!.position.y, 'Baths / trail sit toward the north edge');
 
-  assert.ok(map.roads.some((r) => r.kind === 'trail'), 'Tissington Trail is a trail strip');
+  assert.ok(map.roads.some((r) => r.kind === 'trail'), 'former-railway trail strip remains');
   const placeNames = map.places.map((p) => p.name);
-  for (const name of ['Henmore Brook', 'Market Place', 'Tissington Trail', 'The Tunnel']) {
+  for (const name of ['Market Place', 'The Tunnel']) {
     assert.ok(placeNames.includes(name), `place label ${name}`);
   }
+  assert.equal(placeNames.includes('Henmore Brook'), false, 'no floating Henmore landmark');
+  assert.equal(placeNames.includes('Tissington Trail'), false, 'no floating trail landmark');
   const placeById = Object.fromEntries(map.places.map((p) => [p.id, p]));
-  assert.equal(placeById['henmore-brook']?.kind, 'brook');
+  assert.equal(placeById['henmore-brook'], undefined);
+  assert.equal(placeById['tissington-trail'], undefined);
   assert.equal(placeById['market-place']?.kind, 'plaza');
-  assert.equal(placeById['tissington-trail']?.kind, 'trail');
   assert.equal(placeById['the-tunnel']?.kind, 'tunnel');
   assert.equal(placeById['green-man']?.kind, 'inn-sign');
   const greenMan = map.obstacles.filter(isBuilding).find((b) => b.id === 'the-green-man');
@@ -1108,6 +1142,8 @@ test('map: at most two mini-roundabouts, none on the plinth', () => {
     assert.equal(isOnRoad(ring, map), true, 'roundabout ring is part of the network');
     const dPlinth = Math.hypot(rbt.position.x - map.turnUp.x, rbt.position.y - map.turnUp.y);
     assert.ok(dPlinth > rbt.radius + 280, 'roundabout stays off the kickoff plinth');
+    assert.ok(rbt.radius <= 88, 'mini-roundabout stays compact');
+    assert.ok(rbt.island >= rbt.radius * 0.35, 'island is large enough for a flower bed');
   }
   // Plinth approach is a through-lane, not a junction circus.
   const north = { x: map.turnUp.x, y: map.turnUp.y - 160 };
