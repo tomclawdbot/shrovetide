@@ -612,10 +612,11 @@ const TOWN_ROADS: RoadSegment[] = [
     [0, 1140],
     [2400, 1140],
   ]),
-  // St Oswald's frontage — T on the west column, then off the west edge.
+  // St Oswald's south frontage — T on the west column, then off the west edge.
+  // Keep the centreline on the churchyard wall, not through the nave.
   sroad('lane', 36, [
-    [400, 500],
-    [0, 500],
+    [400, 548],
+    [0, 548],
   ]),
   // Old Grammar — T onto the civic terrace, south onto the high street.
   sroad('lane', 36, [
