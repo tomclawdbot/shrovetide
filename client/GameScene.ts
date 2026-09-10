@@ -15,6 +15,7 @@ import {
   hugPackExtent,
   isBuilding,
   isCivicBuilding,
+  distToSegment,
   isBallAirborne,
   isCarrierAtOpponentGoal,
   isInHugZone,
@@ -73,6 +74,17 @@ const PALETTE = {
   grass: 0x3a4a28,
   grassAlt: 0x2f3e20,
   grassDark: 0x243218,
+  fieldA: 0x4a582c,
+  fieldB: 0x334620,
+  fieldC: 0x5a6234,
+  cottage: 0x8c7a64,
+  cottageRoof: 0x4a3428,
+  cottageLite: 0xb0a088,
+  forestFloor: 0x142412,
+  canopy: 0x1f3a1a,
+  canopyDeep: 0x0e220e,
+  trunk: 0x3a2a18,
+  plough: 0x243218,
   mud: 0x5a3d28,
   mudDark: 0x3d291a,
   building: 0x6a4c36,
@@ -91,7 +103,7 @@ const PALETTE = {
   chimney: 0x4a3028,
   cobble: 0x6a5a48,
   cobbleEdge: 0x4a3e30,
-  /** Packed grit / worn tarmac — not Lego cobble, not white seams. */
+  /** Grey UK asphalt — #38–#39 carriageway, not dirt / tan paths. */
   tarmac: 0x4a4640,
   tarmacWear: 0x3c3934,
   grit: 0x5a5348,
@@ -116,6 +128,12 @@ const PALETTE = {
   tunnelDark: 0x1a1612,
   tunnelRing: 0x4a443c,
   greenMan: 0x3a6a32,
+  bedSoil: 0x4a3424,
+  bloomPink: 0xd46a8a,
+  bloomYellow: 0xe8c45a,
+  bloomWhite: 0xf0ead8,
+  bloomRed: 0xc44a3a,
+  bloomPurple: 0x7a4e8a,
   bathsBlue: 0x3a6a78,
   window: 0x2a4050,
   windowLite: 0x8ab0c4,
@@ -126,6 +144,13 @@ const PALETTE = {
   hedgeLeaf: 0x3a6a28,
   hedgeEdge: 0x0c1a0a,
   bridge: 0x8a6844,
+  stone: 0x8a8274,
+  stoneLite: 0xb0a898,
+  stoneDark: 0x5a5448,
+  stoneMortar: 0x6e685c,
+  archShadow: 0x1a2830,
+  paint: 0xf2f4ee,
+  paintWorn: 0xd8dcd0,
   oob: 0x2a2218,
   oobEdge: 0x120e0a,
   millstone: 0xe4d4a8,
@@ -183,10 +208,38 @@ const LANDMARK_SPRITE_IDS = [
   'town-hall',
   'the-baths',
   'the-tunnel',
-  'tissington-trail',
-  'henmore-brook',
   'market-place',
   'green-man',
+  'the-george-dragon',
+  'the-green-man',
+  'the-horns',
+  'the-vaults',
+  'the-white-hart',
+  'the-wheel',
+  'the-coach-horses',
+  'smiths-butcher',
+  'station-stores',
+  'gingerbread-shop',
+  'high-st-1',
+  'high-st-2',
+  'high-st-3',
+  'high-st-4',
+  'high-st-5',
+  'high-st-6',
+  'market-row-1',
+  'market-row-2',
+  'dig-st-1',
+  'dig-st-2',
+  'compton-1',
+  'compton-2',
+  'clifton-1',
+  'clifton-2',
+  'clifton-3',
+  'clifton-4',
+  'sturston-1',
+  'sturston-2',
+  'sturston-3',
+  'sturston-4',
 ] as const;
 
 const LANDMARK_TEX_PREFIX = 'landmark-';
@@ -196,6 +249,219 @@ const LANDMARK_SIGN_DEPTH = 0.32;
 
 function landmarkTextureKey(id: string): string {
   return `${LANDMARK_TEX_PREFIX}${id}`;
+}
+
+/** Mitred offset polygon for a polyline strip (square ends, no round caps). */
+function mitredStripPolygon(
+  points: { x: number; y: number }[],
+  width: number,
+): { x: number; y: number }[] | null {
+  if (points.length < 2 || width <= 0) return null;
+  const hw = width / 2;
+  const left: { x: number; y: number }[] = [];
+  const right: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const cur = points[i]!;
+    const prev = points[Math.max(0, i - 1)]!;
+    const next = points[Math.min(points.length - 1, i + 1)]!;
+    let ix = cur.x - prev.x;
+    let iy = cur.y - prev.y;
+    let ox = next.x - cur.x;
+    let oy = next.y - cur.y;
+    const il = Math.hypot(ix, iy);
+    const ol = Math.hypot(ox, oy);
+    if (i === 0 || il < 1e-6) {
+      ix = ox;
+      iy = oy;
+    } else {
+      ix /= il;
+      iy /= il;
+    }
+    if (i === points.length - 1 || ol < 1e-6) {
+      ox = ix;
+      oy = iy;
+    } else {
+      ox /= ol;
+      oy /= ol;
+    }
+    const inLen = Math.hypot(ix, iy) || 1;
+    const outLen = Math.hypot(ox, oy) || 1;
+    ix /= inLen;
+    iy /= inLen;
+    ox /= outLen;
+    oy /= outLen;
+    const inNx = -iy;
+    const inNy = ix;
+    const outNx = -oy;
+    const outNy = ox;
+    let mx = inNx + outNx;
+    let my = inNy + outNy;
+    const ml = Math.hypot(mx, my);
+    if (ml < 1e-4) {
+      mx = inNx;
+      my = inNy;
+    } else {
+      mx /= ml;
+      my /= ml;
+    }
+    const dot = mx * inNx + my * inNy;
+    const miter = Math.min(hw * 2.6, hw / Math.max(0.38, Math.abs(dot)));
+    left.push({ x: cur.x + mx * miter, y: cur.y + my * miter });
+    right.push({ x: cur.x - mx * miter, y: cur.y - my * miter });
+  }
+  return [...left, ...right.reverse()];
+}
+
+type RoadRef = { points: { x: number; y: number }[]; width: number; kind?: string };
+type JunctionArm = { ux: number; uy: number; hw: number };
+type Junction = { x: number; y: number; arms: JunctionArm[] };
+
+function dirUnit(x: number, y: number): { x: number; y: number } {
+  const l = Math.hypot(x, y) || 1;
+  return { x: x / l, y: y / l };
+}
+
+function pushArm(arms: JunctionArm[], ux: number, uy: number, hw: number): void {
+  const u = dirUnit(ux, uy);
+  for (const a of arms) {
+    if (a.ux * u.x + a.uy * u.y > 0.86) {
+      a.hw = Math.max(a.hw, hw);
+      return;
+    }
+  }
+  arms.push({ ux: u.x, uy: u.y, hw });
+}
+
+function roadClosestSeg(
+  road: RoadRef,
+  p: { x: number; y: number },
+): { a: { x: number; y: number }; b: { x: number; y: number }; d: number } | null {
+  let best: { a: { x: number; y: number }; b: { x: number; y: number }; d: number } | null = null;
+  for (let i = 0; i < road.points.length - 1; i++) {
+    const a = road.points[i]!;
+    const b = road.points[i + 1]!;
+    const d = distToSegment(p, a, b);
+    if (!best || d < best.d) best = { a, b, d };
+  }
+  return best;
+}
+
+function collectJunctions(
+  roads: RoadRef[],
+  roundabouts: { position: { x: number; y: number }; radius: number }[],
+): Junction[] {
+  const found: Junction[] = [];
+  const bump = (x: number, y: number): Junction => {
+    for (const j of found) {
+      if (Math.hypot(j.x - x, j.y - y) < 16) return j;
+    }
+    const j: Junction = { x, y, arms: [] };
+    found.push(j);
+    return j;
+  };
+  for (let i = 0; i < roads.length; i++) {
+    const a = roads[i]!;
+    for (let s = 0; s < a.points.length - 1; s++) {
+      const a0 = a.points[s]!;
+      const a1 = a.points[s + 1]!;
+      for (let j = i + 1; j < roads.length; j++) {
+        const b = roads[j]!;
+        for (let t = 0; t < b.points.length - 1; t++) {
+          const b0 = b.points[t]!;
+          const b1 = b.points[t + 1]!;
+          const hit = segIntersect(a0, a1, b0, b1);
+          if (!hit) continue;
+          const jn = bump(hit.x, hit.y);
+          const ua = dirUnit(a1.x - a0.x, a1.y - a0.y);
+          const ub = dirUnit(b1.x - b0.x, b1.y - b0.y);
+          pushArm(jn.arms, ua.x, ua.y, a.width / 2);
+          pushArm(jn.arms, -ua.x, -ua.y, a.width / 2);
+          pushArm(jn.arms, ub.x, ub.y, b.width / 2);
+          pushArm(jn.arms, -ub.x, -ub.y, b.width / 2);
+        }
+      }
+    }
+  }
+  for (const stem of roads) {
+    // A trail end or a bare dead-end stub is not a junction — only a metalled
+    // road whose end actually lands on the *body* of another road makes a T.
+    if (stem.points.length < 2 || stem.kind === 'trail') continue;
+    const ends = [
+      { p: stem.points[0]!, q: stem.points[1]! },
+      { p: stem.points[stem.points.length - 1]!, q: stem.points[stem.points.length - 2]! },
+    ];
+    for (const end of ends) {
+      if (roundabouts.some((r) => Math.abs(Math.hypot(end.p.x - r.position.x, end.p.y - r.position.y) - r.radius) < 22)) {
+        continue;
+      }
+      for (const other of roads) {
+        if (other === stem || other.kind === 'trail') continue;
+        const near = roadClosestSeg(other, end.p);
+        if (!near || near.d > other.width / 2 + 10) continue;
+        // Endpoint meeting another road's own endpoint is a bend / continuation,
+        // not a side road joining a through road — don't fillet a plain corner.
+        const oHead = other.points[0]!;
+        const oTail = other.points[other.points.length - 1]!;
+        if (
+          Math.hypot(end.p.x - oHead.x, end.p.y - oHead.y) < other.width ||
+          Math.hypot(end.p.x - oTail.x, end.p.y - oTail.y) < other.width
+        ) {
+          continue;
+        }
+        const jn = bump(end.p.x, end.p.y);
+        const along = dirUnit(near.b.x - near.a.x, near.b.y - near.a.y);
+        pushArm(jn.arms, along.x, along.y, other.width / 2);
+        pushArm(jn.arms, -along.x, -along.y, other.width / 2);
+        pushArm(jn.arms, end.p.x - end.q.x, end.p.y - end.q.y, stem.width / 2);
+      }
+    }
+  }
+  return found.filter((j) => {
+    if (j.arms.length < 2) return false;
+    return !roundabouts.some((r) => Math.hypot(j.x - r.position.x, j.y - r.position.y) < r.radius + 12);
+  });
+}
+
+function segIntersect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number },
+): { x: number; y: number } | null {
+  const rx = b.x - a.x;
+  const ry = b.y - a.y;
+  const sx = d.x - c.x;
+  const sy = d.y - c.y;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-6) return null;
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+  if (t <= 0.04 || t >= 0.96 || u <= 0.04 || u >= 0.96) return null;
+  return { x: a.x + t * rx, y: a.y + t * ry };
+}
+
+/** Clip a segment to an inclusive Y band. Used to keep grass verge off the brook. */
+function clipSegY(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  minY: number,
+  maxY: number,
+): [{ x: number; y: number }, { x: number; y: number }] | null {
+  const dy = b.y - a.y;
+  const dx = b.x - a.x;
+  if (Math.abs(dy) < 1e-6) {
+    if (a.y < minY || a.y > maxY) return null;
+    return [a, b];
+  }
+  const tMin = (minY - a.y) / dy;
+  const tMax = (maxY - a.y) / dy;
+  const t0 = Math.max(0, Math.min(tMin, tMax));
+  const t1 = Math.min(1, Math.max(tMin, tMax));
+  if (t0 >= t1) return null;
+  return [
+    { x: a.x + dx * t0, y: a.y + dy * t0 },
+    { x: a.x + dx * t1, y: a.y + dy * t1 },
+  ];
 }
 
 function buildTag(build: Build): string {
@@ -696,12 +962,13 @@ export class GameScene extends Phaser.Scene {
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    for (let i = 0; i < 4000; i++) {
+    for (let i = 0; i < 2800; i++) {
       const x = rand() * map.width;
       const y = rand() * map.height;
-      this.mapGfx.fillStyle(rand() > 0.5 ? PALETTE.grassAlt : PALETTE.grassDark, 0.4);
+      this.mapGfx.fillStyle(rand() > 0.5 ? PALETTE.grassAlt : PALETTE.grassDark, 0.28);
       this.mapGfx.fillRect(x, y, 8 + rand() * 26, 4 + rand() * 10);
     }
+    this.drawFields(rand);
 
     for (const z of map.outOfBounds) {
       const x = z.position.x - z.width / 2;
@@ -733,6 +1000,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    this.drawForests(rand);
+    this.drawApproachMud();
+
     const rx = map.river.position.x - map.river.width / 2;
     const ry = map.river.position.y - map.river.height / 2;
     this.mapGfx.fillStyle(PALETTE.water, 1);
@@ -741,19 +1011,14 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.fillRect(rx, ry, map.river.width, 10);
     this.mapGfx.fillRect(rx, ry + map.river.height - 10, map.river.width, 10);
 
-    for (const b of map.bridges) {
-      const bx = b.position.x - b.width / 2;
-      const by = b.position.y - b.height / 2;
-      this.mapGfx.fillStyle(PALETTE.bridge, 1);
-      this.mapGfx.fillRect(bx, by, b.width, b.height);
-      this.mapGfx.lineStyle(2, PALETTE.buildingEdge, 0.45);
-      for (let py = by + 8; py < by + b.height; py += 12) {
-        this.mapGfx.lineBetween(bx, py, bx + b.width, py);
-      }
-    }
-
-    // After river + decks so lanes continue over the bridges, not under the Henmore.
+    this.drawStoneBridgeDecks();
     this.drawRoads(rand);
+    this.drawRoundaboutDiscs();
+    this.drawJoinCaps();
+    this.drawJunctionFillets();
+    this.drawRoundaboutIslands();
+    this.drawRoadMarkings();
+    this.drawStoneBridgeParapets();
     this.drawMarketPlaza();
     this.drawTunnelPortal();
     this.drawPlaceSprites();
@@ -767,6 +1032,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const o of map.obstacles) {
       if (!isBuilding(o)) continue;
+      if (o.kind === 'house') continue;
       const civic = isCivicBuilding(o);
       const oy = o.position.y - o.height / 2;
       const fasciaH = Math.min(18, o.height * 0.22);
@@ -810,61 +1076,141 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.strokeRect(0, 0, map.width, map.height);
   }
 
-  /** Soft tarmac / packed grit strips. No cobble seams, no white edges. */
+  /** Worn mud toward the millstones — channels the approach, does not seal it. */
+  private drawApproachMud(): void {
+    const g = this.mapGfx;
+    let s = 0x5a3d28;
+    const rand = (): number => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (const m of this.world.map.goals) {
+      const towardMid = m.position.x < this.world.map.width * 0.5 ? 1 : -1;
+      const x = m.position.x;
+      const y = m.position.y;
+      g.fillStyle(PALETTE.mud, 0.42);
+      g.fillEllipse(x + towardMid * 90, y + 8, 280, 150);
+      g.fillStyle(PALETTE.mudDark, 0.28);
+      g.fillEllipse(x + towardMid * 40, y + 18, 160, 90);
+      g.fillStyle(PALETTE.mud, 0.22);
+      for (let i = 0; i < 18; i++) {
+        const ox = (rand() - 0.5) * 240 + towardMid * 50;
+        const oy = (rand() - 0.5) * 110;
+        g.fillCircle(x + ox, y + oy, 8 + rand() * 16);
+      }
+    }
+  }
+
+  /** English woodland mass — overlapping canopy, readable as a tree block. */
+  private drawForests(rand: () => number): void {
+    const g = this.mapGfx;
+    for (const stand of this.world.map.forests) {
+      const x = stand.position.x - stand.width / 2;
+      const y = stand.position.y - stand.height / 2;
+      g.fillStyle(PALETTE.forestFloor, 1);
+      g.fillRoundedRect(x, y, stand.width, stand.height, 18);
+      const n = Math.max(14, Math.floor((stand.width * stand.height) / 1600));
+      for (let i = 0; i < n; i++) {
+        const tx = x + 16 + rand() * Math.max(8, stand.width - 32);
+        const ty = y + 16 + rand() * Math.max(8, stand.height - 32);
+        const r = 22 + rand() * 28;
+        g.fillStyle(PALETTE.trunk, 0.9);
+        g.fillRect(tx - 3, ty + r * 0.2, 5, 10);
+        g.fillStyle(i % 3 === 0 ? PALETTE.canopyDeep : PALETTE.canopy, 0.96);
+        g.fillCircle(tx, ty, r);
+        g.fillStyle(PALETTE.hedgeLeaf, 0.28);
+        g.fillCircle(tx - r * 0.22, ty - r * 0.18, r * 0.5);
+      }
+    }
+  }
+
+  /** English hedge-bordered parcels — slightly different grass, faint plough. */
+  private drawFields(rand: () => number): void {
+    const g = this.mapGfx;
+    const tints = [PALETTE.fieldA, PALETTE.fieldB, PALETTE.fieldC];
+    for (let i = 0; i < this.world.map.fields.length; i++) {
+      const f = this.world.map.fields[i]!;
+      const x = f.position.x - f.width / 2;
+      const y = f.position.y - f.height / 2;
+      g.fillStyle(tints[i % tints.length]!, 1);
+      g.fillRect(x, y, f.width, f.height);
+      g.lineStyle(2, PALETTE.plough, 0.22);
+      const rows = Math.max(4, Math.floor(f.height / 20));
+      for (let r = 1; r < rows; r++) {
+        const py = y + (r / rows) * f.height;
+        g.lineBetween(x + 8, py, x + f.width - 8, py);
+      }
+      g.lineStyle(2, PALETTE.hedgeEdge, 0.15);
+      g.strokeRect(x + 2, y + 2, f.width - 4, f.height - 4);
+    }
+  }
+
+  /** Mitred UK lanes — square caps, no sausage round-ends. */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
+    const river = this.world.map.river;
+    const riverTop = river.position.y - river.height / 2;
+    const riverBot = river.position.y + river.height / 2;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
-      this.drawRoadStrip(g, road.points, road.width + 14, trail ? PALETTE.trailEdge : PALETTE.verge, trail ? 0.4 : 0.55);
-      this.drawRoadStrip(
+      // Grass verge stays on the banks — never a fat collar across the Henmore.
+      for (let i = 0; i < road.points.length - 1; i++) {
+        const a = road.points[i]!;
+        const b = road.points[i + 1]!;
+        for (const band of [
+          clipSegY(a, b, -1e6, riverTop),
+          clipSegY(a, b, riverBot, 1e6),
+        ]) {
+          if (!band) continue;
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width + 14,
+            trail ? PALETTE.trailEdge : PALETTE.verge,
+            trail ? 0.4 : 0.55,
+          );
+        }
+      }
+      this.drawMitredStrip(
         g,
         road.points,
         road.width,
-        trail ? PALETTE.trail : street ? PALETTE.tarmac : PALETTE.grit,
-        0.92,
+        trail ? PALETTE.trail : PALETTE.tarmac,
+        0.96,
       );
-      this.drawRoadStrip(
+      this.drawMitredStrip(
         g,
         road.points,
-        road.width * 0.38,
+        road.width * 0.36,
         trail ? PALETTE.trailWear : PALETTE.tarmacWear,
-        trail ? 0.28 : street ? 0.22 : 0.16,
+        trail ? 0.28 : street ? 0.2 : 0.14,
       );
       this.stippleRoad(g, road.points, road.width, rand);
     }
   }
 
-  /** Filled polyline strip with round joints — reads as a lane, not a Manhattan slab. */
-  private drawRoadStrip(
+  /** Closed mitred polygon — joints meet square, ends are butt-capped. */
+  private drawMitredStrip(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
     width: number,
     color: number,
     alpha: number,
   ): void {
-    if (points.length < 2 || width <= 0) return;
-    const hw = width / 2;
+    const poly = mitredStripPolygon(points, width);
+    if (!poly || poly.length < 4) return;
     g.fillStyle(color, alpha);
-    g.fillCircle(points[0]!.x, points[0]!.y, hw);
-    for (let i = 0; i < points.length - 1; i++) {
-      const a = points[i]!;
-      const b = points[i + 1]!;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 0.5) continue;
-      const nx = (-dy / len) * hw;
-      const ny = (dx / len) * hw;
-      g.beginPath();
-      g.moveTo(a.x + nx, a.y + ny);
-      g.lineTo(b.x + nx, b.y + ny);
-      g.lineTo(b.x - nx, b.y - ny);
-      g.lineTo(a.x - nx, a.y - ny);
-      g.closePath();
-      g.fillPath();
-      g.fillCircle(b.x, b.y, hw);
+    g.beginPath();
+    g.moveTo(poly[0]!.x, poly[0]!.y);
+    for (let i = 1; i < poly.length; i++) {
+      g.lineTo(poly[i]!.x, poly[i]!.y);
     }
+    g.closePath();
+    g.fillPath();
   }
 
   /** Sparse grit — texture without a grid of seams. */
@@ -874,7 +1220,7 @@ export class GameScene extends Phaser.Scene {
     width: number,
     rand: () => number,
   ): void {
-    g.fillStyle(PALETTE.tarmacWear, 0.18);
+    g.fillStyle(PALETTE.tarmacWear, 0.16);
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i]!;
       const b = points[i + 1]!;
@@ -884,10 +1230,486 @@ export class GameScene extends Phaser.Scene {
         const t = (k + rand()) / (n + 1);
         const x = a.x + (b.x - a.x) * t;
         const y = a.y + (b.y - a.y) * t;
-        const ox = (rand() - 0.5) * width * 0.55;
-        const oy = (rand() - 0.5) * width * 0.35;
-        g.fillEllipse(x + ox, y + oy, 7 + rand() * 11, 3 + rand() * 5);
+        const ox = (rand() - 0.5) * width * 0.5;
+        const oy = (rand() - 0.5) * width * 0.32;
+        g.fillEllipse(x + ox, y + oy, 6 + rand() * 10, 3 + rand() * 4);
       }
+    }
+  }
+
+  private drawRoundaboutDiscs(): void {
+    const g = this.mapGfx;
+    for (const rbt of this.world.map.roundabouts) {
+      g.fillStyle(PALETTE.verge, 0.7);
+      g.fillCircle(rbt.position.x, rbt.position.y, rbt.radius + 10);
+      g.fillStyle(PALETTE.tarmac, 1);
+      g.fillCircle(rbt.position.x, rbt.position.y, rbt.radius);
+      g.fillStyle(PALETTE.tarmacWear, 0.22);
+      g.fillCircle(rbt.position.x, rbt.position.y, (rbt.radius + rbt.island) / 2);
+    }
+  }
+
+  /** UK mini-roundabout — flowered island + white kerb, not empty asphalt. */
+  private drawRoundaboutIslands(): void {
+    const g = this.mapGfx;
+    const blooms = [
+      PALETTE.bloomPink,
+      PALETTE.bloomYellow,
+      PALETTE.bloomWhite,
+      PALETTE.bloomRed,
+      PALETTE.bloomPurple,
+    ];
+    for (const rbt of this.world.map.roundabouts) {
+      const { x, y } = rbt.position;
+      g.fillStyle(PALETTE.grass, 1);
+      g.fillCircle(x, y, rbt.island);
+      g.fillStyle(PALETTE.bedSoil, 0.92);
+      g.fillCircle(x, y, rbt.island * 0.78);
+      g.fillStyle(PALETTE.grassAlt, 0.55);
+      g.fillCircle(x, y, rbt.island * 0.28);
+      let s = (Math.imul(Math.floor(x), 374761393) ^ Math.imul(Math.floor(y), 668265263)) >>> 0;
+      const rand = (): number => {
+        s = (s + 0x6d2b79f5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const n = 18;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rand() * 0.4;
+        const rr = rbt.island * (0.34 + rand() * 0.36);
+        g.fillStyle(blooms[i % blooms.length]!, 0.95);
+        g.fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 2.2 + rand() * 2.4);
+      }
+      g.lineStyle(4, PALETTE.paint, 0.95);
+      g.strokeCircle(x, y, rbt.island + 2);
+    }
+  }
+
+  /** Round the stem into the through-road so T-joins are not square sausages. */
+  private drawJoinCaps(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    g.fillStyle(PALETTE.tarmac, 1);
+    for (const road of map.roads) {
+      if (road.kind === 'trail' || road.points.length < 2) continue;
+      const ends = [road.points[0]!, road.points[road.points.length - 1]!];
+      for (const end of ends) {
+        let join = map.roundabouts.some(
+          (rbt) => Math.abs(Math.hypot(end.x - rbt.position.x, end.y - rbt.position.y) - rbt.radius) < 18,
+        );
+        if (!join) {
+          for (const other of map.roads) {
+            if (other === road) continue;
+            const near = roadClosestSeg(other, end);
+            if (near && near.d <= other.width / 2 + 10) {
+              join = true;
+              break;
+            }
+          }
+        }
+        if (join) g.fillCircle(end.x, end.y, road.width / 2);
+      }
+    }
+  }
+
+  /**
+   * Asphalt quarter-circles that round the inner corners of a true T / cross so
+   * the carriageways blend instead of meeting as square sausages. Tarmac only —
+   * UK junctions have a concrete kerb radius, not a painted white curve.
+   */
+  private drawJunctionFillets(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    const junctions = collectJunctions(map.roads, map.roundabouts);
+    for (const j of junctions) {
+      const arms = j.arms
+        .map((a) => ({ ...a, ang: Math.atan2(a.uy, a.ux) }))
+        .sort((a, b) => a.ang - b.ang);
+      // 2 arms is a bend (already smoothed by roundedCorners) — need a real fork.
+      if (arms.length < 3) continue;
+      for (let i = 0; i < arms.length; i++) {
+        const a = arms[i]!;
+        const b = arms[(i + 1) % arms.length]!;
+        let da = b.ang - a.ang;
+        if (da <= 0) da += Math.PI * 2;
+        if (da < 0.35 || da > 2.45) continue;
+        const ha = a.hw;
+        const hb = b.hw;
+        const R = Math.min(28, Math.max(14, Math.min(ha, hb) * 0.7));
+        const nax = -a.uy;
+        const nay = a.ux;
+        const inward = nax * b.ux + nay * b.uy > 0;
+        const iax = inward ? nax : -nax;
+        const iay = inward ? nay : -nay;
+        const nbx = -b.uy;
+        const nby = b.ux;
+        const inwardB = nbx * a.ux + nby * a.uy > 0;
+        const ibx = inwardB ? nbx : -nbx;
+        const iby = inwardB ? nby : -nby;
+        const cx = j.x + iax * (ha + R) + ibx * (hb + R);
+        const cy = j.y + iay * (ha + R) + iby * (hb + R);
+        const t1x = cx - iax * R;
+        const t1y = cy - iay * R;
+        const t2x = cx - ibx * R;
+        const t2y = cy - iby * R;
+        const a0 = Math.atan2(t1y - cy, t1x - cx);
+        const a1 = Math.atan2(t2y - cy, t2x - cx);
+        let sweep = a1 - a0;
+        while (sweep > Math.PI) sweep -= Math.PI * 2;
+        while (sweep < -Math.PI) sweep += Math.PI * 2;
+        g.fillStyle(PALETTE.tarmac, 1);
+        g.beginPath();
+        g.moveTo(t1x, t1y);
+        g.arc(cx, cy, R, a0, a0 + sweep, sweep < 0);
+        g.closePath();
+        g.fillPath();
+      }
+    }
+  }
+
+  /**
+   * UK carriageway paint, hierarchy-aware:
+   *   trunk ('street') — broken white centre + worn edge lines
+   *   lane            — no through markings; give-way dashes on the narrower
+   *                     arm at a T (equal-width lane yields to street), or at
+   *                     a roundabout; the wider/priority arm stays unmarked
+   *   trail           — unmarked packed strip
+   */
+  private drawRoadMarkings(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    const junctions = collectJunctions(map.roads, map.roundabouts);
+    for (const road of map.roads) {
+      if (road.kind === 'trail') continue;
+      if (road.kind === 'street') {
+        this.dashCentreLine(g, road.points, junctions, map.roundabouts);
+        this.strokeEdgeLines(g, road.points, road.width, junctions, map.roundabouts);
+      }
+      this.paintGiveWays(g, road, map.roads, map.roundabouts);
+    }
+    for (const rbt of map.roundabouts) {
+      g.lineStyle(3.5, PALETTE.paintWorn, 0.92);
+      g.strokeCircle(rbt.position.x, rbt.position.y, rbt.radius - 5);
+    }
+  }
+
+  /**
+   * How far white paint must stop short of a junction node. Scales with the
+   * widest arm's carriageway: paint clears the far kerb of the crossing road
+   * plus a margin, so centre/edge lines from two arms never meet or stack
+   * inside the junction box. (A fixed gap is fine for a lane but leaves a
+   * street's own half-carriageway painting through a wider crossing street.)
+   */
+  private junctionClearance(j: Junction): number {
+    let maxHalf = 0;
+    for (const a of j.arms) if (a.hw > maxHalf) maxHalf = a.hw;
+    return maxHalf + 24;
+  }
+
+  private nearJunctionPaint(
+    x: number,
+    y: number,
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
+  ): boolean {
+    for (const j of junctions) {
+      if (Math.hypot(x - j.x, y - j.y) < this.junctionClearance(j)) return true;
+    }
+    for (const rbt of roundabouts) {
+      const d = Math.hypot(x - rbt.position.x, y - rbt.position.y);
+      if (d < rbt.radius + 18) return true;
+    }
+    return false;
+  }
+
+  private dashCentreLine(
+    g: Phaser.GameObjects.Graphics,
+    points: { x: number; y: number }[],
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
+  ): void {
+    // Fat enough to read at ~0.35× camera zoom; UK broken white, not US yellow.
+    const on = 28;
+    const off = 20;
+    const hw = 3.6;
+    let phase = 0;
+    g.fillStyle(PALETTE.paint, 0.95);
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      const ux = dx / len;
+      const uy = dy / len;
+      const nx = -uy;
+      const ny = ux;
+      let d = 0;
+      while (d < len) {
+        const cycle = on + off;
+        const pos = (phase + d) % cycle;
+        if (pos < on) {
+          const remain = Math.min(on - pos, len - d, 22);
+          const x0 = a.x + ux * d;
+          const y0 = a.y + uy * d;
+          const x1 = a.x + ux * (d + remain);
+          const y1 = a.y + uy * (d + remain);
+          const xm = a.x + ux * (d + remain / 2);
+          const ym = a.y + uy * (d + remain / 2);
+          if (
+            !this.nearJunctionPaint(x0, y0, junctions, roundabouts) &&
+            !this.nearJunctionPaint(xm, ym, junctions, roundabouts) &&
+            !this.nearJunctionPaint(x1, y1, junctions, roundabouts)
+          ) {
+            g.beginPath();
+            g.moveTo(x0 + nx * hw, y0 + ny * hw);
+            g.lineTo(x1 + nx * hw, y1 + ny * hw);
+            g.lineTo(x1 - nx * hw, y1 - ny * hw);
+            g.lineTo(x0 - nx * hw, y0 - ny * hw);
+            g.closePath();
+            g.fillPath();
+          }
+          d += remain;
+        } else {
+          d += Math.min(cycle - pos, len - d);
+        }
+      }
+      phase = (phase + len) % (on + off);
+    }
+  }
+
+  /**
+   * Thin solid white kerb line on tarmac — skipped on the packed-trail strip.
+   * Sampled along the path (not just at vertices) so a T that lands mid-segment
+   * of a 2-point through street still breaks the edge line at the junction box
+   * instead of painting a stacked white line across it.
+   */
+  private strokeEdgeLines(
+    g: Phaser.GameObjects.Graphics,
+    points: { x: number; y: number }[],
+    width: number,
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
+  ): void {
+    const inset = width * 0.42;
+    const step = 12;
+    g.lineStyle(3, PALETTE.paintWorn, 0.55);
+    for (const side of [-1, 1]) {
+      g.beginPath();
+      let started = false;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i]!;
+        const b = points[i + 1]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const segLen = Math.hypot(dx, dy);
+        if (segLen < 1e-3) continue;
+        const ux = dx / segLen;
+        const uy = dy / segLen;
+        const nx = -uy * inset * side;
+        const ny = ux * inset * side;
+        const samples = Math.max(1, Math.ceil(segLen / step));
+        for (let s = 0; s <= samples; s++) {
+          const t = (segLen * s) / samples;
+          const px = a.x + ux * t;
+          const py = a.y + uy * t;
+          if (this.nearJunctionPaint(px, py, junctions, roundabouts)) {
+            if (started) g.strokePath();
+            started = false;
+            g.beginPath();
+            continue;
+          }
+          if (!started) {
+            g.moveTo(px + nx, py + ny);
+            started = true;
+          } else {
+            g.lineTo(px + nx, py + ny);
+          }
+        }
+      }
+      if (started) g.strokePath();
+    }
+  }
+
+  private paintGiveWays(
+    g: Phaser.GameObjects.Graphics,
+    road: { points: { x: number; y: number }[]; width: number; kind?: string },
+    roads: { points: { x: number; y: number }[]; width: number; kind?: string }[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
+  ): void {
+    if (road.points.length < 2) return;
+    const ends = [
+      { p: road.points[0]!, q: road.points[1]! },
+      { p: road.points[road.points.length - 1]!, q: road.points[road.points.length - 2]! },
+    ];
+    for (const end of ends) {
+      let junction = false;
+      // Half-width of the through paint this stop line must sit clear of, so the
+      // give-way dashes never stack on the through street's centre/edge lines.
+      let clearHalf = 0;
+      for (const other of roads) {
+        if (other === road || other.points === road.points) continue;
+        for (let i = 0; i < other.points.length - 1; i++) {
+          if (distToSegment(end.p, other.points[i]!, other.points[i + 1]!) <= other.width / 2 + 8) {
+            const d0 = Math.hypot(end.p.x - other.points[0]!.x, end.p.y - other.points[0]!.y);
+            const last = other.points[other.points.length - 1]!;
+            const d1 = Math.hypot(end.p.x - last.x, end.p.y - last.y);
+            // Narrower arm yields; equal-width lane yields to a street.
+            const yields =
+              road.width < other.width ||
+              (road.width === other.width && road.kind === 'lane' && other.kind === 'street');
+            if (d0 > other.width && d1 > other.width && yields) {
+              junction = true;
+              clearHalf = Math.max(clearHalf, other.width / 2);
+            }
+          }
+        }
+      }
+      for (const rbt of roundabouts) {
+        const d = Math.hypot(end.p.x - rbt.position.x, end.p.y - rbt.position.y);
+        if (Math.abs(d - rbt.radius) < 16) junction = true;
+      }
+      if (!junction) continue;
+      const dx = end.p.x - end.q.x;
+      const dy = end.p.y - end.q.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const nx = -uy;
+      const ny = ux;
+      // Sit the stop line beyond the through carriageway's far kerb (+ margin)
+      // rather than a flat fraction of our own width, which parked it on top of
+      // the through-street paint at a T.
+      const back = Math.max(road.width * 0.55, clearHalf + road.width * 0.22 + 10);
+      const cx = end.p.x - ux * back;
+      const cy = end.p.y - uy * back;
+      const half = road.width * 0.38;
+      g.fillStyle(PALETTE.paint, 0.95);
+      for (const offset of [-6, 6]) {
+        const ox = cx + ux * offset;
+        const oy = cy + uy * offset;
+        this.paintDashRow(g, ox, oy, nx, ny, half);
+      }
+    }
+  }
+
+  private paintDashRow(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    nx: number,
+    ny: number,
+    half: number,
+  ): void {
+    const dash = 7;
+    const gap = 5;
+    let t = -half;
+    while (t < half) {
+      const a = t;
+      const b = Math.min(t + dash, half);
+      g.beginPath();
+      g.moveTo(x + nx * a, y + ny * a - 2.4);
+      g.lineTo(x + nx * b, y + ny * b - 2.4);
+      g.lineTo(x + nx * b, y + ny * b + 2.4);
+      g.lineTo(x + nx * a, y + ny * a + 2.4);
+      g.closePath();
+      g.fillPath();
+      t += dash + gap;
+    }
+  }
+
+  /** Width of the tarmac that actually crosses this deck. */
+  private crossingRoadWidth(x: number, y: number): number {
+    const map = this.world.map;
+    let best = 0;
+    for (const r of map.roads) {
+      for (let i = 0; i < r.points.length - 1; i++) {
+        if (distToSegment({ x, y }, r.points[i]!, r.points[i + 1]!) <= r.width * 0.65) {
+          if (r.width > best) best = r.width;
+        }
+      }
+    }
+    return best || 88;
+  }
+
+  /** Packhorse arch in the water — structure hugs the lane, no fat deck collar. */
+  private drawStoneBridgeDecks(): void {
+    const g = this.mapGfx;
+    const river = this.world.map.river;
+    for (const b of this.world.map.bridges) {
+      const x = b.position.x;
+      const y = b.position.y;
+      const h = b.height;
+      const roadW = this.crossingRoadWidth(x, y);
+      const wall = 13;
+      const deck = roadW + wall * 2;
+      const pier = 22;
+      const archW = roadW + 36;
+      const riverH = river.height;
+      const by = y - h / 2;
+      // Piers sit in the brook beside the carriageway, not as a wide stone plaza.
+      for (const side of [-1, 1]) {
+        const px = x + side * (roadW / 2 + pier * 0.35);
+        g.fillStyle(PALETTE.stoneDark, 1);
+        g.fillRect(px - pier / 2, y - riverH * 0.42, pier, riverH * 0.84);
+        g.fillStyle(PALETTE.stone, 1);
+        g.fillRect(px - pier / 2 + 2, y - riverH * 0.38, pier - 4, riverH * 0.76);
+      }
+      g.fillStyle(PALETTE.archShadow, 0.95);
+      g.fillEllipse(x, y + 6, archW * 0.92, riverH * 0.72);
+      g.fillStyle(PALETTE.water, 0.92);
+      g.fillEllipse(x, y + 10, roadW * 0.72, 22);
+      g.lineStyle(5, PALETTE.stone, 0.95);
+      g.beginPath();
+      g.arc(x, y + 10, Math.min(archW * 0.36, roadW * 0.48), Math.PI * 1.02, -0.02, false);
+      g.strokePath();
+      g.lineStyle(2.5, PALETTE.stoneDark, 0.85);
+      g.beginPath();
+      g.arc(x, y + 12, Math.min(archW * 0.36, roadW * 0.48) - 3, Math.PI * 1.02, -0.02, false);
+      g.strokePath();
+      // Bank abutments — same width as deck + parapet, not a flopping collar.
+      for (const top of [true, false]) {
+        const ay = top ? by - 6 : by + h - 4;
+        g.fillStyle(PALETTE.stoneDark, 1);
+        g.fillRect(x - deck / 2 - 2, ay, deck + 4, 14);
+        g.fillStyle(PALETTE.stone, 1);
+        g.fillRect(x - deck / 2, ay + 2, deck, 9);
+      }
+    }
+  }
+
+  /** Low parapets just outside the tarmac so the roadway stays continuous. */
+  private drawStoneBridgeParapets(): void {
+    const g = this.mapGfx;
+    for (const b of this.world.map.bridges) {
+      const x = b.position.x;
+      const y = b.position.y;
+      const h = b.height;
+      const roadW = this.crossingRoadWidth(x, y);
+      const wall = 13;
+      const by = y - h / 2;
+      const drawWall = (cx: number): void => {
+        const wx = cx - wall / 2;
+        g.fillStyle(PALETTE.stoneDark, 1);
+        g.fillRect(wx - 1, by - 8, wall + 2, h + 16);
+        g.fillStyle(PALETTE.stone, 1);
+        g.fillRect(wx, by - 6, wall, h + 12);
+        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
+        for (let py = by; py < by + h; py += 11) {
+          g.lineBetween(wx + 1, py, wx + wall - 1, py);
+        }
+        g.fillStyle(PALETTE.stoneLite, 1);
+        g.fillRect(wx - 1, by - 8, wall + 2, 6);
+        g.fillRect(wx - 1, by + h + 2, wall + 2, 6);
+      };
+      drawWall(x - roadW / 2 - wall / 2 + 1);
+      drawWall(x + roadW / 2 + wall / 2 - 1);
+      g.fillStyle(PALETTE.stoneLite, 1);
+      g.fillTriangle(x - roadW / 2 - 10, y, x - roadW / 2 + 2, y - 11, x - roadW / 2 + 2, y + 11);
+      g.fillTriangle(x + roadW / 2 + 10, y, x + roadW / 2 - 2, y - 11, x + roadW / 2 - 2, y + 11);
     }
   }
 
@@ -1059,6 +1881,10 @@ export class GameScene extends Phaser.Scene {
         this.drawTrailhead(o);
         return;
       }
+      if (o.kind === 'house') {
+        this.drawCottage(o);
+        return;
+      }
     }
     const ox = o.position.x - o.width / 2;
     const oy = o.position.y - o.height / 2;
@@ -1175,6 +2001,42 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(PALETTE.windowLite, 0.35);
       g.fillRect(ox + 8, oy + o.height * 0.62, o.width - 16, o.height * 0.18);
     }
+  }
+
+  /** Ordinary terrace / cottage — town fabric, not a named landmark. */
+  private drawCottage(o: Building): void {
+    const g = this.mapGfx;
+    const ox = o.position.x - o.width / 2;
+    const oy = o.position.y - o.height / 2;
+    g.fillStyle(PALETTE.cobble, 0.22);
+    g.fillRect(ox - 4, oy + o.height - 2, o.width + 8, 8);
+    g.fillStyle(PALETTE.cottageRoof, 1);
+    g.fillTriangle(ox - 4, oy + 6, o.position.x, oy - 14, ox + o.width + 4, oy + 6);
+    g.fillRect(ox + 3, oy - 2, o.width - 6, 10);
+    g.fillStyle(PALETTE.chimney, 1);
+    g.fillRect(ox + o.width * 0.7, oy - 16, 6, 12);
+    g.fillStyle(PALETTE.cottage, 1);
+    g.fillRect(ox, oy, o.width, o.height);
+    g.lineStyle(2, PALETTE.buildingEdge, 1);
+    g.strokeRect(ox, oy, o.width, o.height);
+    g.lineStyle(1, PALETTE.cottageLite, 0.45);
+    g.lineBetween(ox + 2, oy + o.height * 0.38, ox + o.width - 2, oy + o.height * 0.38);
+    const winW = Math.min(10, o.width * 0.2);
+    const winH = Math.min(10, o.height * 0.28);
+    const winY = oy + o.height * 0.28;
+    for (const t of [0.28, 0.72]) {
+      const wx = ox + o.width * t - winW / 2;
+      g.fillStyle(PALETTE.window, 1);
+      g.fillRect(wx, winY, winW, winH);
+      g.lineStyle(1, PALETTE.timberBeam, 0.8);
+      g.strokeRect(wx, winY, winW, winH);
+    }
+    const doorW = Math.min(12, o.width * 0.22);
+    const doorH = Math.min(18, o.height * 0.42);
+    g.fillStyle(PALETTE.door, 1);
+    g.fillRect(o.position.x - doorW / 2, oy + o.height - doorH - 1, doorW, doorH);
+    g.lineStyle(1, PALETTE.timberBeam, 1);
+    g.strokeRect(o.position.x - doorW / 2, oy + o.height - doorH - 1, doorW, doorH);
   }
 
   /** St Oswald's–inspired nave + tall recessed spire. Collision is the nave; spire is massing. */
@@ -1360,17 +2222,24 @@ export class GameScene extends Phaser.Scene {
     g.fillTriangle(px + 4, oy + 10, px + 22, oy + 18, px + 4, oy + 26);
   }
 
-  /** Market Place cobbles — render only, hug still crosses the square. */
+  /** Market Place cobbles — triangular Ashbourne square. Hug still crosses. */
   private drawMarketPlaza(): void {
     const mark = this.world.map.places.find((p) => p.kind === 'plaza');
-    if (!mark || this.hasLandmarkSprite(mark.id)) return;
+    if (!mark) return;
     const g = this.mapGfx;
-    g.fillStyle(PALETTE.cobble, 0.42);
-    g.fillEllipse(mark.position.x, mark.position.y + 8, 220, 140);
-    g.fillStyle(PALETTE.cobbleEdge, 0.28);
-    for (let i = 0; i < 18; i++) {
-      const a = (i / 18) * Math.PI * 2;
-      g.fillRect(mark.position.x + Math.cos(a) * 70 - 6, mark.position.y + Math.sin(a) * 42, 12, 5);
+    g.fillStyle(PALETTE.cobble, 0.5);
+    g.fillTriangle(
+      mark.position.x - 110,
+      mark.position.y + 78,
+      mark.position.x + 128,
+      mark.position.y + 62,
+      mark.position.x + 8,
+      mark.position.y - 88,
+    );
+    g.fillStyle(PALETTE.cobbleEdge, 0.32);
+    for (let i = 0; i < 16; i++) {
+      const t = i / 16;
+      g.fillRect(mark.position.x - 70 + t * 150, mark.position.y - 20 + (i % 3) * 18, 14, 5);
     }
   }
 
@@ -3015,6 +3884,24 @@ export class GameScene extends Phaser.Scene {
 
     g.fillStyle(PALETTE.grass, 0.7);
     g.fillRect(ox, oy, MINIMAP_W, MINIMAP_H);
+    g.fillStyle(PALETTE.forestFloor, 0.85);
+    for (const stand of map.forests) {
+      g.fillRect(
+        ox + (stand.position.x - stand.width / 2) * sx,
+        oy + (stand.position.y - stand.height / 2) * sy,
+        Math.max(2, stand.width * sx),
+        Math.max(2, stand.height * sy),
+      );
+    }
+    g.fillStyle(PALETTE.fieldA, 0.55);
+    for (const f of map.fields) {
+      g.fillRect(
+        ox + (f.position.x - f.width / 2) * sx,
+        oy + (f.position.y - f.height / 2) * sy,
+        Math.max(2, f.width * sx),
+        Math.max(2, f.height * sy),
+      );
+    }
     for (const road of map.roads) {
       if (road.points.length < 2) continue;
       g.lineStyle(1.6, road.kind === 'trail' ? PALETTE.trailEdge : PALETTE.tarmac, 0.9);
@@ -3024,6 +3911,15 @@ export class GameScene extends Phaser.Scene {
         g.lineTo(ox + road.points[i]!.x * sx, oy + road.points[i]!.y * sy);
       }
       g.strokePath();
+    }
+    g.fillStyle(PALETTE.tarmac, 0.9);
+    for (const rbt of map.roundabouts) {
+      g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(3, rbt.radius * sx));
+      g.fillStyle(PALETTE.grass, 0.95);
+      g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(1.5, rbt.island * sx));
+      g.fillStyle(PALETTE.bloomPink, 0.9);
+      g.fillCircle(ox + rbt.position.x * sx, oy + rbt.position.y * sy, Math.max(1, rbt.island * sx * 0.45));
+      g.fillStyle(PALETTE.tarmac, 0.9);
     }
     g.fillStyle(PALETTE.hedge, 0.95);
     for (const h of map.hedges) {

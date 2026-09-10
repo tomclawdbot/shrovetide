@@ -119,7 +119,8 @@ export interface TownMap {
   river: RectZone;          // water — 50% speed
   bridges: RectZone[];      // walkable crossings over the river
   hedges: RectZone[];       // crawl — slower than river (~0.22×)
-  roads: RoadSegment[];     // winding polyline strips — visual, no collision
+  forests: RectZone[];      // edge woodland — visual, not a hard OOB
+  roads: RoadSegment[];     // structured UK lanes — visual, no collision
   streetLights: StreetLight[]; // lamp posts; client glows them at Nightfall
   goals: { team: 0 | 1; position: Vec2 }[]; // millstones
   turnUp: Vec2;             // ball spawn point (centre of map)
@@ -128,10 +129,12 @@ export interface TownMap {
 
 `ASHBOURNE_TOWN` is the default: 4800×3200 (2× the TICKET 002 town), two
 millstones (one per team), horizontal river through the middle with
-three bridges, hedgerows that crawl slower than water, winding UK lanes
-linking pubs/shops ↔ bridges ↔ millstones (hedge-flanked at both stones), street
-lights that read at Nightfall, eleven town-core building obstacles,
-two OOB zones (churchyard + memorial).
+three bridges, hedgerows that crawl slower than water, structured UK asphalt
+lanes (trunk + T/L junctions, optional trailhead mini-roundabout — never on
+the kickoff plinth) linking pubs/shops ↔ bridges ↔ millstones (hedge-flanked
+at both stones), large adjacent hedged fields, edge woodland, street lights
+that read at Nightfall, civic landmarks as destinations, two OOB zones
+(churchyard + memorial).
 
 ### Zone helpers (pure functions in `sim/maps.ts`)
 
