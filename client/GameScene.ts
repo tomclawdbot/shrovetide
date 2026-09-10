@@ -1395,6 +1395,19 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * How far white paint must stop short of a junction node. Scales with the
+   * widest arm's carriageway: paint clears the far kerb of the crossing road
+   * plus a margin, so centre/edge lines from two arms never meet or stack
+   * inside the junction box. (A fixed gap is fine for a lane but leaves a
+   * street's own half-carriageway painting through a wider crossing street.)
+   */
+  private junctionClearance(j: Junction): number {
+    let maxHalf = 0;
+    for (const a of j.arms) if (a.hw > maxHalf) maxHalf = a.hw;
+    return maxHalf + 24;
+  }
+
   private nearJunctionPaint(
     x: number,
     y: number,
@@ -1402,7 +1415,7 @@ export class GameScene extends Phaser.Scene {
     roundabouts: { position: { x: number; y: number }; radius: number }[],
   ): boolean {
     for (const j of junctions) {
-      if (Math.hypot(x - j.x, y - j.y) < 46) return true;
+      if (Math.hypot(x - j.x, y - j.y) < this.junctionClearance(j)) return true;
     }
     for (const rbt of roundabouts) {
       const d = Math.hypot(x - rbt.position.x, y - rbt.position.y);
@@ -1444,7 +1457,13 @@ export class GameScene extends Phaser.Scene {
           const y0 = a.y + uy * d;
           const x1 = a.x + ux * (d + remain);
           const y1 = a.y + uy * (d + remain);
-          if (!this.nearJunctionPaint(x0, y0, junctions, roundabouts)) {
+          const xm = a.x + ux * (d + remain / 2);
+          const ym = a.y + uy * (d + remain / 2);
+          if (
+            !this.nearJunctionPaint(x0, y0, junctions, roundabouts) &&
+            !this.nearJunctionPaint(xm, ym, junctions, roundabouts) &&
+            !this.nearJunctionPaint(x1, y1, junctions, roundabouts)
+          ) {
             g.beginPath();
             g.moveTo(x0 + nx * hw, y0 + ny * hw);
             g.lineTo(x1 + nx * hw, y1 + ny * hw);
@@ -1462,7 +1481,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Thin solid white kerb line on tarmac — skipped on the packed-trail strip. */
+  /**
+   * Thin solid white kerb line on tarmac — skipped on the packed-trail strip.
+   * Sampled along the path (not just at vertices) so a T that lands mid-segment
+   * of a 2-point through street still breaks the edge line at the junction box
+   * instead of painting a stacked white line across it.
+   */
   private strokeEdgeLines(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
@@ -1471,30 +1495,39 @@ export class GameScene extends Phaser.Scene {
     roundabouts: { position: { x: number; y: number }; radius: number }[],
   ): void {
     const inset = width * 0.42;
+    const step = 12;
     g.lineStyle(3, PALETTE.paintWorn, 0.55);
     for (const side of [-1, 1]) {
       g.beginPath();
       let started = false;
-      for (let i = 0; i < points.length; i++) {
-        const cur = points[i]!;
-        if (this.nearJunctionPaint(cur.x, cur.y, junctions, roundabouts)) {
-          if (started) g.strokePath();
-          started = false;
-          g.beginPath();
-          continue;
-        }
-        const prev = points[Math.max(0, i - 1)]!;
-        const next = points[Math.min(points.length - 1, i + 1)]!;
-        const dx = next.x - prev.x;
-        const dy = next.y - prev.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = (-dy / len) * inset * side;
-        const ny = (dx / len) * inset * side;
-        if (!started) {
-          g.moveTo(cur.x + nx, cur.y + ny);
-          started = true;
-        } else {
-          g.lineTo(cur.x + nx, cur.y + ny);
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i]!;
+        const b = points[i + 1]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const segLen = Math.hypot(dx, dy);
+        if (segLen < 1e-3) continue;
+        const ux = dx / segLen;
+        const uy = dy / segLen;
+        const nx = -uy * inset * side;
+        const ny = ux * inset * side;
+        const samples = Math.max(1, Math.ceil(segLen / step));
+        for (let s = 0; s <= samples; s++) {
+          const t = (segLen * s) / samples;
+          const px = a.x + ux * t;
+          const py = a.y + uy * t;
+          if (this.nearJunctionPaint(px, py, junctions, roundabouts)) {
+            if (started) g.strokePath();
+            started = false;
+            g.beginPath();
+            continue;
+          }
+          if (!started) {
+            g.moveTo(px + nx, py + ny);
+            started = true;
+          } else {
+            g.lineTo(px + nx, py + ny);
+          }
         }
       }
       if (started) g.strokePath();
@@ -1514,6 +1547,9 @@ export class GameScene extends Phaser.Scene {
     ];
     for (const end of ends) {
       let junction = false;
+      // Half-width of the through paint this stop line must sit clear of, so the
+      // give-way dashes never stack on the through street's centre/edge lines.
+      let clearHalf = 0;
       for (const other of roads) {
         if (other === road || other.points === road.points) continue;
         for (let i = 0; i < other.points.length - 1; i++) {
@@ -1525,7 +1561,10 @@ export class GameScene extends Phaser.Scene {
             const yields =
               road.width < other.width ||
               (road.width === other.width && road.kind === 'lane' && other.kind === 'street');
-            if (d0 > other.width && d1 > other.width && yields) junction = true;
+            if (d0 > other.width && d1 > other.width && yields) {
+              junction = true;
+              clearHalf = Math.max(clearHalf, other.width / 2);
+            }
           }
         }
       }
@@ -1541,7 +1580,10 @@ export class GameScene extends Phaser.Scene {
       const uy = dy / len;
       const nx = -uy;
       const ny = ux;
-      const back = road.width * 0.55;
+      // Sit the stop line beyond the through carriageway's far kerb (+ margin)
+      // rather than a flat fraction of our own width, which parked it on top of
+      // the through-street paint at a T.
+      const back = Math.max(road.width * 0.55, clearHalf + road.width * 0.22 + 10);
       const cx = end.p.x - ux * back;
       const cy = end.p.y - uy * back;
       const half = road.width * 0.38;
