@@ -369,18 +369,74 @@ function chaikin(pts: Vec2Like[], rounds: number): Vec2Like[] {
   return cur;
 }
 
+/** Quarter-circle fillets at interior vertices — real arcs, not Chaikin elbows. */
+function roundedCorners(
+  pts: ReadonlyArray<readonly [number, number]>,
+  radius: number,
+  steps = 8,
+): [number, number][] {
+  if (pts.length < 3 || radius <= 0) return pts.map(([x, y]) => [x, y]);
+  const out: [number, number][] = [[pts[0]![0], pts[0]![1]]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    const c = pts[i + 1]!;
+    const ix = b[0] - a[0];
+    const iy = b[1] - a[1];
+    const ox = c[0] - b[0];
+    const oy = c[1] - b[1];
+    const il = Math.hypot(ix, iy) || 1;
+    const ol = Math.hypot(ox, oy) || 1;
+    const inx = ix / il;
+    const iny = iy / il;
+    const onx = ox / ol;
+    const ony = oy / ol;
+    const r = Math.min(radius, il * 0.42, ol * 0.42);
+    if (r < 8) {
+      out.push([b[0], b[1]]);
+      continue;
+    }
+    const sx0 = b[0] - inx * r;
+    const sy0 = b[1] - iny * r;
+    const ex = b[0] + onx * r;
+    const ey = b[1] + ony * r;
+    const cross = inx * ony - iny * onx;
+    const sign = cross >= 0 ? 1 : -1;
+    const nx = -iny * sign;
+    const ny = inx * sign;
+    const cx = sx0 + nx * r;
+    const cy = sy0 + ny * r;
+    let a0 = Math.atan2(sy0 - cy, sx0 - cx);
+    let a1 = Math.atan2(ey - cy, ex - cx);
+    let da = a1 - a0;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    for (let s = 0; s <= steps; s++) {
+      const ang = a0 + (da * s) / steps;
+      out.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r]);
+    }
+  }
+  const last = pts[pts.length - 1]!;
+  out.push([last[0], last[1]]);
+  return out;
+}
+
 function sroad(
   kind: RoadKind,
   width: number,
   waypoints: ReadonlyArray<readonly [number, number]>,
-  smooth = 0,
+  smoothOrOpts: number | { smooth?: number; radius?: number } = 0,
 ): RoadSegment {
+  const opts = typeof smoothOrOpts === 'number' ? { smooth: smoothOrOpts } : smoothOrOpts;
+  const poly = opts.radius
+    ? roundedCorners(waypoints, opts.radius)
+    : waypoints.map(([x, y]) => [x, y] as [number, number]);
   return {
     kind,
     width: sx(width),
     points: chaikin(
-      waypoints.map(([x, y]) => sxy(x, y)),
-      smooth,
+      poly.map(([x, y]) => sxy(x, y)),
+      opts.smooth ?? 0,
     ),
   };
 }
@@ -548,20 +604,19 @@ function hedgeCol(
 // ASHBOURNE TOWN — Derbyshire market-town homage (not GPS).
 //
 // Layout grammar (from the overworld refs, not their dirt / fantasy props):
-//   trunk streets on a cross, secondary lanes as L / T, large adjacent
-//   hedged fields, edge woodland belts, landmarks as destinations.
-//   One UK mini-roundabout at the trailhead — never a circle on the plinth.
+//   one E–W trunk, one N–S through the plinth, a rounded secondary wrap,
+//   mill spurs, trailhead ring. Generous grass. Never a circle on the plinth.
 //
 // Henmore along the south edge of the historic core. High street and Market
 // Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
-// Tissington Trail + tunnel on the north cutting. Clifton (W) / Sturston (E).
+// Former railway + tunnel on the north cutting. Clifton (W) / Sturston (E).
 //
 //   [Tunnel]──trail──(R)──[Baths]──lane──[Coach]
-//   [St Oswald's]── [Old Grammar]  Market Place △
+//   [St Oswald's]   [Old Grammar]  Market Place △ (U)
 //        churchyard      Green Man / halls
 //              ║  centre street (through plinth — no circus)
 //   ▒▒▒▒▒▒▒▒▒▒▒ HENMORE ▒▒▒▒▒▒▒▒▒▒▒  stone bridges
-//        Compton  Vaults / White Hart     [Wheel]
+//        Compton wrap (curved corners)   [Wheel]
 //   Clifton ◄──────────────────────────► Sturston
 // ---------------------------------------------------------------------------
 
@@ -577,26 +632,25 @@ const TOWN_ROADS: RoadSegment[] = [
     [0, 660],
     [2400, 660],
   ]),
-  // Trunk — centre street through Market Place, plinth, Compton, off the south edge.
+  // Trunk — Market Place south through the plinth, T onto Compton. Not off the south.
   sroad('street', 52, [
     [1200, 520],
-    [1200, 1600],
+    [1200, 1140],
   ]),
-  // Civic terrace — west column to the trailhead lane (halls sit on this).
+  // Market Place — short U onto the high street, rounded corners, halls sit on the top.
   sroad('street', 46, [
-    [400, 520],
-    [1660, 520],
-  ]),
-  // West column — off the north edge, church T, mill T, Compton, off the south.
+    [960, 660],
+    [960, 520],
+    [1420, 520],
+    [1420, 660],
+  ], { radius: 48 }),
+  // Secondary wrap — church T south, Compton, east column up to the high street.
   sroad('lane', 44, [
-    [400, 0],
-    [400, 1600],
-  ]),
-  // East column — off the north edge, Coach T, high street, east bridge, Compton, off south.
-  sroad('lane', 44, [
-    [2000, 0],
-    [2000, 1600],
-  ]),
+    [400, 548],
+    [400, 1140],
+    [2000, 1140],
+    [2000, 660],
+  ], { radius: 72 }),
   // Clifton millstone — hedge corridor, then off the west edge.
   sroad('lane', 48, [
     [0, 790],
@@ -607,21 +661,10 @@ const TOWN_ROADS: RoadSegment[] = [
     [2000, 790],
     [2400, 790],
   ]),
-  // Compton — south trunk off both edges.
-  sroad('lane', 44, [
-    [0, 1140],
-    [2400, 1140],
-  ]),
-  // St Oswald's south frontage — T on the west column, then off the west edge.
-  // Keep the centreline on the churchyard wall, not through the nave.
+  // St Oswald's south frontage — T on the wrap, then off the west edge.
   sroad('lane', 36, [
     [400, 548],
     [0, 548],
-  ]),
-  // Old Grammar — T onto the civic terrace, south onto the high street.
-  sroad('lane', 36, [
-    [700, 520],
-    [700, 660],
   ]),
   // Former railway cutting — north off the map to the trailhead ring.
   sroad('trail', 34, [
@@ -633,7 +676,7 @@ const TOWN_ROADS: RoadSegment[] = [
     [1660, 280 + TRAIL_R],
     [1660, 660],
   ]),
-  // Coach lane — east off the ring, through the inn, off the east edge.
+  // Coach lane — east off the ring, past the inn, off the east edge.
   sroad('lane', 40, [
     [1660 + TRAIL_R, 280],
     [2400, 280],

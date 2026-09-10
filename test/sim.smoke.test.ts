@@ -937,6 +937,30 @@ test('map: roads are intentional connectors, not dead-end stubs', () => {
   assert.equal(isOnRoad({ x: 2000 * TOWN_SCALE, y: 980 * TOWN_SCALE }, map), true, 'east road finishes on the south bank');
 });
 
+test('map: roads are a thinned trunk with curved secondary bends', () => {
+  const map = ASHBOURNE_TOWN;
+  assert.ok(map.roads.length <= 10, `too many roads (${map.roads.length}) — keep a thin trunk`);
+  assert.ok(map.roads.length >= 6, 'still need mill / trail / high-street connectors');
+  let curved = 0;
+  for (const r of map.roads) {
+    for (let i = 0; i < r.points.length - 2; i++) {
+      const a = r.points[i]!;
+      const b = r.points[i + 1]!;
+      const c = r.points[i + 2]!;
+      const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+      if (Math.abs(cross) > 2) {
+        curved += 1;
+        break;
+      }
+    }
+  }
+  assert.ok(curved >= 2, `expected real curved bends, got ${curved} bent polylines`);
+  // North and south of the core stay grass — no grid of edge-to-edge columns.
+  assert.equal(isOnRoad({ x: 400 * TOWN_SCALE, y: 120 * TOWN_SCALE }, map), false, 'no west column through the north fields');
+  assert.equal(isOnRoad({ x: 2000 * TOWN_SCALE, y: 120 * TOWN_SCALE }, map), false, 'no east column through the north fields');
+  assert.equal(isOnRoad({ x: 1200 * TOWN_SCALE, y: 1400 * TOWN_SCALE }, map), false, 'centre street does not split the south parcels');
+});
+
 test('map: every road end joins a junction or leaves the pitch', () => {
   const map = ASHBOURNE_TOWN;
   const edgePad = 12;

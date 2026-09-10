@@ -312,6 +312,122 @@ function mitredStripPolygon(
   return [...left, ...right.reverse()];
 }
 
+type RoadRef = { points: { x: number; y: number }[]; width: number };
+type JunctionArm = { ux: number; uy: number; hw: number };
+type Junction = { x: number; y: number; arms: JunctionArm[] };
+
+function dirUnit(x: number, y: number): { x: number; y: number } {
+  const l = Math.hypot(x, y) || 1;
+  return { x: x / l, y: y / l };
+}
+
+function pushArm(arms: JunctionArm[], ux: number, uy: number, hw: number): void {
+  const u = dirUnit(ux, uy);
+  for (const a of arms) {
+    if (a.ux * u.x + a.uy * u.y > 0.86) {
+      a.hw = Math.max(a.hw, hw);
+      return;
+    }
+  }
+  arms.push({ ux: u.x, uy: u.y, hw });
+}
+
+function roadClosestSeg(
+  road: RoadRef,
+  p: { x: number; y: number },
+): { a: { x: number; y: number }; b: { x: number; y: number }; d: number } | null {
+  let best: { a: { x: number; y: number }; b: { x: number; y: number }; d: number } | null = null;
+  for (let i = 0; i < road.points.length - 1; i++) {
+    const a = road.points[i]!;
+    const b = road.points[i + 1]!;
+    const d = distToSegment(p, a, b);
+    if (!best || d < best.d) best = { a, b, d };
+  }
+  return best;
+}
+
+function collectJunctions(
+  roads: RoadRef[],
+  roundabouts: { position: { x: number; y: number }; radius: number }[],
+): Junction[] {
+  const found: Junction[] = [];
+  const bump = (x: number, y: number): Junction => {
+    for (const j of found) {
+      if (Math.hypot(j.x - x, j.y - y) < 16) return j;
+    }
+    const j: Junction = { x, y, arms: [] };
+    found.push(j);
+    return j;
+  };
+  for (let i = 0; i < roads.length; i++) {
+    const a = roads[i]!;
+    for (let s = 0; s < a.points.length - 1; s++) {
+      const a0 = a.points[s]!;
+      const a1 = a.points[s + 1]!;
+      for (let j = i + 1; j < roads.length; j++) {
+        const b = roads[j]!;
+        for (let t = 0; t < b.points.length - 1; t++) {
+          const b0 = b.points[t]!;
+          const b1 = b.points[t + 1]!;
+          const hit = segIntersect(a0, a1, b0, b1);
+          if (!hit) continue;
+          const jn = bump(hit.x, hit.y);
+          const ua = dirUnit(a1.x - a0.x, a1.y - a0.y);
+          const ub = dirUnit(b1.x - b0.x, b1.y - b0.y);
+          pushArm(jn.arms, ua.x, ua.y, a.width / 2);
+          pushArm(jn.arms, -ua.x, -ua.y, a.width / 2);
+          pushArm(jn.arms, ub.x, ub.y, b.width / 2);
+          pushArm(jn.arms, -ub.x, -ub.y, b.width / 2);
+        }
+      }
+    }
+  }
+  for (const stem of roads) {
+    if (stem.points.length < 2) continue;
+    const ends = [
+      { p: stem.points[0]!, q: stem.points[1]! },
+      { p: stem.points[stem.points.length - 1]!, q: stem.points[stem.points.length - 2]! },
+    ];
+    for (const end of ends) {
+      if (roundabouts.some((r) => Math.abs(Math.hypot(end.p.x - r.position.x, end.p.y - r.position.y) - r.radius) < 22)) {
+        continue;
+      }
+      for (const other of roads) {
+        if (other === stem) continue;
+        const near = roadClosestSeg(other, end.p);
+        if (!near || near.d > other.width / 2 + 10) continue;
+        const jn = bump(end.p.x, end.p.y);
+        const along = dirUnit(near.b.x - near.a.x, near.b.y - near.a.y);
+        pushArm(jn.arms, along.x, along.y, other.width / 2);
+        pushArm(jn.arms, -along.x, -along.y, other.width / 2);
+        pushArm(jn.arms, end.p.x - end.q.x, end.p.y - end.q.y, stem.width / 2);
+      }
+    }
+  }
+  return found.filter((j) => {
+    if (j.arms.length < 2) return false;
+    return !roundabouts.some((r) => Math.hypot(j.x - r.position.x, j.y - r.position.y) < r.radius + 12);
+  });
+}
+
+function segIntersect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number },
+): { x: number; y: number } | null {
+  const rx = b.x - a.x;
+  const ry = b.y - a.y;
+  const sx = d.x - c.x;
+  const sy = d.y - c.y;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-6) return null;
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den;
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den;
+  if (t <= 0.04 || t >= 0.96 || u <= 0.04 || u >= 0.96) return null;
+  return { x: a.x + t * rx, y: a.y + t * ry };
+}
+
 /** Clip a segment to an inclusive Y band. Used to keep grass verge off the brook. */
 function clipSegY(
   a: { x: number; y: number },
@@ -884,8 +1000,10 @@ export class GameScene extends Phaser.Scene {
     this.mapGfx.fillRect(rx, ry + map.river.height - 10, map.river.width, 10);
 
     this.drawStoneBridgeDecks();
-    this.drawRoundaboutDiscs();
     this.drawRoads(rand);
+    this.drawRoundaboutDiscs();
+    this.drawJoinCaps();
+    this.drawJunctionFillets();
     this.drawRoundaboutIslands();
     this.drawRoadMarkings();
     this.drawStoneBridgeParapets();
@@ -1157,14 +1275,96 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Round the stem into the through-road so T-joins are not square sausages. */
+  private drawJoinCaps(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    g.fillStyle(PALETTE.tarmac, 1);
+    for (const road of map.roads) {
+      if (road.kind === 'trail' || road.points.length < 2) continue;
+      const ends = [road.points[0]!, road.points[road.points.length - 1]!];
+      for (const end of ends) {
+        let join = map.roundabouts.some(
+          (rbt) => Math.abs(Math.hypot(end.x - rbt.position.x, end.y - rbt.position.y) - rbt.radius) < 18,
+        );
+        if (!join) {
+          for (const other of map.roads) {
+            if (other === road) continue;
+            const near = roadClosestSeg(other, end);
+            if (near && near.d <= other.width / 2 + 10) {
+              join = true;
+              break;
+            }
+          }
+        }
+        if (join) g.fillCircle(end.x, end.y, road.width / 2);
+      }
+    }
+  }
+
+  /** Tarmac quarter-circles + white kerb at T / cross inner corners. */
+  private drawJunctionFillets(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    const junctions = collectJunctions(map.roads, map.roundabouts);
+    for (const j of junctions) {
+      const arms = j.arms
+        .map((a) => ({ ...a, ang: Math.atan2(a.uy, a.ux) }))
+        .sort((a, b) => a.ang - b.ang);
+      if (arms.length < 2) continue;
+      for (let i = 0; i < arms.length; i++) {
+        const a = arms[i]!;
+        const b = arms[(i + 1) % arms.length]!;
+        let da = b.ang - a.ang;
+        if (da <= 0) da += Math.PI * 2;
+        if (da < 0.35 || da > 2.45) continue;
+        const ha = a.hw;
+        const hb = b.hw;
+        const R = Math.min(28, Math.max(14, Math.min(ha, hb) * 0.7));
+        const nax = -a.uy;
+        const nay = a.ux;
+        const inward = nax * b.ux + nay * b.uy > 0;
+        const iax = inward ? nax : -nax;
+        const iay = inward ? nay : -nay;
+        const nbx = -b.uy;
+        const nby = b.ux;
+        const inwardB = nbx * a.ux + nby * a.uy > 0;
+        const ibx = inwardB ? nbx : -nbx;
+        const iby = inwardB ? nby : -nby;
+        const cx = j.x + iax * (ha + R) + ibx * (hb + R);
+        const cy = j.y + iay * (ha + R) + iby * (hb + R);
+        const t1x = cx - iax * R;
+        const t1y = cy - iay * R;
+        const t2x = cx - ibx * R;
+        const t2y = cy - iby * R;
+        const a0 = Math.atan2(t1y - cy, t1x - cx);
+        const a1 = Math.atan2(t2y - cy, t2x - cx);
+        let sweep = a1 - a0;
+        while (sweep > Math.PI) sweep -= Math.PI * 2;
+        while (sweep < -Math.PI) sweep += Math.PI * 2;
+        g.fillStyle(PALETTE.tarmac, 1);
+        g.beginPath();
+        g.moveTo(t1x, t1y);
+        g.arc(cx, cy, R, a0, a0 + sweep, sweep < 0);
+        g.closePath();
+        g.fillPath();
+        g.lineStyle(3, PALETTE.paint, 0.9);
+        g.beginPath();
+        g.arc(cx, cy, R, a0, a0 + sweep, sweep < 0);
+        g.strokePath();
+      }
+    }
+  }
+
   /** UK lane paint: broken white centre, optional edge, give-way dashes on the minor arm. */
   private drawRoadMarkings(): void {
     const g = this.mapGfx;
     const map = this.world.map;
+    const junctions = collectJunctions(map.roads, map.roundabouts);
     for (const road of map.roads) {
       if (road.kind === 'trail') continue;
-      this.dashCentreLine(g, road.points);
-      this.strokeEdgeLines(g, road.points, road.width);
+      this.dashCentreLine(g, road.points, junctions, map.roundabouts);
+      this.strokeEdgeLines(g, road.points, road.width, junctions, map.roundabouts);
       this.paintGiveWays(g, road, map.roads, map.roundabouts);
     }
     for (const rbt of map.roundabouts) {
@@ -1173,9 +1373,27 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private nearJunctionPaint(
+    x: number,
+    y: number,
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
+  ): boolean {
+    for (const j of junctions) {
+      if (Math.hypot(x - j.x, y - j.y) < 46) return true;
+    }
+    for (const rbt of roundabouts) {
+      const d = Math.hypot(x - rbt.position.x, y - rbt.position.y);
+      if (d < rbt.radius + 18) return true;
+    }
+    return false;
+  }
+
   private dashCentreLine(
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
   ): void {
     // Fat enough to read at ~0.35× camera zoom; UK broken white, not US yellow.
     const on = 28;
@@ -1204,13 +1422,15 @@ export class GameScene extends Phaser.Scene {
           const y0 = a.y + uy * d;
           const x1 = a.x + ux * (d + remain);
           const y1 = a.y + uy * (d + remain);
-          g.beginPath();
-          g.moveTo(x0 + nx * hw, y0 + ny * hw);
-          g.lineTo(x1 + nx * hw, y1 + ny * hw);
-          g.lineTo(x1 - nx * hw, y1 - ny * hw);
-          g.lineTo(x0 - nx * hw, y0 - ny * hw);
-          g.closePath();
-          g.fillPath();
+          if (!this.nearJunctionPaint(x0, y0, junctions, roundabouts)) {
+            g.beginPath();
+            g.moveTo(x0 + nx * hw, y0 + ny * hw);
+            g.lineTo(x1 + nx * hw, y1 + ny * hw);
+            g.lineTo(x1 - nx * hw, y1 - ny * hw);
+            g.lineTo(x0 - nx * hw, y0 - ny * hw);
+            g.closePath();
+            g.fillPath();
+          }
           d += remain;
         } else {
           d += Math.min(cycle - pos, len - d);
@@ -1225,6 +1445,8 @@ export class GameScene extends Phaser.Scene {
     g: Phaser.GameObjects.Graphics,
     points: { x: number; y: number }[],
     width: number,
+    junctions: Junction[],
+    roundabouts: { position: { x: number; y: number }; radius: number }[],
   ): void {
     const inset = width * 0.42;
     g.lineStyle(3, PALETTE.paintWorn, 0.55);
@@ -1233,6 +1455,12 @@ export class GameScene extends Phaser.Scene {
       let started = false;
       for (let i = 0; i < points.length; i++) {
         const cur = points[i]!;
+        if (this.nearJunctionPaint(cur.x, cur.y, junctions, roundabouts)) {
+          if (started) g.strokePath();
+          started = false;
+          g.beginPath();
+          continue;
+        }
         const prev = points[Math.max(0, i - 1)]!;
         const next = points[Math.min(points.length - 1, i + 1)]!;
         const dx = next.x - prev.x;
@@ -1247,7 +1475,7 @@ export class GameScene extends Phaser.Scene {
           g.lineTo(cur.x + nx, cur.y + ny);
         }
       }
-      g.strokePath();
+      if (started) g.strokePath();
     }
   }
 
