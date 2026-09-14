@@ -643,7 +643,7 @@ const TOWN_ROADS: RoadSegment[] = [
     [960, 520],
     [1420, 520],
     [1420, 660],
-  ], { radius: 48 }),
+  ], { radius: 58, smooth: 1 }),
   // Secondary through street — church T south, Compton wrap, east column up to
   // the high street. A real through route (not a minor lane): broken-white centre.
   sroad('street', 44, [
@@ -651,7 +651,7 @@ const TOWN_ROADS: RoadSegment[] = [
     [400, 1140],
     [2000, 1140],
     [2000, 660],
-  ], { radius: 72 }),
+  ], { radius: 170, smooth: 1 }),
   // Clifton millstone — hedge corridor, then off the west edge.
   sroad('lane', 44, [
     [0, 790],
@@ -692,10 +692,12 @@ const TOWN_FIELDS: FieldParcel[] = [
   // North-east of the trail.
   sfield(2100, 200, 480, 280),
   // Between Henmore south bank and Compton (cells between the N–S columns).
-  sfield(220, 1050, 280, 140),
-  sfield(700, 1050, 520, 140),
-  sfield(1600, 1050, 720, 140),
-  sfield(2200, 1050, 320, 140),
+  // North edge stays put (980, matching the original bank line); enlarged by
+  // running the full depth down to the south-of-Compton row (touch at 1240).
+  sfield(220, 1110, 280, 260),
+  sfield(700, 1110, 520, 260),
+  sfield(1600, 1110, 720, 260),
+  sfield(2200, 1110, 320, 260),
   // South of Compton — one row of neighbouring parcels.
   sfield(320, 1400, 480, 320),
   sfield(800, 1400, 480, 320),
@@ -708,10 +710,11 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(700, 280, 520, 400, 26, {}, 56, { e: true }),
   ...parcelHedges(1290, 280, 660, 400, 26),
   ...parcelHedges(2100, 200, 480, 280, 26),
-  ...parcelHedges(220, 1050, 280, 140, 24),
-  ...parcelHedges(700, 1050, 520, 140, 24),
-  ...parcelHedges(1600, 1050, 720, 140, 24),
-  ...parcelHedges(2200, 1050, 320, 140, 24),
+  // South edge skipped — shares its line with the south-of-Compton row's north hedge.
+  ...parcelHedges(220, 1110, 280, 260, 24, {}, 56, { s: true }),
+  ...parcelHedges(700, 1110, 520, 260, 24, {}, 56, { s: true }),
+  ...parcelHedges(1600, 1110, 720, 260, 24, {}, 56, { s: true }),
+  ...parcelHedges(2200, 1110, 320, 260, 24),
   ...parcelHedges(320, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(800, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
@@ -723,21 +726,28 @@ const TOWN_HEDGES: RectZone[] = [
   srect(2045, 826, 270, 18),
 ];
 
-/** Ashbourne edge woodland — readable tree blocks, not fantasy clutter. */
+/**
+ * Ashbourne edge woodland — one clustered canopy mass along the north edge
+ * (split only by the trail cutting through), plus a tiny SW edge strip.
+ * Clear of the trailhead ring, plinth approach, and both mill lanes.
+ */
 const TOWN_FORESTS: ForestStand[] = [
-  // North belt above the north parcels (trail cuts the gap to the NE block).
-  srect(620, 72, 1240, 168),
-  srect(2180, 170, 400, 280),
-  srect(70, 560, 168, 340),
-  srect(70, 1460, 200, 260),
-  srect(2384, 720, 128, 500),
+  srect(800, 60, 1520, 160),
+  srect(2070, 60, 620, 160),
+  srect(30, 1040, 100, 280),
 ];
 
 function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
   const riverY = sx(880);
   const riverH = sx(58);
-  const decks = [sx(400), sx(1200), sx(2000)];
+  // Deck half-widths track the (now road-matched, narrow) bridge collars —
+  // a lamp only reads as "on deck" if it would actually stand on the span.
+  const decks = [
+    { x: sx(400), half: sx(22) },
+    { x: sx(1200), half: sx(26) },
+    { x: sx(2000), half: sx(22) },
+  ];
   const stones = [sxy(140, 790), sxy(2260, 790)];
   const extra = [
     slight(400, 766),
@@ -749,7 +759,7 @@ function townLamps(): StreetLight[] {
   ];
   return [...lamps, ...extra].filter((l) => {
     const inRiver = Math.abs(l.position.y - riverY) < riverH;
-    const onDeck = decks.some((bx) => Math.abs(l.position.x - bx) < sx(80));
+    const onDeck = decks.some((d) => Math.abs(l.position.x - d.x) < d.half);
     if (inRiver && !onDeck) return false;
     for (const g of stones) {
       if (Math.hypot(l.position.x - g.x, l.position.y - g.y) < 48) return false;
@@ -802,21 +812,43 @@ const TOWN_BUILDINGS: Building[] = [
   shouseY(1500, HS_Y, HS_HALF, -1, 'High St 4'),
   shouseY(870, HS_Y, HS_HALF, 1, 'High St 5'),
   shouseY(1440, HS_Y, HS_HALF, 1, 'High St 6'),
+  // Infill terrace — thickens the high street frontage on both verges.
+  shouseY(825, HS_Y, HS_HALF, -1, 'High St 7'),
+  shouseY(970, HS_Y, HS_HALF, -1, 'High St 8'),
+  shouseY(1280, HS_Y, HS_HALF, -1, 'High St 9'),
+  shouseY(1430, HS_Y, HS_HALF, -1, 'High St 10'),
+  shouseY(821, HS_Y, HS_HALF, 1, 'High St 11'),
+  shouseY(918, HS_Y, HS_HALF, 1, 'High St 12'),
+  shouseY(1396, HS_Y, HS_HALF, 1, 'High St 13'),
+  shouseY(1493, HS_Y, HS_HALF, 1, 'High St 14'),
   shouseY(1280, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
   shouseX(615, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
+  shouseX(760, CENTRE_X, CENTRE_HALF, -1, 'Market Row 3'),
   shouseX(615, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
+  shouseX(690, CENTRE_X, CENTRE_HALF, 1, 'Dig St 3'),
   shouseX(760, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
   shouseY(780, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
   shouseY(1520, COMPTON_Y, COMPTON_HALF, 1, 'Compton 2'),
+  // Compton infill — fills the gaps between the pubs on the south frontage.
+  shouseY(707, COMPTON_Y, COMPTON_HALF, 1, 'Compton 3'),
+  shouseY(880, COMPTON_Y, COMPTON_HALF, 1, 'Compton 4'),
+  shouseY(1160, COMPTON_Y, COMPTON_HALF, 1, 'Compton 5'),
+  shouseY(1260, COMPTON_Y, COMPTON_HALF, 1, 'Compton 6'),
+  shouseY(1437, COMPTON_Y, COMPTON_HALF, 1, 'Compton 7'),
   // Clifton village — west column east verge, clear of the millstone hedges.
+  // Tightened spacing (evenly ~40 apart) so it reads as one cluster.
   shouseX(560, WEST_X, WEST_HALF, 1, 'Clifton 1'),
+  shouseX(600, WEST_X, WEST_HALF, 1, 'Clifton 5'),
   shouseX(640, WEST_X, WEST_HALF, 1, 'Clifton 2'),
   shouseX(680, WEST_X, WEST_HALF, 1, 'Clifton 3'),
   shouseX(715, WEST_X, WEST_HALF, 1, 'Clifton 4'),
   // Sturston village — east column west verge + high-street end.
+  // Extended to match Clifton's density, evenly spaced along the lane.
+  shouseX(645, EAST_X, EAST_HALF, -1, 'Sturston 5'),
   shouseX(675, EAST_X, EAST_HALF, -1, 'Sturston 1'),
   shouseX(705, EAST_X, EAST_HALF, -1, 'Sturston 2'),
   shouseX(735, EAST_X, EAST_HALF, -1, 'Sturston 3'),
+  shouseX(765, EAST_X, EAST_HALF, -1, 'Sturston 6'),
   shouseY(1880, HS_Y, HS_HALF, 1, 'Sturston 4'),
 ];
 
@@ -836,9 +868,9 @@ export const ASHBOURNE_TOWN: TownMap = {
   river: srect(1200, 880, 2400, 120),
 
   bridges: [
-    srect(400, 880, 64, 150),
-    srect(1200, 880, 72, 150),
-    srect(2000, 880, 64, 150),
+    srect(400, 880, 44, 150),
+    srect(1200, 880, 52, 150),
+    srect(2000, 880, 44, 150),
   ],
 
   roundabouts: TOWN_ROUNDABOUTS,
