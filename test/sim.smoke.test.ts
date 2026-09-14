@@ -25,6 +25,7 @@ import {
   isInHedge,
   isInHedgeSlow,
   isInObstacle,
+  isInRiver,
   isInWater,
   isNorthOfRiver,
   riverYAt,
@@ -896,7 +897,7 @@ test('world: Down player spawns east and scores at Clifton', () => {
 test('map: roads link the high street and stay soft (fields stay playable)', () => {
   const map = ASHBOURNE_TOWN;
   assert.ok(map.roads.some((r) => r.kind === 'street'), 'town streets');
-  assert.ok(map.roads.some((r) => r.kind === 'lane'), 'millstone / bank lanes');
+  assert.ok(map.roads.some((r) => r.kind === 'lane'), 'bank / trailhead / coach lanes');
   for (const r of map.roads) {
     assert.ok(r.points.length >= 2, 'road is a polyline');
     assert.ok(r.width > 20 && r.width < 140, 'road strip is a lane, not a slab');
@@ -945,7 +946,7 @@ test('map: roads are intentional connectors, not dead-end stubs', () => {
 test('map: roads are a thinned trunk with curved secondary bends', () => {
   const map = ASHBOURNE_TOWN;
   assert.ok(map.roads.length <= 10, `too many roads (${map.roads.length}) — keep a thin trunk`);
-  assert.ok(map.roads.length >= 6, 'still need mill / trail / high-street connectors');
+  assert.ok(map.roads.length >= 6, 'still need trail / high-street / wrap connectors');
   let curved = 0;
   for (const r of map.roads) {
     for (let i = 0; i < r.points.length - 2; i++) {
@@ -1010,20 +1011,23 @@ test('map: street lights sit on the road network', () => {
   }
 });
 
-test('map: both millstone approaches are hedge-flanked roads', () => {
+test('map: millstone approaches are hedge corridors without dedicated roads', () => {
   const map = ASHBOURNE_TOWN;
   const samples = [
     { name: 'Clifton', x: 320 * TOWN_SCALE, y: 790 * TOWN_SCALE },
     { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 790 * TOWN_SCALE },
   ];
   for (const s of samples) {
-    assert.equal(isOnRoad(s, map), true, `${s.name} approach is a road`);
+    // Tom: no road required to scoring millstones — mud/grass is fine.
+    assert.equal(isOnRoad(s, map), false, `${s.name} approach must not be a dedicated road`);
+    assert.ok(isWalkable(s, map), `${s.name} approach stays playable grass/mud`);
     const north = { x: s.x, y: 754 * TOWN_SCALE };
     const south = { x: s.x, y: 826 * TOWN_SCALE };
-    assert.equal(isInHedge(north, map), true, `${s.name} road has a north hedge`);
-    assert.equal(isInHedge(south, map), true, `${s.name} road has a south hedge`);
+    assert.equal(isInHedge(north, map), true, `${s.name} corridor has a north hedge`);
+    assert.equal(isInHedge(south, map), true, `${s.name} corridor has a south hedge`);
   }
   for (const goal of map.goals) {
+    assert.equal(isOnRoad(goal.position, map), false, `${goal.name} has no road under the stone`);
     assert.equal(isInHedgeSlow(goal.position, map), false, `${goal.name} stone is not in a hedge`);
     assert.ok(isWalkable(goal.position, map), `${goal.name} stone stays standable`);
     for (let i = 0; i < 8; i++) {
@@ -1258,6 +1262,35 @@ test('map: 17v17 placement stays out of walls and OOB', () => {
       );
     }), `${b.id} spawned inside a building`);
   }
+});
+
+test('map: Henmore is a hairpin diagonal that exits off-map both ends', () => {
+  const map = ASHBOURNE_TOWN;
+  const pts = map.river.points;
+  assert.ok(pts.length >= 8, 'river is a bent polyline');
+  const first = pts[0]!;
+  const last = pts[pts.length - 1]!;
+  assert.ok(first.x < 0, `SW end must run off-map (x=${first.x})`);
+  assert.ok(last.x > map.width, `NE end must run off-map (x=${last.x} vs w=${map.width})`);
+  // Bridges still sit on the river centerline (deck excludes isInWater).
+  for (const b of map.bridges) {
+    assert.equal(isInRiver(b.position, map), true, 'bridge centre is over the Henmore');
+  }
+  // Hairpin (not oxbow): between centre and east bridges the centerline should
+  // briefly reverse in x (a tight U), without spanning a huge closed lake.
+  const midLo = 1200 * TOWN_SCALE;
+  const midHi = 2000 * TOWN_SCALE;
+  let sawReverse = false;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    if (a.x < midLo || a.x > midHi) continue;
+    if (b.x < a.x - 8 * TOWN_SCALE) {
+      sawReverse = true;
+      break;
+    }
+  }
+  assert.ok(sawReverse, 'expected a brief westward reverse in the hairpin');
 });
 
 test('map: hedge speed is slower than river speed', () => {

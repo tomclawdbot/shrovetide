@@ -457,29 +457,6 @@ function sroad(
   };
 }
 
-/**
- * Points around an arc, design-space. Used once to build the Henmore's oxbow
- * meander — a near-closed loop off the main run, entry and exit left as a
- * narrow neck rather than fully closing (a real oxbow cutoff loop).
- */
-function arcPoints(
-  cx: number,
-  cy: number,
-  r: number,
-  startDeg: number,
-  endDeg: number,
-  steps: number,
-): Vec2Like[] {
-  const out: Vec2Like[] = [];
-  const a0 = (startDeg * Math.PI) / 180;
-  const a1 = (endDeg * Math.PI) / 180;
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + ((a1 - a0) * i) / steps;
-    out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
-  }
-  return out;
-}
-
 function sroundabout(x: number, y: number, radius: number, island: number): Roundabout {
   return { position: sxy(x, y), radius: sx(radius), island: sx(island) };
 }
@@ -644,7 +621,8 @@ function hedgeCol(
 //
 // Layout grammar (from the overworld refs, not their dirt / fantasy props):
 //   one E–W trunk, one N–S through the plinth, a rounded secondary wrap,
-//   mill spurs, trailhead ring. Generous grass. Never a circle on the plinth.
+//   trailhead ring. Generous grass. Never a circle on the plinth.
+//   Millstones: mud/grass hedge corridor — no dedicated approach road.
 //
 // Henmore along the south edge of the historic core. High street and Market
 // Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
@@ -691,16 +669,6 @@ const TOWN_ROADS: RoadSegment[] = [
     [2000, 1140],
     [2000, 660],
   ], { radius: 170, smooth: 1 }),
-  // Clifton millstone — hedge corridor, then off the west edge.
-  sroad('lane', 44, [
-    [0, 790],
-    [400, 790],
-  ]),
-  // Sturston millstone — hedge corridor, then off the east edge.
-  sroad('lane', 44, [
-    [2000, 790],
-    [2400, 790],
-  ]),
   // St Oswald's south frontage — T on the wrap, then off the west edge.
   sroad('lane', 36, [
     [400, 548],
@@ -758,7 +726,7 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(800, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1760, 1400, 480, 320, 26),
-  // Goal approaches — hedges flank the millstone lanes, clear of the stones.
+  // Goal approaches — hedges flank the mud/grass mill corridors, clear of the stones.
   srect(355, 754, 270, 22),
   srect(355, 826, 270, 18),
   srect(2045, 754, 270, 22),
@@ -768,7 +736,7 @@ const TOWN_HEDGES: RectZone[] = [
 /**
  * Ashbourne edge woodland — one clustered canopy mass along the north edge
  * (split only by the trail cutting through), plus a tiny SW edge strip.
- * Clear of the trailhead ring, plinth approach, and both mill lanes.
+ * Clear of the trailhead ring, plinth approach, and both mill corridors.
  */
 const TOWN_FORESTS: ForestStand[] = [
   srect(800, 60, 1520, 160),
@@ -777,47 +745,59 @@ const TOWN_FORESTS: ForestStand[] = [
 ];
 
 /**
- * Henmore centerline — SW to NE diagonal with soft bends and one oxbow
- * meander (Tom 2026-09-14). The WEST_X/CENTRE_X/EAST_X crossings are exact
- * vertices so the N–S roads (and their bridges) land on the water without
- * drift. The loop sits between the centre and east bridges, in the open
- * ground north of the field hedges and south of the high-street shopfronts —
- * the only gap wide enough for a full meander.
+ * Henmore centerline — SW→NE diagonal with soft bends and one tight hairpin
+ * (Tom 2026-09-14). Not a closed oxbow / cutoff lake. Endpoints sit past the
+ * design frame so the water strip runs off-map on both ends (no rectangular
+ * stub). WEST_X/CENTRE_X/EAST_X crossings are exact vertices so the N–S roads
+ * (and their bridges) land on the water without drift. The hairpin sits
+ * between the centre and east bridges, in the open ground north of the field
+ * hedges and south of the high-street shopfronts.
  */
 const RIVER_WIDTH = 60;
 const RIVER_WEST_Y = 900;
 const RIVER_CENTRE_Y = 860;
 const RIVER_EAST_Y = 900;
 
-const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
-  [0, 960],
-  [60, 915],
-  [280, 900],
+/** Design-space centerline; first/last points are off-map (x<0 / x>2400). */
+const TOWN_RIVER_POLY: ReadonlyArray<readonly [number, number]> = [
+  // Off-map SW entry — square strip terminus stays outside the pitch frame.
+  [-140, 1060],
+  [-60, 1005],
+  [40, 965],
+  [200, 925],
   [400, RIVER_WEST_Y],
   [520, 900],
-  [650, 895],
-  [850, 880],
-  [1000, 865],
+  [700, 890],
+  [900, 875],
+  [1050, 865],
   [1200, RIVER_CENTRE_Y],
-  [1400, 880],
-];
-/** Oxbow loop — a near-closed meander with a narrow neck, not a full circle. */
-const TOWN_RIVER_LOOP: Vec2Like[] = arcPoints(1750, 840, 75, 200, 520, 24);
-const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
-  [1900, 900],
+  [1380, 872],
+  [1520, 865],
+  // Hairpin — tight switchback U (brief westward reverse), not a closed oxbow.
+  // Apex stays south of the high street (y=660) with river half-width clearance.
+  [1650, 850],
+  [1740, 815],
+  [1765, 770],
+  [1710, 740],
+  [1625, 750],
+  [1585, 795],
+  [1635, 845],
+  [1725, 870],
+  // Continue to east bridge — stay south of Sturston (2260,790) until past it,
+  // then swing NE and exit off-map (no rectangular stub inside the frame).
+  [1860, 880],
   [2000, RIVER_EAST_Y],
   [2060, 895],
   [2200, 890],
-  [2300, 830],
-  [2400, 700],
+  [2320, 850],
+  [2420, 760],
+  [2520, 640],
+  [2620, 500],
+  [2720, 360],
 ];
 
 const TOWN_RIVER: RiverPath = {
-  points: [
-    ...TOWN_RIVER_RUN_A.map(([x, y]) => sxy(x, y)),
-    ...TOWN_RIVER_LOOP.map((p) => sxy(p.x, p.y)),
-    ...TOWN_RIVER_RUN_B.map(([x, y]) => sxy(x, y)),
-  ],
+  points: TOWN_RIVER_POLY.map(([x, y]) => sxy(x, y)),
   width: sx(RIVER_WIDTH),
 };
 
@@ -1026,8 +1006,8 @@ export function isInRiver(p: Vec2Like, map: TownMap): boolean {
 /**
  * Local Henmore centerline y at a given x — linear interpolation across the
  * nearest crossing segment (narrowest x-span, to favour a steep local crossing
- * over a long near-horizontal reach when the oxbow loop crosses the same x
- * twice). Used for "north of the brook" placement checks, not collision.
+ * over a long near-horizontal reach when the hairpin doubles back across the
+ * same x). Used for "north of the brook" placement checks, not collision.
  */
 export function riverYAt(x: number, river: RiverPath): number {
   let best: number | null = null;

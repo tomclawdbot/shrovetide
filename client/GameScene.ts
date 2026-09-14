@@ -212,6 +212,7 @@ const LANDMARK_SPRITE_IDS = [
   'the-tunnel',
   'market-place',
   'green-man',
+  'millstone',
   'the-george-dragon',
   'the-green-man',
   'the-horns',
@@ -1080,7 +1081,18 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const g of map.goals) {
-      this.drawMillstone(g.position.x, g.position.y, g.name);
+      // Shared millstone art (Game Art may swap PNGs in place). Team colour is
+      // label-only — no procedural rings painted on the stone.
+      const stone = this.landmarkNativeSize('millstone');
+      const side = stone ? stone.w : 96;
+      this.placeLandmarkSprite(
+        'millstone',
+        g.position.x,
+        g.position.y,
+        side,
+        stone ? stone.h : side,
+        LANDMARK_GROUND_DEPTH,
+      );
       const label = this.add
         .text(g.position.x, g.position.y + 58, g.name.toUpperCase(), {
           fontFamily: FONT,
@@ -1129,7 +1141,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Henmore — a bent water strip (diagonal run, soft bends, one oxbow), not a fat slab. */
+  /** Henmore — bent water strip (SW→NE, soft bends, one hairpin), not a fat slab. */
   private drawRiver(): void {
     const g = this.mapGfx;
     const river = this.world.map.river;
@@ -1769,34 +1781,6 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(PALETTE.lampGlass, 0.85);
       g.fillRect(x - 4, y - 24, 8, 6);
     }
-  }
-
-  /** Sturston (Up goal) blue/yellow hoops; Clifton (Down goal) black. */
-  private drawMillstone(x: number, y: number, name: string): void {
-    const g = this.mapGfx;
-    if (name === MILL_CLIFTON) {
-      g.lineStyle(11, PALETTE.teamDownEdge, 0.95);
-      g.strokeCircle(x, y, 42);
-      g.lineStyle(8, PALETTE.teamDown, 1);
-      g.strokeCircle(x, y, 42);
-    } else {
-      const segs = 8;
-      for (let i = 0; i < segs; i++) {
-        const a0 = (i / segs) * Math.PI * 2 - Math.PI / 2;
-        const a1 = ((i + 1) / segs) * Math.PI * 2 - Math.PI / 2;
-        g.lineStyle(10, i % 2 === 0 ? PALETTE.teamUp : PALETTE.teamUpTrim, 0.95);
-        g.beginPath();
-        g.arc(x, y, 42, a0, a1, false);
-        g.strokePath();
-      }
-    }
-    g.fillStyle(PALETTE.millstone, 1);
-    g.fillCircle(x, y, 22);
-    g.lineStyle(4, PALETTE.millstoneEdge, 1);
-    g.strokeCircle(x, y, 22);
-    g.strokeCircle(x, y, 12);
-    g.fillStyle(PALETTE.millstoneEdge, 1);
-    g.fillCircle(x, y, 4);
   }
 
   /** Placeholder Ashbourne turn-up plinth — render only, no collision. */
