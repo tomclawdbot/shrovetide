@@ -26,6 +26,7 @@ import {
   opponentGoalFor,
   passChargeRatio,
   placeTeammate,
+  pointInRiver,
   quickSwitch,
   releasePass,
   RIP_MIN_STAMINA,
@@ -41,6 +42,7 @@ import {
   type Difficulty,
   type Input,
   type Obstacle,
+  type RiverPath,
   type Team,
   type World,
 } from '../sim/index.js';
@@ -226,20 +228,38 @@ const LANDMARK_SPRITE_IDS = [
   'high-st-4',
   'high-st-5',
   'high-st-6',
+  'high-st-7',
+  'high-st-8',
+  'high-st-9',
+  'high-st-10',
+  'high-st-11',
+  'high-st-12',
+  'high-st-13',
+  'high-st-14',
   'market-row-1',
   'market-row-2',
+  'market-row-3',
   'dig-st-1',
   'dig-st-2',
+  'dig-st-3',
   'compton-1',
   'compton-2',
+  'compton-3',
+  'compton-4',
+  'compton-5',
+  'compton-6',
+  'compton-7',
   'clifton-1',
   'clifton-2',
   'clifton-3',
   'clifton-4',
+  'clifton-5',
   'sturston-1',
   'sturston-2',
   'sturston-3',
   'sturston-4',
+  'sturston-5',
+  'sturston-6',
 ] as const;
 
 const LANDMARK_TEX_PREFIX = 'landmark-';
@@ -440,28 +460,39 @@ function segIntersect(
   return { x: a.x + t * rx, y: a.y + t * ry };
 }
 
-/** Clip a segment to an inclusive Y band. Used to keep grass verge off the brook. */
-function clipSegY(
+/**
+ * Split a road segment into the sub-segments that lie outside the (bent)
+ * river strip, by walking it in short steps. Used to keep the grass verge
+ * off the brook without assuming a horizontal band.
+ */
+function segmentRunsOutsideRiver(
   a: { x: number; y: number },
   b: { x: number; y: number },
-  minY: number,
-  maxY: number,
-): [{ x: number; y: number }, { x: number; y: number }] | null {
-  const dy = b.y - a.y;
-  const dx = b.x - a.x;
-  if (Math.abs(dy) < 1e-6) {
-    if (a.y < minY || a.y > maxY) return null;
-    return [a, b];
+  river: RiverPath,
+  step = 14,
+): [{ x: number; y: number }, { x: number; y: number }][] {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1e-6) return pointInRiver(a, river) ? [] : [[a, b]];
+  const n = Math.max(1, Math.ceil(len / step));
+  const pts: { x: number; y: number; inside: boolean }[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    pts.push({ ...p, inside: pointInRiver(p, river) });
   }
-  const tMin = (minY - a.y) / dy;
-  const tMax = (maxY - a.y) / dy;
-  const t0 = Math.max(0, Math.min(tMin, tMax));
-  const t1 = Math.min(1, Math.max(tMin, tMax));
-  if (t0 >= t1) return null;
-  return [
-    { x: a.x + dx * t0, y: a.y + dy * t0 },
-    { x: a.x + dx * t1, y: a.y + dy * t1 },
-  ];
+  const runs: [{ x: number; y: number }, { x: number; y: number }][] = [];
+  let start: { x: number; y: number } | null = null;
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i]!;
+    if (!pt.inside) {
+      if (!start) start = pt;
+    } else if (start) {
+      runs.push([start, pts[i - 1]!]);
+      start = null;
+    }
+  }
+  if (start) runs.push([start, pts[pts.length - 1]!]);
+  return runs.filter(([ra, rb]) => Math.hypot(rb.x - ra.x, rb.y - ra.y) > 1);
 }
 
 function buildTag(build: Build): string {
@@ -1003,13 +1034,7 @@ export class GameScene extends Phaser.Scene {
     this.drawForests(rand);
     this.drawApproachMud();
 
-    const rx = map.river.position.x - map.river.width / 2;
-    const ry = map.river.position.y - map.river.height / 2;
-    this.mapGfx.fillStyle(PALETTE.water, 1);
-    this.mapGfx.fillRect(rx, ry, map.river.width, map.river.height);
-    this.mapGfx.fillStyle(PALETTE.waterEdge, 0.6);
-    this.mapGfx.fillRect(rx, ry, map.river.width, 10);
-    this.mapGfx.fillRect(rx, ry + map.river.height - 10, map.river.width, 10);
+    this.drawRiver();
 
     this.drawStoneBridgeDecks();
     this.drawRoads(rand);
@@ -1104,6 +1129,28 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Henmore — a bent water strip (diagonal run, soft bends, one oxbow), not a fat slab. */
+  private drawRiver(): void {
+    const g = this.mapGfx;
+    const river = this.world.map.river;
+    const poly = mitredStripPolygon(river.points, river.width);
+    if (!poly || poly.length < 4) return;
+    g.fillStyle(PALETTE.water, 1);
+    g.beginPath();
+    g.moveTo(poly[0]!.x, poly[0]!.y);
+    for (let i = 1; i < poly.length; i++) g.lineTo(poly[i]!.x, poly[i]!.y);
+    g.closePath();
+    g.fillPath();
+    // Soft edge band along both banks — reads on a bend the same way the
+    // old top/bottom highlight rects did on the flat slab.
+    g.lineStyle(10, PALETTE.waterEdge, 0.6);
+    g.beginPath();
+    g.moveTo(poly[0]!.x, poly[0]!.y);
+    for (let i = 1; i < poly.length; i++) g.lineTo(poly[i]!.x, poly[i]!.y);
+    g.closePath();
+    g.strokePath();
+  }
+
   /** English woodland mass — overlapping canopy, readable as a tree block. */
   private drawForests(rand: () => number): void {
     const g = this.mapGfx;
@@ -1152,8 +1199,6 @@ export class GameScene extends Phaser.Scene {
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
     const river = this.world.map.river;
-    const riverTop = river.position.y - river.height / 2;
-    const riverBot = river.position.y + river.height / 2;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
@@ -1161,11 +1206,7 @@ export class GameScene extends Phaser.Scene {
       for (let i = 0; i < road.points.length - 1; i++) {
         const a = road.points[i]!;
         const b = road.points[i + 1]!;
-        for (const band of [
-          clipSegY(a, b, -1e6, riverTop),
-          clipSegY(a, b, riverBot, 1e6),
-        ]) {
-          if (!band) continue;
+        for (const band of segmentRunsOutsideRiver(a, b, river)) {
           this.drawMitredStrip(
             g,
             band,
@@ -1648,7 +1689,7 @@ export class GameScene extends Phaser.Scene {
       const deck = roadW + wall * 2;
       const pier = 22;
       const archW = roadW + 36;
-      const riverH = river.height;
+      const riverH = river.width;
       const by = y - h / 2;
       // Piers sit in the brook beside the carriageway, not as a wide stone plaza.
       for (const side of [-1, 1]) {
@@ -3930,13 +3971,15 @@ export class GameScene extends Phaser.Scene {
         Math.max(1.5, h.height * sy),
       );
     }
-    g.fillStyle(PALETTE.water, 0.9);
-    g.fillRect(
-      ox,
-      oy + (map.river.position.y - map.river.height / 2) * sy,
-      MINIMAP_W,
-      map.river.height * sy,
-    );
+    if (map.river.points.length >= 2) {
+      g.lineStyle(Math.max(2, map.river.width * ((sx + sy) / 2)), PALETTE.water, 0.9);
+      g.beginPath();
+      g.moveTo(ox + map.river.points[0]!.x * sx, oy + map.river.points[0]!.y * sy);
+      for (let i = 1; i < map.river.points.length; i++) {
+        g.lineTo(ox + map.river.points[i]!.x * sx, oy + map.river.points[i]!.y * sy);
+      }
+      g.strokePath();
+    }
 
     g.fillStyle(PALETTE.building, 0.85);
     for (const b of map.obstacles) {

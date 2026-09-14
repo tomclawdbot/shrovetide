@@ -26,6 +26,8 @@ import {
   isInHedgeSlow,
   isInObstacle,
   isInWater,
+  isNorthOfRiver,
+  riverYAt,
   distanceToRoad,
   distToSegment,
   isNearRoad,
@@ -909,7 +911,10 @@ test('map: roads link the high street and stay soft (fields stay playable)', () 
   assert.equal(isOnRoad(map.turnUp, map), true, 'turn-up sits on the centre-bridge road');
 
   for (const b of map.obstacles.filter(isBuilding)) {
-    assert.ok(isNearRoad(b.position, map, 90), `${b.name} should front a road`);
+    // Civic landmarks (~30% bigger, Tom 2026-09-14) sit deeper off the
+    // carriageway once FRONT_GAP is measured from a taller footprint's centre.
+    const pad = isCivicBuilding(b) ? 150 : 90;
+    assert.ok(isNearRoad(b.position, map, pad), `${b.name} should front a road`);
   }
 
   // Roads are not collision and do not slow — hug can leave onto the fields.
@@ -1077,8 +1082,7 @@ test('map: Ashbourne core and mill villages have house fabric', () => {
   const map = ASHBOURNE_TOWN;
   const houses = map.obstacles.filter((o) => isBuilding(o) && o.kind === 'house');
   assert.ok(houses.length >= 12, `expected terrace/cottage fabric, got ${houses.length}`);
-  const riverY = map.river.position.y;
-  const core = houses.filter((h) => h.position.y < riverY && h.position.x > 700 * TOWN_SCALE && h.position.x < 1800 * TOWN_SCALE);
+  const core = houses.filter((h) => isNorthOfRiver(h.position, map) && h.position.x > 700 * TOWN_SCALE && h.position.x < 1800 * TOWN_SCALE);
   assert.ok(core.length >= 6, `core should read as a town, got ${core.length} houses`);
   const clifton = map.goals.find((g) => g.name === MILL_CLIFTON)!.position;
   const sturston = map.goals.find((g) => g.name === MILL_STURSTON)!.position;
@@ -1118,13 +1122,12 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.equal(byKind.hall!.id, 'town-hall');
   assert.equal(byKind.trailhead!.id, 'the-baths');
 
-  const riverY = map.river.position.y;
-  assert.ok(byKind.church!.position.y < riverY, 'church sits north of the Henmore');
+  assert.ok(isNorthOfRiver(byKind.church!.position, map), 'church sits north of the Henmore');
   assert.ok(byKind.church!.position.x < map.width * 0.35, 'church reads on the Clifton / west side');
-  assert.ok(byKind.school!.position.y < riverY, 'school sits north of the Henmore');
-  assert.ok(byKind.market!.position.y < riverY, 'market sits north of the Henmore (historic core)');
-  assert.ok(byKind.hall!.position.y < riverY, 'town hall sits on the square, north of the brook');
-  assert.ok(byKind.trailhead!.position.y < riverY, 'trailhead is on the north cutting');
+  assert.ok(isNorthOfRiver(byKind.school!.position, map), 'school sits north of the Henmore');
+  assert.ok(isNorthOfRiver(byKind.market!.position, map), 'market sits north of the Henmore (historic core)');
+  assert.ok(isNorthOfRiver(byKind.hall!.position, map), 'town hall sits on the square, north of the brook');
+  assert.ok(isNorthOfRiver(byKind.trailhead!.position, map), 'trailhead is on the north cutting');
   assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
   assert.ok(byKind.church!.position.x < byKind.market!.position.x, 'St Oswald’s reads west of the square');
   assert.ok(byKind.trailhead!.position.y < byKind.market!.position.y, 'Baths / trail sit toward the north edge');
@@ -1146,7 +1149,7 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(greenMan, 'The Green Man pub keeps its footprint');
   assert.equal(placeById['green-man']!.position.x, greenMan!.position.x);
   assert.equal(placeById['green-man']!.position.y, greenMan!.position.y);
-  assert.ok(placeById['market-place']!.position.y < riverY, 'Market Place is north of the brook');
+  assert.ok(isNorthOfRiver(placeById['market-place']!.position, map), 'Market Place is north of the brook');
 
   for (const goal of map.goals) {
     assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
@@ -1261,7 +1264,8 @@ test('map: hedge speed is slower than river speed', () => {
   const map = ASHBOURNE_TOWN;
   const hedge = map.hedges[0]!;
   const hedgePt = { ...hedge.position };
-  const riverPt = { x: map.bridges[0]!.position.x + 280, y: map.river.position.y };
+  const riverX = map.bridges[0]!.position.x + 280;
+  const riverPt = { x: riverX, y: riverYAt(riverX, map.river) };
   const bridgePt = { ...map.bridges[1]!.position };
   const grass = { x: map.width * 0.70, y: map.height * 0.82 };
 
@@ -1292,7 +1296,7 @@ test('feel: hedge crawl covers less ground than a river wade', () => {
   assert.equal(isInHedgeSlow(hedgeWorld.player.position, hedgeWorld.map), true);
 
   const riverX = riverWorld.map.bridges[0]!.position.x + 280;
-  const riverY = riverWorld.map.river.position.y;
+  const riverY = riverYAt(riverX, riverWorld.map.river);
   parkIsolated(riverWorld, riverX, riverY);
   assert.equal(isInWater(riverWorld.player.position, riverWorld.map), true);
 

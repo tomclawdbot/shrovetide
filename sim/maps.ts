@@ -113,6 +113,18 @@ export interface GoalMarker {
   name: MillName;
 }
 
+/**
+ * Henmore centerline — a bent polyline strip (diagonal run, soft bends, one
+ * oxbow loop) rather than a single axis-aligned slab. `width` is the full
+ * water breadth measured perpendicular to the local run.
+ */
+export interface RiverPath {
+  /** Vertices in sim space. Consecutive points form the strip's segments. */
+  points: Vec2Like[];
+  /** Full width of the water strip. */
+  width: number;
+}
+
 export interface Bridge extends RectZone {}
 
 /**
@@ -157,8 +169,8 @@ export interface TownMap {
   obstacles: Obstacle[];
   /** Players can't enter with or without ball. Ball entering → teleport to nearest legal point. */
   outOfBounds: RectZone[];
-  /** Water zone. Slow movement (RIVER_SPEED_MULT) unless on a bridge. */
-  river: RectZone;
+  /** Henmore water strip. Slow movement (RIVER_SPEED_MULT) unless on a bridge. */
+  river: RiverPath;
   /** Walkable segments crossing the river. Fast movement. */
   bridges: Bridge[];
   /**
@@ -220,8 +232,12 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
 
 /** Buildings move with the parish but do not become fortresses. */
 const BUILDING_SIZE = 1.25;
-/** Civic massing reads from a screenshot without walling off hug routes. */
-const LANDMARK_SIZE = 1.65;
+/**
+ * Civic massing reads from a screenshot without walling off hug routes.
+ * ~30% bigger than pubs/shops/houses so church/school/halls read as
+ * destinations, not just larger cottages (Tom 2026-09-14).
+ */
+const LANDMARK_SIZE = 2.15;
 function sbuilding(
   x: number,
   y: number,
@@ -439,6 +455,29 @@ function sroad(
       opts.smooth ?? 0,
     ),
   };
+}
+
+/**
+ * Points around an arc, design-space. Used once to build the Henmore's oxbow
+ * meander — a near-closed loop off the main run, entry and exit left as a
+ * narrow neck rather than fully closing (a real oxbow cutoff loop).
+ */
+function arcPoints(
+  cx: number,
+  cy: number,
+  r: number,
+  startDeg: number,
+  endDeg: number,
+  steps: number,
+): Vec2Like[] {
+  const out: Vec2Like[] = [];
+  const a0 = (startDeg * Math.PI) / 180;
+  const a1 = (endDeg * Math.PI) / 180;
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + ((a1 - a0) * i) / steps;
+    out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return out;
 }
 
 function sroundabout(x: number, y: number, radius: number, island: number): Roundabout {
@@ -737,29 +776,71 @@ const TOWN_FORESTS: ForestStand[] = [
   srect(30, 1040, 100, 280),
 ];
 
+/**
+ * Henmore centerline — SW to NE diagonal with soft bends and one oxbow
+ * meander (Tom 2026-09-14). The WEST_X/CENTRE_X/EAST_X crossings are exact
+ * vertices so the N–S roads (and their bridges) land on the water without
+ * drift. The loop sits between the centre and east bridges, in the open
+ * ground north of the field hedges and south of the high-street shopfronts —
+ * the only gap wide enough for a full meander.
+ */
+const RIVER_WIDTH = 60;
+const RIVER_WEST_Y = 900;
+const RIVER_CENTRE_Y = 860;
+const RIVER_EAST_Y = 900;
+
+const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
+  [0, 960],
+  [60, 915],
+  [280, 900],
+  [400, RIVER_WEST_Y],
+  [520, 900],
+  [650, 895],
+  [850, 880],
+  [1000, 865],
+  [1200, RIVER_CENTRE_Y],
+  [1400, 880],
+];
+/** Oxbow loop — a near-closed meander with a narrow neck, not a full circle. */
+const TOWN_RIVER_LOOP: Vec2Like[] = arcPoints(1750, 840, 75, 200, 520, 24);
+const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
+  [1900, 900],
+  [2000, RIVER_EAST_Y],
+  [2060, 895],
+  [2200, 890],
+  [2300, 830],
+  [2400, 700],
+];
+
+const TOWN_RIVER: RiverPath = {
+  points: [
+    ...TOWN_RIVER_RUN_A.map(([x, y]) => sxy(x, y)),
+    ...TOWN_RIVER_LOOP.map((p) => sxy(p.x, p.y)),
+    ...TOWN_RIVER_RUN_B.map(([x, y]) => sxy(x, y)),
+  ],
+  width: sx(RIVER_WIDTH),
+};
+
+const TOWN_BRIDGES: Bridge[] = [
+  srect(400, RIVER_WEST_Y, 44, 150),
+  srect(1200, RIVER_CENTRE_Y, 52, 150),
+  srect(2000, RIVER_EAST_Y, 44, 150),
+];
+
 function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
-  const riverY = sx(880);
-  const riverH = sx(58);
-  // Deck half-widths track the (now road-matched, narrow) bridge collars —
-  // a lamp only reads as "on deck" if it would actually stand on the span.
-  const decks = [
-    { x: sx(400), half: sx(22) },
-    { x: sx(1200), half: sx(26) },
-    { x: sx(2000), half: sx(22) },
-  ];
   const stones = [sxy(140, 790), sxy(2260, 790)];
   const extra = [
-    slight(400, 766),
-    slight(2000, 766),
-    slight(1200, 808),
-    slight(1200, 952),
+    slight(400, 810),
+    slight(2000, 810),
+    slight(1200, 800),
+    slight(1200, 920),
     slight(1660, 160),
     slight(1200, 600),
   ];
   return [...lamps, ...extra].filter((l) => {
-    const inRiver = Math.abs(l.position.y - riverY) < riverH;
-    const onDeck = decks.some((d) => Math.abs(l.position.x - d.x) < d.half);
+    const inRiver = pointInRiver(l.position, TOWN_RIVER);
+    const onDeck = TOWN_BRIDGES.some((b) => pointInRect(l.position, b));
     if (inRiver && !onDeck) return false;
     for (const g of stones) {
       if (Math.hypot(l.position.x - g.x, l.position.y - g.y) < 48) return false;
@@ -865,13 +946,9 @@ export const ASHBOURNE_TOWN: TownMap = {
     srect(2220, 1420, 220, 220),
   ],
 
-  river: srect(1200, 880, 2400, 120),
+  river: TOWN_RIVER,
 
-  bridges: [
-    srect(400, 880, 44, 150),
-    srect(1200, 880, 52, 150),
-    srect(2000, 880, 44, 150),
-  ],
+  bridges: TOWN_BRIDGES,
 
   roundabouts: TOWN_ROUNDABOUTS,
 
@@ -896,7 +973,7 @@ export const ASHBOURNE_TOWN: TownMap = {
     { team: 1, name: MILL_STURSTON, position: sxy(2260, 790) },
   ],
 
-  turnUp: sxy(1200, 880),
+  turnUp: sxy(1200, RIVER_CENTRE_Y),
 };
 
 // ---------------------------------------------------------------------------
@@ -932,9 +1009,50 @@ export function isInObstacle(p: Vec2Like, map: TownMap): boolean {
   return false;
 }
 
-/** True iff the point lies in the river (any rect — currently one). */
+/** True iff the point lies within `river.width` of the Henmore centerline. */
+export function pointInRiver(p: Vec2Like, river: RiverPath): boolean {
+  const half = river.width / 2;
+  for (let i = 0; i < river.points.length - 1; i++) {
+    if (distToSegment(p, river.points[i]!, river.points[i + 1]!) <= half) return true;
+  }
+  return false;
+}
+
+/** True iff the point lies in the river. */
 export function isInRiver(p: Vec2Like, map: TownMap): boolean {
-  return pointInRect(p, map.river);
+  return pointInRiver(p, map.river);
+}
+
+/**
+ * Local Henmore centerline y at a given x — linear interpolation across the
+ * nearest crossing segment (narrowest x-span, to favour a steep local crossing
+ * over a long near-horizontal reach when the oxbow loop crosses the same x
+ * twice). Used for "north of the brook" placement checks, not collision.
+ */
+export function riverYAt(x: number, river: RiverPath): number {
+  let best: number | null = null;
+  let bestSpan = Infinity;
+  for (let i = 0; i < river.points.length - 1; i++) {
+    const a = river.points[i]!;
+    const b = river.points[i + 1]!;
+    const lo = Math.min(a.x, b.x);
+    const hi = Math.max(a.x, b.x);
+    if (x < lo || x > hi) continue;
+    const span = hi - lo;
+    if (span < 1e-6) continue;
+    const t = (x - a.x) / (b.x - a.x);
+    const y = a.y + t * (b.y - a.y);
+    if (span < bestSpan) {
+      bestSpan = span;
+      best = y;
+    }
+  }
+  return best ?? river.points[0]!.y;
+}
+
+/** True iff the point sits north of the local Henmore bank (historic core side). */
+export function isNorthOfRiver(p: Vec2Like, map: TownMap): boolean {
+  return p.y < riverYAt(p.x, map.river);
 }
 
 /** True iff the point lies on any bridge. */
