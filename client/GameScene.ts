@@ -1269,54 +1269,44 @@ export class GameScene extends Phaser.Scene {
     this.drawRiverBanks(river);
   }
 
-  /** Mud + grass + stone flecks just outside both Henmore banks — readable at play zoom. */
+  /**
+   * Soft continuous mud→grass bank edge along both Henmore banks.
+   * Thick stroked polylines (gentle wobble) break the flat water/grass join
+   * without blotchy fleck/acne spam. Field grit stays separate.
+   */
   private drawRiverBanks(river: RiverPath): void {
     const g = this.mapGfx;
     const points = river.points;
     if (points.length < 2) return;
     const hw = river.width / 2;
-    let s = 0x5a3d28;
-    const rand = (): number => {
-      s = (s + 0x6d2b79f5) >>> 0;
-      let t = s;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    // Denser than the first pass — still irregular, not a dashed grid.
-    const step = 11;
-    for (const side of [1, -1] as const) {
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i]!;
-        const b = points[i + 1]!;
-        const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-        if (segLen < 1e-6) continue;
-        const tx = (b.x - a.x) / segLen;
-        const ty = (b.y - a.y) / segLen;
-        const nx = -ty * side;
-        const ny = tx * side;
-        const n = Math.max(1, Math.round(segLen / step));
-        for (let j = 0; j < n; j++) {
-          const t = (j + 0.5) / n;
-          const px = a.x + (b.x - a.x) * t;
-          const py = a.y + (b.y - a.y) * t;
-          const offset = hw + 2 + rand() * 8;
-          const bx = px + nx * offset;
-          const by = py + ny * offset;
-          g.fillStyle(rand() > 0.5 ? PALETTE.mud : PALETTE.mudDark, 0.5 + rand() * 0.22);
-          g.fillEllipse(bx + (rand() - 0.5) * 8, by + (rand() - 0.5) * 8, 14 + rand() * 14, 7 + rand() * 7);
-          if (rand() > 0.22) {
-            g.fillStyle(rand() > 0.5 ? PALETTE.grass : PALETTE.grassAlt, 0.72);
-            const fx = bx + nx * (3 + rand() * 7);
-            const fy = by + ny * (3 + rand() * 7);
-            g.fillRect(fx, fy, 3, 7 + rand() * 6);
-          }
-          if (rand() > 0.5) {
-            g.fillStyle(PALETTE.stoneDark, 0.72);
-            g.fillCircle(bx + (rand() - 0.5) * 10, by + (rand() - 0.5) * 10, 2.2 + rand() * 2.4);
-          }
-        }
+    const strokeBank = (
+      side: 1 | -1,
+      baseDist: number,
+      width: number,
+      color: number,
+      alpha: number,
+    ): void => {
+      const path: { x: number; y: number }[] = [];
+      for (let i = 0; i < points.length; i++) {
+        const t = polyTangent(points, i);
+        // Low-frequency wobble — organic edge, not noise flecks.
+        const wobble = Math.sin(i * 0.47) * 2.8 + Math.sin(i * 1.17 + side) * 1.4;
+        const dist = side * (hw + baseDist + wobble);
+        path.push({ x: points[i]!.x - t.y * dist, y: points[i]!.y + t.x * dist });
       }
+      g.lineStyle(width, color, alpha);
+      g.beginPath();
+      g.moveTo(path[0]!.x, path[0]!.y);
+      for (let i = 1; i < path.length; i++) g.lineTo(path[i]!.x, path[i]!.y);
+      g.strokePath();
+    };
+    for (const side of [1, -1] as const) {
+      // Mud shelf just outside the water edge.
+      strokeBank(side, 5, 16, PALETTE.mud, 0.34);
+      strokeBank(side, 7, 9, PALETTE.mudDark, 0.2);
+      // Soft grass fray further out — continuous transition into the pitch.
+      strokeBank(side, 14, 13, PALETTE.grassDark, 0.26);
+      strokeBank(side, 18, 8, PALETTE.grass, 0.16);
     }
   }
 

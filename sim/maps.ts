@@ -740,12 +740,9 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(800, 1420, 480, 280, 26, {}, 56, { e: true }),
   ...parcelHedges(1280, 1420, 480, 280, 26, {}, 56, { e: true }),
   ...parcelHedges(1760, 1420, 480, 280, 26),
-  // Goal approach — hedges flank the Sturston mud/grass mill corridor, clear of the stone.
-  // Clifton (stone ~ (160, 1010), riverside west of x=400) is left open — no goal hedges,
-  // so the riverside millstone stays reachable across mud/grass without a hedge gate.
-  // Sturston stone ~ (2260, 768).
-  srect(2045, 732, 270, 22),
-  srect(2045, 804, 270, 18),
+  // Both mill approaches stay open mud/grass — no goal-flank hedges.
+  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 768). Parcel hedges above
+  // still bound the pitch fields; riverside stones stay reachable without a hedge gate.
 ];
 
 /**
