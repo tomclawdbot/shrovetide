@@ -248,10 +248,10 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
 const BUILDING_SIZE = 1.25;
 /**
  * Civic massing reads from a screenshot without walling off hug routes.
- * ~30% bigger than pubs/shops/houses so church/school/halls read as
- * destinations, not just larger cottages (Tom 2026-09-14).
+ * Second +30% on civic only (2.15 → ~2.795) so church/school/halls read
+ * as destinations at play zoom (Tom 2026-09-14 evening).
  */
-const LANDMARK_SIZE = 2.15;
+const LANDMARK_SIZE = 2.795;
 function sbuilding(
   x: number,
   y: number,
