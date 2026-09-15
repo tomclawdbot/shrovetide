@@ -727,11 +727,11 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1760, 1400, 480, 320, 26),
   // Goal approaches — hedges flank the mud/grass mill corridors, clear of the stones.
-  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 805) — both riverside.
+  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 768) — both riverside.
   srect(355, 974, 270, 22),
   srect(355, 1046, 270, 18),
-  srect(2045, 769, 270, 22),
-  srect(2045, 841, 270, 18),
+  srect(2045, 732, 270, 22),
+  srect(2045, 804, 270, 18),
 ];
 
 /**
@@ -815,6 +815,10 @@ const TOWN_RIVER_HAIRPIN: ReadonlyArray<readonly [number, number]> = [
  * East bridge then NE off-map — stays clear of the high street (y=660,
  * half-width 26) all the way to the east frame edge (x=2400) before
  * turning north, so no centerline sample near the map edge lands in water.
+ * The x≈2220–2320 stretch also threads the Sturston millstone clearance
+ * test (riverside, ≥72 design-px from (2260,768)) — a narrow but exact
+ * (not sampled) window, so don't nudge these y-values without re-checking
+ * both constraints.
  */
 const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
   [2000, RIVER_EAST_Y],
@@ -822,9 +826,10 @@ const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
   [2220, 696],
   [2320, 693],
   [2400, 701],
-  [2480, 600],
-  [2580, 420],
-  [2680, 280],
+  [2560, 696],
+  [2660, 600],
+  [2760, 450],
+  [2860, 300],
 ];
 
 const TOWN_RIVER: RiverPath = {
@@ -844,7 +849,7 @@ const TOWN_BRIDGES: Bridge[] = [
 
 function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
-  const stones = [sxy(160, 1010), sxy(2260, 805)];
+  const stones = [sxy(160, 1010), sxy(2260, 768)];
   const extra = [
     slight(400, 940),
     slight(2000, 690),
@@ -986,7 +991,7 @@ export const ASHBOURNE_TOWN: TownMap = {
   goals: [
     // Riverside / near bank (not mid-channel). Clearance ≥ half-width + ~42.
     { team: 0, name: MILL_CLIFTON, position: sxy(160, 1010) },
-    { team: 1, name: MILL_STURSTON, position: sxy(2260, 805) },
+    { team: 1, name: MILL_STURSTON, position: sxy(2260, 768) },
   ],
 
   turnUp: sxy(1200, RIVER_CENTRE_Y),
