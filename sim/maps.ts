@@ -699,9 +699,9 @@ const TOWN_FIELDS: FieldParcel[] = [
   // North-east of the trail.
   sfield(2100, 200, 480, 280),
   // Between Henmore south bank and Compton (cells between the N–S columns).
-  // North edge stays put (980, matching the original bank line); enlarged by
-  // running the full depth down to the south-of-Compton row (touch at 1240).
-  sfield(220, 1110, 280, 260),
+  // West cell shifted south of the diagonal west crossing (dry grass centre);
+  // others keep the original bank line packing north of Compton fabric.
+  sfield(220, 1300, 280, 200),
   sfield(700, 1110, 520, 260),
   sfield(1600, 1110, 720, 260),
   sfield(2200, 1110, 320, 260),
@@ -718,7 +718,7 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(1290, 280, 660, 400, 26),
   ...parcelHedges(2100, 200, 480, 280, 26),
   // South edge skipped — shares its line with the south-of-Compton row's north hedge.
-  ...parcelHedges(220, 1110, 280, 260, 24, {}, 56, { s: true }),
+  ...parcelHedges(220, 1300, 280, 200, 24, {}, 56, { s: true }),
   ...parcelHedges(700, 1110, 520, 260, 24, {}, 56, { s: true }),
   ...parcelHedges(1600, 1110, 720, 260, 24, {}, 56, { s: true }),
   ...parcelHedges(2200, 1110, 320, 260, 24),
@@ -745,8 +745,10 @@ const TOWN_FORESTS: ForestStand[] = [
 ];
 
 /**
- * Henmore centerline — SW to NE diagonal with soft bends and one tight
- * hairpin switchback (Tom 2026-09-14: "hairpin, not oxbow"). The
+ * Henmore centerline — a real SW→NE diagonal (bottom-left to upper-right),
+ * not a flat east–west slab, with soft bends and one tight hairpin
+ * switchback (Tom 2026-09-14: "hairpin, not oxbow"). Endpoints run off-map
+ * on both ends (no rectangular stub inside the frame). The
  * WEST_X/CENTRE_X/EAST_X crossings are exact vertices so the N–S roads (and
  * their bridges) land on the water without drift. The hairpin sits between
  * the centre and east bridges, in the open ground north of the field hedges
@@ -754,50 +756,59 @@ const TOWN_FORESTS: ForestStand[] = [
  * sides so the U-turn reads as a sharp kink, not a lake.
  */
 const RIVER_WIDTH = 60;
-const RIVER_WEST_Y = 900;
-const RIVER_CENTRE_Y = 860;
-const RIVER_EAST_Y = 900;
+const RIVER_WEST_Y = 1020;
+const RIVER_CENTRE_Y = 880;
+const RIVER_EAST_Y = 740;
 
+/** Off-map SW entry through the west bridge and on to the centre bridge. */
 const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
-  [0, 960],
-  [60, 915],
-  [280, 900],
+  [-160, 1240],
+  [-40, 1185],
+  [100, 1135],
+  [260, 1075],
   [400, RIVER_WEST_Y],
-  [520, 900],
-  [650, 895],
-  [850, 880],
-  [1000, 865],
+  [560, 980],
+  [720, 940],
+  [900, 905],
+  [1060, 888],
   [1200, RIVER_CENTRE_Y],
-  [1400, 880],
+  [1320, 862],
+  [1420, 848],
 ];
 /**
- * Hairpin switchback — approach the turn, a tight 180° U (radius 50) with
- * two ~100-apart legs, then continue NE. Open U, not a near-closed loop:
- * the banks stay ~80 sim px clear of each other at the tip, and the apex
- * (y=750) sits well south of the high street (y=660) with room to spare.
+ * Hairpin switchback — tight U with a brief westward reverse (keep the
+ * ed0f972 hairpin shape), tilted onto the SW→NE diagonal so the run does
+ * not flatten to an E–W slab. Open U, not a closed oxbow: banks stay clear
+ * at the tip. Apex stays south of the high street (y=660).
  */
 const TOWN_RIVER_HAIRPIN: ReadonlyArray<readonly [number, number]> = [
-  [1520, 858],
-  [1620, 830],
-  [1650, 800],
-  [1654, 781],
-  [1665, 765],
-  [1681, 754],
-  [1700, 750],
-  [1719, 754],
-  [1735, 765],
-  [1746, 781],
-  [1750, 800],
-  [1780, 828],
-  [1830, 858],
+  // Approach NE along the diagonal, then tight U with a brief westward reverse
+  // (ed0f972 hairpin kept, tilted onto the SW→NE slope — not flattened).
+  [1500, 835],
+  [1600, 805],
+  [1680, 770],
+  [1740, 735],
+  [1765, 700],
+  [1740, 680],
+  [1690, 675],
+  [1630, 690],
+  [1590, 725],
+  [1585, 765],
+  [1635, 800],
+  [1710, 810],
+  [1800, 790],
 ];
+/** East bridge then NE off-map — stay south of high street (y=660) until near/past the frame. */
 const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
-  [1900, 900],
+  [1880, 770],
   [2000, RIVER_EAST_Y],
-  [2060, 895],
-  [2200, 890],
-  [2300, 830],
-  [2400, 700],
+  [2100, 720],
+  [2220, 700],
+  [2320, 680],
+  [2420, 650],
+  [2520, 540],
+  [2620, 430],
+  [2720, 320],
 ];
 
 const TOWN_RIVER: RiverPath = {
@@ -819,10 +830,10 @@ function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
   const stones = [sxy(140, 790), sxy(2260, 790)];
   const extra = [
-    slight(400, 810),
-    slight(2000, 810),
-    slight(1200, 800),
-    slight(1200, 920),
+    slight(400, 940),
+    slight(2000, 690),
+    slight(1200, 820),
+    slight(1200, 940),
     slight(1660, 160),
     slight(1200, 600),
   ];

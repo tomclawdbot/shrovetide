@@ -260,6 +260,7 @@ const LANDMARK_SPRITE_IDS = [
   'sturston-4',
   'sturston-5',
   'sturston-6',
+  'millstone',
 ] as const;
 
 const LANDMARK_TEX_PREFIX = 'landmark-';
@@ -1080,7 +1081,15 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const g of map.goals) {
-      this.drawMillstone(g.position.x, g.position.y, g.name);
+      const size = this.landmarkNativeSize('millstone');
+      this.placeLandmarkSprite(
+        'millstone',
+        g.position.x,
+        g.position.y,
+        size?.w ?? 96,
+        size?.h ?? 96,
+        LANDMARK_GROUND_DEPTH,
+      );
       const label = this.add
         .text(g.position.x, g.position.y + 58, g.name.toUpperCase(), {
           fontFamily: FONT,
@@ -1768,63 +1777,6 @@ export class GameScene extends Phaser.Scene {
       g.fillRect(x - 6, y - 26, 12, 10);
       g.fillStyle(PALETTE.lampGlass, 0.85);
       g.fillRect(x - 4, y - 24, 8, 6);
-    }
-  }
-
-  /**
-   * Dressed millstone — a flat stone disk with an axle eye and dressing
-   * furrows, not a team-coloured ring. Team identity is a subtle paint mark
-   * on the face: Sturston (Up) gets small blue/yellow dabs near the rim,
-   * Clifton (Down) gets short black paint arcs.
-   */
-  private drawMillstone(x: number, y: number, name: string): void {
-    const g = this.mapGfx;
-    const R = 40;
-    g.fillStyle(PALETTE.shadow, 0.28);
-    g.fillEllipse(x + 3, y + R * 0.55, R * 1.9, R * 0.8);
-    // Stone edge peeks out below the face for a thickness cue.
-    g.fillStyle(PALETTE.millstoneEdge, 1);
-    g.fillCircle(x, y + 3, R);
-    g.fillStyle(PALETTE.millstone, 1);
-    g.fillCircle(x, y, R);
-    g.lineStyle(3, PALETTE.millstoneEdge, 0.9);
-    g.strokeCircle(x, y, R);
-    // Concentric dressing furrows.
-    g.lineStyle(1.5, PALETTE.millstoneEdge, 0.35);
-    g.strokeCircle(x, y, R * 0.72);
-    g.strokeCircle(x, y, R * 0.46);
-    // Radial dressing grooves.
-    const spokes = 12;
-    g.lineStyle(1.5, PALETTE.millstoneEdge, 0.3);
-    for (let i = 0; i < spokes; i++) {
-      const a = (i / spokes) * Math.PI * 2;
-      g.lineBetween(
-        x + Math.cos(a) * R * 0.22,
-        y + Math.sin(a) * R * 0.22,
-        x + Math.cos(a) * R * 0.92,
-        y + Math.sin(a) * R * 0.92,
-      );
-    }
-    // Axle eye.
-    g.fillStyle(PALETTE.millstoneEdge, 1);
-    g.fillCircle(x, y, R * 0.16);
-    g.fillStyle(0x000000, 0.35);
-    g.fillCircle(x, y, R * 0.1);
-    // Team identity — subtle paint on the stone, not a ring around it.
-    if (name === MILL_CLIFTON) {
-      g.lineStyle(4, PALETTE.teamDown, 0.8);
-      for (let i = 0; i < 3; i++) {
-        const a0 = (i / 3) * Math.PI * 2 + 0.25;
-        g.beginPath();
-        g.arc(x, y, R * 0.82, a0, a0 + 0.5, false);
-        g.strokePath();
-      }
-    } else {
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + 0.4;
-        g.fillStyle(i % 2 === 0 ? PALETTE.teamUp : PALETTE.teamUpTrim, 0.85);
-        g.fillCircle(x + Math.cos(a) * R * 0.8, y + Math.sin(a) * R * 0.8, 4);
-      }
     }
   }
 

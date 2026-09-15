@@ -932,7 +932,7 @@ test('map: roads are intentional connectors, not dead-end stubs', () => {
     { name: 'NW field', x: 600 * TOWN_SCALE, y: 360 * TOWN_SCALE },
     { name: 'NE field', x: 2100 * TOWN_SCALE, y: 480 * TOWN_SCALE },
     { name: 'old south-highway stub', x: 1680 * TOWN_SCALE, y: 960 * TOWN_SCALE },
-    { name: 'far SW grass', x: 180 * TOWN_SCALE, y: 1200 * TOWN_SCALE },
+    { name: 'far SW grass', x: 180 * TOWN_SCALE, y: 1450 * TOWN_SCALE },
   ];
   for (const p of empty) {
     assert.equal(isOnRoad(p, map), false, `${p.name} must not be a road to nowhere`);
@@ -1270,8 +1270,18 @@ test('map: Henmore has a tight hairpin switchback, not a closed oxbow loop', () 
   assert.ok(pts.length >= 8, 'river is a bent polyline');
   const first = pts[0]!;
   const last = pts[pts.length - 1]!;
-  assert.equal(first.x, 0, 'SW end sits at the west map edge');
-  assert.equal(last.x, map.width, 'NE end sits at the east map edge');
+  assert.ok(first.x < 0, `SW end must run off-map (x=${first.x})`);
+  assert.ok(last.x > map.width, `NE end must run off-map (x=${last.x} vs w=${map.width})`);
+  // A real SW→NE diagonal, not a flat east–west slab: the NE end sits well
+  // north of the SW end, and the west-to-east run drops by a meaningful
+  // margin (hundreds of design px), not a flat slab.
+  assert.ok(last.y < first.y, 'NE end sits north of the SW end (diagonal read)');
+  const westReadY = riverYAt(400 * TOWN_SCALE, map.river);
+  const eastReadY = riverYAt(2000 * TOWN_SCALE, map.river);
+  assert.ok(
+    westReadY - eastReadY > 200 * TOWN_SCALE,
+    `river should read as a clear diagonal, not a flat slab (west Y=${westReadY}, east Y=${eastReadY})`,
+  );
   // Bridges still sit over the Henmore.
   for (const b of map.bridges) {
     assert.equal(isInRiver(b.position, map), true, 'bridge centre is over the Henmore');
@@ -1311,7 +1321,7 @@ test('map: hedge speed is slower than river speed', () => {
   const map = ASHBOURNE_TOWN;
   const hedge = map.hedges[0]!;
   const hedgePt = { ...hedge.position };
-  const riverX = map.bridges[0]!.position.x + 280;
+  const riverX = map.bridges[0]!.position.x + 180;
   const riverPt = { x: riverX, y: riverYAt(riverX, map.river) };
   const bridgePt = { ...map.bridges[1]!.position };
   const grass = { x: map.width * 0.70, y: map.height * 0.82 };
@@ -1342,7 +1352,7 @@ test('feel: hedge crawl covers less ground than a river wade', () => {
   parkIsolated(hedgeWorld, hedgeX, hedgeY);
   assert.equal(isInHedgeSlow(hedgeWorld.player.position, hedgeWorld.map), true);
 
-  const riverX = riverWorld.map.bridges[0]!.position.x + 280;
+  const riverX = riverWorld.map.bridges[0]!.position.x + 180;
   const riverY = riverYAt(riverX, riverWorld.map.river);
   parkIsolated(riverWorld, riverX, riverY);
   assert.equal(isInWater(riverWorld.player.position, riverWorld.map), true);
