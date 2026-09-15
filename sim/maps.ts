@@ -953,7 +953,7 @@ const TOWN_BUILDINGS: Building[] = [
   shouseY(1160, COMPTON_Y, COMPTON_HALF, 1, 'Compton 5'),
   shouseY(1260, COMPTON_Y, COMPTON_HALF, 1, 'Compton 6'),
   shouseY(1437, COMPTON_Y, COMPTON_HALF, 1, 'Compton 7'),
-  // Clifton village — west column east verge, clear of the millstone hedges.
+  // Clifton village — west column east verge, clear of the riverside mill approach (no goal hedges).
   // Tightened spacing (evenly ~40 apart) so it reads as one cluster.
   shouseX(560, WEST_X, WEST_HALF, 1, 'Clifton 1'),
   shouseX(600, WEST_X, WEST_HALF, 1, 'Clifton 5'),
