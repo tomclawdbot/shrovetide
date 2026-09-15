@@ -548,6 +548,62 @@ function fillOrientedRect(
   g.fillPath();
 }
 
+/** Ellipse centred at c, radii (across × along), oriented by unit tangent t — filled as a polygon so it can rotate. */
+function fillOrientedEllipse(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  acrossDiam: number,
+  alongDiam: number,
+  tx: number,
+  ty: number,
+  steps = 24,
+): void {
+  const nx = -ty;
+  const ny = tx;
+  const rAcross = acrossDiam / 2;
+  const rAlong = alongDiam / 2;
+  g.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const a = (s / steps) * Math.PI * 2;
+    const lx = Math.cos(a) * rAcross;
+    const ly = Math.sin(a) * rAlong;
+    const x = cx + nx * lx + tx * ly;
+    const y = cy + ny * lx + ty * ly;
+    if (s === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.fillPath();
+}
+
+/** Arc (as in Phaser's g.arc: angle 0 = local +x/"across", increasing toward local +y/"along") oriented by unit tangent t. */
+function strokeOrientedArc(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  r: number,
+  a0: number,
+  a1: number,
+  tx: number,
+  ty: number,
+  steps = 16,
+): void {
+  const nx = -ty;
+  const ny = tx;
+  g.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const a = a0 + ((a1 - a0) * s) / steps;
+    const lx = Math.cos(a) * r;
+    const ly = Math.sin(a) * r;
+    const x = cx + nx * lx + tx * ly;
+    const y = cy + ny * lx + ty * ly;
+    if (s === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.strokePath();
+}
+
 function buildTag(build: Build): string {
   return build === 'runner' ? 'RUNNER' : 'HUGGER';
 }
@@ -1750,20 +1806,6 @@ export class GameScene extends Phaser.Scene {
     return pointInRiver({ x, y }, map.river) && !isOnBridge({ x, y }, map);
   }
 
-  /** Width of the tarmac that actually crosses this deck. */
-  private crossingRoadWidth(x: number, y: number): number {
-    const map = this.world.map;
-    let best = 0;
-    for (const r of map.roads) {
-      for (let i = 0; i < r.points.length - 1; i++) {
-        if (distToSegment({ x, y }, r.points[i]!, r.points[i + 1]!) <= r.width * 0.65) {
-          if (r.width > best) best = r.width;
-        }
-      }
-    }
-    return best || 88;
-  }
-
   /** Packhorse arch in the water — structure follows the crossing road, no fat deck collar. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
@@ -1794,20 +1836,16 @@ export class GameScene extends Phaser.Scene {
         fillOrientedRect(g, px, py, riverH * 0.76, Math.max(4, pier - 4), t.x, t.y);
       }
       g.fillStyle(PALETTE.archShadow, 0.95);
-      g.fillEllipse(c.x + t.x * 6, c.y + t.y * 6, archW * 0.92, riverH * 0.72);
+      fillOrientedEllipse(g, c.x + t.x * 6, c.y + t.y * 6, archW * 0.92, riverH * 0.72, t.x, t.y);
       g.fillStyle(PALETTE.water, 0.92);
-      g.fillEllipse(c.x + t.x * 10, c.y + t.y * 10, roadW * 0.72, 22);
+      fillOrientedEllipse(g, c.x + t.x * 10, c.y + t.y * 10, roadW * 0.72, 22, t.x, t.y);
       const archR = Math.min(archW * 0.36, roadW * 0.48);
       const ax = c.x + t.x * 10;
       const ay = c.y + t.y * 10;
       g.lineStyle(5, PALETTE.stone, 0.95);
-      g.beginPath();
-      g.arc(ax, ay, archR, Math.PI * 1.02, -0.02, false);
-      g.strokePath();
+      strokeOrientedArc(g, ax, ay, archR, Math.PI * 1.02, -0.02, t.x, t.y);
       g.lineStyle(2.5, PALETTE.stoneDark, 0.85);
-      g.beginPath();
-      g.arc(ax + t.x * 2, ay + t.y * 2, archR - 3, Math.PI * 1.02, -0.02, false);
-      g.strokePath();
+      strokeOrientedArc(g, ax + t.x * 2, ay + t.y * 2, archR - 3, Math.PI * 1.02, -0.02, t.x, t.y);
       // Bank abutments — across the deck at each path end, not axis-aligned stamps.
       for (const end of [pts[0]!, pts[pts.length - 1]!]) {
         const ei = end === pts[0]! ? 0 : pts.length - 1;
