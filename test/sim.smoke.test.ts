@@ -1016,9 +1016,9 @@ test('map: street lights sit on the road network', () => {
 test('map: millstone approaches are hedge corridors without dedicated roads', () => {
   const map = ASHBOURNE_TOWN;
   const samples = [
-    // Corridor midpoints flanking riverside stones (Clifton y≈1010, Sturston y≈768).
+    // Corridor midpoints flanking riverside stones (Clifton y≈1010, Sturston y≈805).
     { name: 'Clifton', x: 320 * TOWN_SCALE, y: 1010 * TOWN_SCALE, northY: 974, southY: 1046 },
-    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 768 * TOWN_SCALE, northY: 732, southY: 804 },
+    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 805 * TOWN_SCALE, northY: 769, southY: 841 },
   ];
   for (const s of samples) {
     // Tom: no road required to scoring millstones — mud/grass is fine.

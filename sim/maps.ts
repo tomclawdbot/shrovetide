@@ -727,11 +727,11 @@ const TOWN_HEDGES: RectZone[] = [
   ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
   ...parcelHedges(1760, 1400, 480, 320, 26),
   // Goal approaches — hedges flank the mud/grass mill corridors, clear of the stones.
-  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 768) — both riverside.
+  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 805) — both riverside.
   srect(355, 974, 270, 22),
   srect(355, 1046, 270, 18),
-  srect(2045, 732, 270, 22),
-  srect(2045, 804, 270, 18),
+  srect(2045, 769, 270, 22),
+  srect(2045, 841, 270, 18),
 ];
 
 /**
@@ -753,8 +753,9 @@ const TOWN_FORESTS: ForestStand[] = [
  * (no rectangular stub inside the frame). The WEST_X/CENTRE_X/EAST_X
  * crossings are exact vertices so the N–S roads (and their bridges) land on
  * the water without drift. The hairpin sits between the centre and east
- * bridges, south of the high street — a north-opening U with clear parallel
- * legs so the channel stays constant-width, not a lake.
+ * bridges, south of the high street — an open U (tip clear of HS asphalt)
+ * with clear parallel legs so the channel stays constant-width, not a lake.
+ * Tip must not intersect the high street or trailhead T (bridges-only crossings).
  */
 const RIVER_WIDTH = 60;
 const RIVER_WEST_Y = 1020;
@@ -786,37 +787,44 @@ const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
 const TOWN_RIVER_HAIRPIN: ReadonlyArray<readonly [number, number]> = [
   // Approach, then OPEN U (opens south, continues NE).
   // Leg gap ~170 ≫ RIVER_WIDTH — clear grass inside the U, not a pond silhouette.
-  [1480, 848],
-  [1545, 828],
-  [1605, 805],
-  [1635, 790],
-  // Left arm north
-  [1635, 755],
-  [1630, 720],
-  [1625, 688],
-  [1630, 665],
-  [1695, 650], // tip
-  [1760, 665],
+  // Tip south of high street (y=660) + trailhead T (1660,660): clearance ≥
+  // river half (30) + street half (26) + margin so asphalt never overlays water
+  // except on bridge decks (Game Art FAIL).
+  [1480, 860],
+  [1540, 875],
+  [1585, 882],
+  [1620, 870],
+  // Left arm north — stop well south of HS
+  [1620, 840],
+  [1615, 810],
+  [1625, 780],
+  [1660, 758],
+  [1695, 748], // tip — south of HS/trail T, not through the carriageway
+  [1730, 758],
+  [1765, 780],
+  [1775, 810],
   // Right arm south — wide open (FAIL if nearly-touching oxbow neck)
-  [1785, 688],
-  [1800, 725],
-  [1795, 765],
-  [1780, 805],
+  [1780, 840],
+  [1790, 870],
   // Resume NE toward the east bridge
-  [1815, 835],
-  [1865, 815],
+  [1830, 860],
+  [1880, 820],
   [1910, 780],
 ];
-/** East bridge then NE off-map — stay south of high street (y=660) until near/past the frame. */
+/**
+ * East bridge then NE off-map — stays clear of the high street (y=660,
+ * half-width 26) all the way to the east frame edge (x=2400) before
+ * turning north, so no centerline sample near the map edge lands in water.
+ */
 const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
   [2000, RIVER_EAST_Y],
   [2100, 720],
-  [2220, 700],
-  [2320, 680],
-  [2420, 650],
-  [2520, 540],
-  [2620, 430],
-  [2720, 320],
+  [2220, 696],
+  [2320, 693],
+  [2400, 701],
+  [2480, 600],
+  [2580, 420],
+  [2680, 280],
 ];
 
 const TOWN_RIVER: RiverPath = {
@@ -836,7 +844,7 @@ const TOWN_BRIDGES: Bridge[] = [
 
 function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
-  const stones = [sxy(160, 1010), sxy(2260, 768)];
+  const stones = [sxy(160, 1010), sxy(2260, 805)];
   const extra = [
     slight(400, 940),
     slight(2000, 690),
@@ -978,7 +986,7 @@ export const ASHBOURNE_TOWN: TownMap = {
   goals: [
     // Riverside / near bank (not mid-channel). Clearance ≥ half-width + ~42.
     { team: 0, name: MILL_CLIFTON, position: sxy(160, 1010) },
-    { team: 1, name: MILL_STURSTON, position: sxy(2260, 768) },
+    { team: 1, name: MILL_STURSTON, position: sxy(2260, 805) },
   ],
 
   turnUp: sxy(1200, RIVER_CENTRE_Y),

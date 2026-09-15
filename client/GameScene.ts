@@ -27,6 +27,7 @@ import {
   passChargeRatio,
   placeTeammate,
   pointInRiver,
+  isOnBridge,
   quickSwitch,
   releasePass,
   RIP_MIN_STAMINA,
@@ -1204,14 +1205,17 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Mitred UK lanes — square caps, no sausage round-ends. */
+  /** Mitred UK lanes — square caps, no sausage round-ends.
+   * Asphalt never paints through open water: verge AND carriageway are split
+   * with segmentRunsOutsideRiver; bridge decks carry the crossing (bridges-only).
+   */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
     const river = this.world.map.river;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
-      // Grass verge stays on the banks — never a fat collar across the Henmore.
+      // Grass verge + tarmac stay on the banks — never a grey stripe on the Henmore.
       for (let i = 0; i < road.points.length - 1; i++) {
         const a = road.points[i]!;
         const b = road.points[i + 1]!;
@@ -1223,23 +1227,40 @@ export class GameScene extends Phaser.Scene {
             trail ? PALETTE.trailEdge : PALETTE.verge,
             trail ? 0.4 : 0.55,
           );
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width,
+            trail ? PALETTE.trail : PALETTE.tarmac,
+            0.96,
+          );
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width * 0.36,
+            trail ? PALETTE.trailWear : PALETTE.tarmacWear,
+            trail ? 0.28 : street ? 0.2 : 0.14,
+          );
+          this.stippleRoad(g, band, road.width, rand);
         }
       }
-      this.drawMitredStrip(
-        g,
-        road.points,
-        road.width,
-        trail ? PALETTE.trail : PALETTE.tarmac,
-        0.96,
-      );
-      this.drawMitredStrip(
-        g,
-        road.points,
-        road.width * 0.36,
-        trail ? PALETTE.trailWear : PALETTE.tarmacWear,
-        trail ? 0.28 : street ? 0.2 : 0.14,
-      );
-      this.stippleRoad(g, road.points, road.width, rand);
+    }
+    // Road continuity across Henmore is the bridge deck only (width = crossing road).
+    this.drawBridgeCarriageways();
+  }
+
+  /** Asphalt on each stone bridge — matches crossing road width; no open-water tarmac. */
+  private drawBridgeCarriageways(): void {
+    const g = this.mapGfx;
+    for (const b of this.world.map.bridges) {
+      const x = b.position.x;
+      const y = b.position.y;
+      const h = b.height;
+      const roadW = this.crossingRoadWidth(x, y);
+      g.fillStyle(PALETTE.tarmac, 0.96);
+      g.fillRect(x - roadW / 2, y - h / 2, roadW, h);
+      g.fillStyle(PALETTE.tarmacWear, 0.2);
+      g.fillRect(x - roadW * 0.18, y - h / 2, roadW * 0.36, h);
     }
   }
 
@@ -1512,7 +1533,8 @@ export class GameScene extends Phaser.Scene {
           if (
             !this.nearJunctionPaint(x0, y0, junctions, roundabouts) &&
             !this.nearJunctionPaint(xm, ym, junctions, roundabouts) &&
-            !this.nearJunctionPaint(x1, y1, junctions, roundabouts)
+            !this.nearJunctionPaint(x1, y1, junctions, roundabouts) &&
+            !this.isOpenWaterPaint(xm, ym)
           ) {
             g.beginPath();
             g.moveTo(x0 + nx * hw, y0 + ny * hw);
@@ -1566,7 +1588,10 @@ export class GameScene extends Phaser.Scene {
           const t = (segLen * s) / samples;
           const px = a.x + ux * t;
           const py = a.y + uy * t;
-          if (this.nearJunctionPaint(px, py, junctions, roundabouts)) {
+          if (
+            this.nearJunctionPaint(px, py, junctions, roundabouts) ||
+            this.isOpenWaterPaint(px, py)
+          ) {
             if (started) g.strokePath();
             started = false;
             g.beginPath();
@@ -1669,6 +1694,12 @@ export class GameScene extends Phaser.Scene {
       g.fillPath();
       t += dash + gap;
     }
+  }
+
+  /** True if paint would sit on open water (river, not on a bridge deck). */
+  private isOpenWaterPaint(x: number, y: number): boolean {
+    const map = this.world.map;
+    return pointInRiver({ x, y }, map.river) && !isOnBridge({ x, y }, map);
   }
 
   /** Width of the tarmac that actually crosses this deck. */
