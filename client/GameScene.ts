@@ -27,6 +27,7 @@ import {
   passChargeRatio,
   placeTeammate,
   pointInRiver,
+  bridgeCrossingSpan,
   isOnBridge,
   quickSwitch,
   releasePass,
@@ -495,6 +496,56 @@ function segmentRunsOutsideRiver(
   }
   if (start) runs.push([start, pts[pts.length - 1]!]);
   return runs.filter(([ra, rb]) => Math.hypot(rb.x - ra.x, rb.y - ra.y) > 1);
+}
+
+/** Unit tangent at polyline index i. */
+function polyTangent(points: { x: number; y: number }[], i: number): { x: number; y: number } {
+  const a = points[Math.max(0, i - 1)]!;
+  const b = points[Math.min(points.length - 1, i + 1)]!;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len };
+}
+
+/** Offset a centreline by `dist` along the left normal (mitred-ish). */
+function offsetPolyline(
+  points: { x: number; y: number }[],
+  dist: number,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const t = polyTangent(points, i);
+    out.push({ x: points[i]!.x - t.y * dist, y: points[i]!.y + t.x * dist });
+  }
+  return out;
+}
+
+/** Axis-free filled rect centred at c, sized (along × across), oriented by unit tangent t. */
+function fillOrientedRect(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  along: number,
+  across: number,
+  tx: number,
+  ty: number,
+): void {
+  const hx = along / 2;
+  const hy = across / 2;
+  const nx = -ty;
+  const ny = tx;
+  const corners = [
+    { x: cx - tx * hx - nx * hy, y: cy - ty * hx - ny * hy },
+    { x: cx + tx * hx - nx * hy, y: cy + ty * hx - ny * hy },
+    { x: cx + tx * hx + nx * hy, y: cy + ty * hx + ny * hy },
+    { x: cx - tx * hx + nx * hy, y: cy - ty * hx + ny * hy },
+  ];
+  g.beginPath();
+  g.moveTo(corners[0]!.x, corners[0]!.y);
+  for (let i = 1; i < corners.length; i++) g.lineTo(corners[i]!.x, corners[i]!.y);
+  g.closePath();
+  g.fillPath();
 }
 
 function buildTag(build: Build): string {
@@ -1249,18 +1300,15 @@ export class GameScene extends Phaser.Scene {
     this.drawBridgeCarriageways();
   }
 
-  /** Asphalt on each stone bridge — matches crossing road width; no open-water tarmac. */
+  /** Asphalt on each stone bridge — follows crossing-road centreline; no open-water tarmac. */
   private drawBridgeCarriageways(): void {
     const g = this.mapGfx;
-    for (const b of this.world.map.bridges) {
-      const x = b.position.x;
-      const y = b.position.y;
-      const h = b.height;
-      const roadW = this.crossingRoadWidth(x, y);
-      g.fillStyle(PALETTE.tarmac, 0.96);
-      g.fillRect(x - roadW / 2, y - h / 2, roadW, h);
-      g.fillStyle(PALETTE.tarmacWear, 0.2);
-      g.fillRect(x - roadW * 0.18, y - h / 2, roadW * 0.36, h);
+    const map = this.world.map;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      this.drawMitredStrip(g, span.points, span.width, PALETTE.tarmac, 0.96);
+      this.drawMitredStrip(g, span.points, span.width * 0.36, PALETTE.tarmacWear, 0.2);
     }
   }
 
@@ -1716,81 +1764,115 @@ export class GameScene extends Phaser.Scene {
     return best || 88;
   }
 
-  /** Packhorse arch in the water — structure hugs the lane, no fat deck collar. */
+  /** Packhorse arch in the water — structure follows the crossing road, no fat deck collar. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
-    const river = this.world.map.river;
-    for (const b of this.world.map.bridges) {
-      const x = b.position.x;
-      const y = b.position.y;
-      const h = b.height;
-      const roadW = this.crossingRoadWidth(x, y);
+    const map = this.world.map;
+    const river = map.river;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      const pts = span.points;
+      const roadW = span.width;
       const wall = 13;
       const deck = roadW + wall * 2;
       const pier = 22;
       const archW = roadW + 36;
       const riverH = river.width;
-      const by = y - h / 2;
-      // Piers sit in the brook beside the carriageway, not as a wide stone plaza.
+      const mid = Math.floor(pts.length / 2);
+      const c = pts[mid]!;
+      const t = polyTangent(pts, mid);
+      const nx = -t.y;
+      const ny = t.x;
+      // Piers sit in the brook beside the carriageway, oriented to the span.
       for (const side of [-1, 1]) {
-        const px = x + side * (roadW / 2 + pier * 0.35);
+        const px = c.x + side * nx * (roadW / 2 + pier * 0.35);
+        const py = c.y + side * ny * (roadW / 2 + pier * 0.35);
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(px - pier / 2, y - riverH * 0.42, pier, riverH * 0.84);
+        fillOrientedRect(g, px, py, riverH * 0.84, pier, t.x, t.y);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(px - pier / 2 + 2, y - riverH * 0.38, pier - 4, riverH * 0.76);
+        fillOrientedRect(g, px, py, riverH * 0.76, Math.max(4, pier - 4), t.x, t.y);
       }
       g.fillStyle(PALETTE.archShadow, 0.95);
-      g.fillEllipse(x, y + 6, archW * 0.92, riverH * 0.72);
+      g.fillEllipse(c.x + t.x * 6, c.y + t.y * 6, archW * 0.92, riverH * 0.72);
       g.fillStyle(PALETTE.water, 0.92);
-      g.fillEllipse(x, y + 10, roadW * 0.72, 22);
+      g.fillEllipse(c.x + t.x * 10, c.y + t.y * 10, roadW * 0.72, 22);
+      const archR = Math.min(archW * 0.36, roadW * 0.48);
+      const ax = c.x + t.x * 10;
+      const ay = c.y + t.y * 10;
       g.lineStyle(5, PALETTE.stone, 0.95);
       g.beginPath();
-      g.arc(x, y + 10, Math.min(archW * 0.36, roadW * 0.48), Math.PI * 1.02, -0.02, false);
+      g.arc(ax, ay, archR, Math.PI * 1.02, -0.02, false);
       g.strokePath();
       g.lineStyle(2.5, PALETTE.stoneDark, 0.85);
       g.beginPath();
-      g.arc(x, y + 12, Math.min(archW * 0.36, roadW * 0.48) - 3, Math.PI * 1.02, -0.02, false);
+      g.arc(ax + t.x * 2, ay + t.y * 2, archR - 3, Math.PI * 1.02, -0.02, false);
       g.strokePath();
-      // Bank abutments — same width as deck + parapet, not a flopping collar.
-      for (const top of [true, false]) {
-        const ay = top ? by - 6 : by + h - 4;
+      // Bank abutments — across the deck at each path end, not axis-aligned stamps.
+      for (const end of [pts[0]!, pts[pts.length - 1]!]) {
+        const ei = end === pts[0]! ? 0 : pts.length - 1;
+        const et = polyTangent(pts, ei);
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(x - deck / 2 - 2, ay, deck + 4, 14);
+        fillOrientedRect(g, end.x, end.y, 14, deck + 4, et.x, et.y);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(x - deck / 2, ay + 2, deck, 9);
+        fillOrientedRect(g, end.x, end.y, 9, deck, et.x, et.y);
       }
     }
   }
 
-  /** Low parapets just outside the tarmac so the roadway stays continuous. */
+  /** Low parapets just outside the tarmac — follow the crossing centreline. */
   private drawStoneBridgeParapets(): void {
     const g = this.mapGfx;
-    for (const b of this.world.map.bridges) {
-      const x = b.position.x;
-      const y = b.position.y;
-      const h = b.height;
-      const roadW = this.crossingRoadWidth(x, y);
+    const map = this.world.map;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      const pts = span.points;
+      const roadW = span.width;
       const wall = 13;
-      const by = y - h / 2;
-      const drawWall = (cx: number): void => {
-        const wx = cx - wall / 2;
-        g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(wx - 1, by - 8, wall + 2, h + 16);
-        g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(wx, by - 6, wall, h + 12);
-        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
-        for (let py = by; py < by + h; py += 11) {
-          g.lineBetween(wx + 1, py, wx + wall - 1, py);
-        }
+      const inset = roadW / 2 + wall / 2 - 1;
+      for (const side of [-1, 1]) {
+        const wallPath = offsetPolyline(pts, side * inset);
+        this.drawMitredStrip(g, wallPath, wall + 2, PALETTE.stoneDark, 1);
+        this.drawMitredStrip(g, wallPath, wall, PALETTE.stone, 1);
+        // Coping caps at each end of the parapet run.
+        const a = wallPath[0]!;
+        const z = wallPath[wallPath.length - 1]!;
         g.fillStyle(PALETTE.stoneLite, 1);
-        g.fillRect(wx - 1, by - 8, wall + 2, 6);
-        g.fillRect(wx - 1, by + h + 2, wall + 2, 6);
-      };
-      drawWall(x - roadW / 2 - wall / 2 + 1);
-      drawWall(x + roadW / 2 + wall / 2 - 1);
+        g.fillRect(a.x - (wall + 2) / 2, a.y - 3, wall + 2, 6);
+        g.fillRect(z.x - (wall + 2) / 2, z.y - 3, wall + 2, 6);
+        // Mortar ticks along the wall.
+        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
+        for (let i = 0; i < wallPath.length - 1; i += 2) {
+          const p0 = wallPath[i]!;
+          const p1 = wallPath[Math.min(wallPath.length - 1, i + 1)]!;
+          const t = polyTangent(wallPath, i);
+          const nx = -t.y;
+          const ny = t.x;
+          const mx = (p0.x + p1.x) / 2;
+          const my = (p0.y + p1.y) / 2;
+          g.lineBetween(mx - nx * (wall * 0.35), my - ny * (wall * 0.35), mx + nx * (wall * 0.35), my + ny * (wall * 0.35));
+        }
+      }
+      // Cutwaters at mid-span, outside the kerb.
+      const mid = Math.floor(pts.length / 2);
+      const c = pts[mid]!;
+      const t = polyTangent(pts, mid);
+      const nx = -t.y;
+      const ny = t.x;
       g.fillStyle(PALETTE.stoneLite, 1);
-      g.fillTriangle(x - roadW / 2 - 10, y, x - roadW / 2 + 2, y - 11, x - roadW / 2 + 2, y + 11);
-      g.fillTriangle(x + roadW / 2 + 10, y, x + roadW / 2 - 2, y - 11, x + roadW / 2 - 2, y + 11);
+      for (const side of [-1, 1]) {
+        const kx = c.x + side * nx * (roadW / 2);
+        const ky = c.y + side * ny * (roadW / 2);
+        g.fillTriangle(
+          kx + side * nx * 10,
+          ky + side * ny * 10,
+          kx - t.x * 11,
+          ky - t.y * 11,
+          kx + t.x * 11,
+          ky + t.y * 11,
+        );
+      }
     }
   }
 

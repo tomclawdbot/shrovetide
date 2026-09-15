@@ -127,6 +127,20 @@ export interface RiverPath {
 
 export interface Bridge extends RectZone {}
 
+/** The road polyline a bridge deck should paint/collide along, plus its width. */
+export interface BridgeCrossingSpan {
+  /** Sub-polyline of the crossing road: river run + a short dry-bank apron on each end. */
+  points: Vec2Like[];
+  /** Width of the crossing road (deck width, no parapet collar). */
+  width: number;
+}
+
+// Declared here (well before ASHBOURNE_TOWN's module-eval-time construction,
+// which calls bridgeCrossingSpan indirectly via townLamps) to dodge TDZ.
+const BRIDGE_SPAN_CACHE = new WeakMap<Bridge, BridgeCrossingSpan | null>();
+/** Sampling step (sim px) used to densify a road's vertex list before extracting a span. */
+const BRIDGE_SPAN_SAMPLE_STEP = 10;
+
 /**
  * UK mini-roundabout — tarmac ring around a grass island. Visual — not collision.
  * Optional (0–2). Never sits on the turn-up / kickoff plinth.
@@ -858,9 +872,12 @@ function townLamps(): StreetLight[] {
     slight(1660, 160),
     slight(1200, 600),
   ];
+  // Partial map — enough for isOnBridge's crossing-span lookup (roads + river);
+  // ASHBOURNE_TOWN itself isn't built yet at this point in module init.
+  const spanMap = { bridges: TOWN_BRIDGES, roads: TOWN_ROADS, river: TOWN_RIVER } as TownMap;
   return [...lamps, ...extra].filter((l) => {
     const inRiver = pointInRiver(l.position, TOWN_RIVER);
-    const onDeck = TOWN_BRIDGES.some((b) => pointInRect(l.position, b));
+    const onDeck = isOnBridge(l.position, spanMap);
     if (inRiver && !onDeck) return false;
     for (const g of stones) {
       if (Math.hypot(l.position.x - g.x, l.position.y - g.y) < 48) return false;
@@ -1077,9 +1094,100 @@ export function isNorthOfRiver(p: Vec2Like, map: TownMap): boolean {
   return p.y < riverYAt(p.x, map.river);
 }
 
-/** True iff the point lies on any bridge. */
+/**
+ * The crossing road's sub-polyline through a bridge — the road nearest the
+ * bridge centre, walked through its river crossing plus a short dry-bank
+ * apron on each end (so abutments land on dry approaches, not mid-water).
+ * Result is cached per bridge (map geometry is static once built).
+ */
+export function bridgeCrossingSpan(bridge: Bridge, map: TownMap): BridgeCrossingSpan | null {
+  if (BRIDGE_SPAN_CACHE.has(bridge)) return BRIDGE_SPAN_CACHE.get(bridge)!;
+  const span = computeBridgeCrossingSpan(bridge, map);
+  BRIDGE_SPAN_CACHE.set(bridge, span);
+  return span;
+}
+
+function computeBridgeCrossingSpan(bridge: Bridge, map: TownMap): BridgeCrossingSpan | null {
+  const c = bridge.position;
+
+  // Road whose centreline passes closest to the bridge centre.
+  let road: RoadSegment | null = null;
+  let bestDist = Infinity;
+  for (const r of map.roads) {
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const d = distToSegment(c, r.points[i]!, r.points[i + 1]!);
+      if (d < bestDist) {
+        bestDist = d;
+        road = r;
+      }
+    }
+  }
+  if (!road || bestDist > road.width) return null;
+
+  // Densify the road's vertex list so a filleted / smoothed approach is
+  // represented by more than its coarse corner vertices.
+  const samples: Vec2Like[] = [road.points[0]!];
+  for (let i = 0; i < road.points.length - 1; i++) {
+    const a = road.points[i]!;
+    const b = road.points[i + 1]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(len / BRIDGE_SPAN_SAMPLE_STEP));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+
+  // Sample nearest the bridge centre anchors the crossing run.
+  let anchor = 0;
+  let anchorDist = Infinity;
+  for (let i = 0; i < samples.length; i++) {
+    const d = Math.hypot(samples[i]!.x - c.x, samples[i]!.y - c.y);
+    if (d < anchorDist) {
+      anchorDist = d;
+      anchor = i;
+    }
+  }
+
+  // Contiguous in-river run containing (or nearest to) the anchor.
+  let lo = anchor;
+  let hi = anchor;
+  if (pointInRiver(samples[anchor]!, map.river)) {
+    while (lo > 0 && pointInRiver(samples[lo - 1]!, map.river)) lo--;
+    while (hi < samples.length - 1 && pointInRiver(samples[hi + 1]!, map.river)) hi++;
+  }
+
+  // Dry-bank apron on each end so abutments land off the water.
+  const pad = Math.max(map.river.width, bridge.height * 0.5);
+  const extend = (idx: number, dir: -1 | 1): number => {
+    let d = 0;
+    let i = idx;
+    while (d < pad) {
+      const ni = i + dir;
+      if (ni < 0 || ni >= samples.length) break;
+      d += Math.hypot(samples[ni]!.x - samples[i]!.x, samples[ni]!.y - samples[i]!.y);
+      i = ni;
+    }
+    return i;
+  };
+  const loExt = extend(lo, -1);
+  const hiExt = extend(hi, 1);
+  if (hiExt <= loExt) return null;
+
+  return { points: samples.slice(loExt, hiExt + 1), width: road.width };
+}
+
+/** True iff the point lies on any bridge (matches the painted deck, not the AABB). */
 export function isOnBridge(p: Vec2Like, map: TownMap): boolean {
-  return map.bridges.some((b) => pointInRect(p, b));
+  return map.bridges.some((b) => {
+    const span = bridgeCrossingSpan(b, map);
+    if (!span) return pointInRect(p, b);
+    const half = span.width / 2;
+    for (let i = 0; i < span.points.length - 1; i++) {
+      if (distToSegment(p, span.points[i]!, span.points[i + 1]!) <= half) return true;
+    }
+    return false;
+  });
 }
 
 /** True iff the point is in water (river but not on a bridge). */
