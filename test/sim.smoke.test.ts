@@ -1015,11 +1015,9 @@ test('map: street lights sit on the road network', () => {
 
 test('map: millstone approaches are hedge corridors without dedicated roads', () => {
   const map = ASHBOURNE_TOWN;
-  const samples = [
-    // Corridor midpoints flanking riverside stones (Clifton y≈1010, Sturston y≈768).
-    { name: 'Clifton', x: 320 * TOWN_SCALE, y: 1010 * TOWN_SCALE, northY: 974, southY: 1046 },
-    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 768 * TOWN_SCALE, northY: 732, southY: 804 },
-  ];
+  // Sturston keeps a hedge-flanked corridor; Clifton's goal hedges were removed
+  // so the riverside stone (west of the x=400 road) stays open to mud/grass.
+  const samples = [{ name: 'Sturston', x: 2080 * TOWN_SCALE, y: 768 * TOWN_SCALE, northY: 732, southY: 804 }];
   for (const s of samples) {
     // Tom: no road required to scoring millstones — mud/grass is fine.
     assert.equal(isOnRoad(s, map), false, `${s.name} approach must not be a dedicated road`);
@@ -1028,6 +1026,17 @@ test('map: millstone approaches are hedge corridors without dedicated roads', ()
     const south = { x: s.x, y: s.southY * TOWN_SCALE };
     assert.equal(isInHedge(north, map), true, `${s.name} corridor has a north hedge`);
     assert.equal(isInHedge(south, map), true, `${s.name} corridor has a south hedge`);
+  }
+  {
+    // Clifton (y≈1010) has no goal hedges — approach and flanks stay open grass/mud.
+    const x = 320 * TOWN_SCALE;
+    const clifton = { x, y: 1010 * TOWN_SCALE };
+    assert.equal(isOnRoad(clifton, map), false, 'Clifton approach must not be a dedicated road');
+    assert.ok(isWalkable(clifton, map), 'Clifton approach stays playable grass/mud');
+    const north = { x, y: 974 * TOWN_SCALE };
+    const south = { x, y: 1046 * TOWN_SCALE };
+    assert.equal(isInHedge(north, map), false, 'Clifton corridor has no north hedge');
+    assert.equal(isInHedge(south, map), false, 'Clifton corridor has no south hedge');
   }
   for (const goal of map.goals) {
     assert.equal(isOnRoad(goal.position, map), false, `${goal.name} has no road under the stone`);

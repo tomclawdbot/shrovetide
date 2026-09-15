@@ -1266,6 +1266,57 @@ export class GameScene extends Phaser.Scene {
     for (let i = 1; i < poly.length; i++) g.lineTo(poly[i]!.x, poly[i]!.y);
     g.closePath();
     g.strokePath();
+    this.drawRiverBanks(river);
+  }
+
+  /** Mud + grass + stone flecks just outside both Henmore banks — breaks the flat edge. */
+  private drawRiverBanks(river: RiverPath): void {
+    const g = this.mapGfx;
+    const points = river.points;
+    if (points.length < 2) return;
+    const hw = river.width / 2;
+    let s = 0x5a3d28;
+    const rand = (): number => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const step = 18;
+    for (const side of [1, -1] as const) {
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i]!;
+        const b = points[i + 1]!;
+        const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+        if (segLen < 1e-6) continue;
+        const tx = (b.x - a.x) / segLen;
+        const ty = (b.y - a.y) / segLen;
+        const nx = -ty * side;
+        const ny = tx * side;
+        const n = Math.max(1, Math.round(segLen / step));
+        for (let j = 0; j < n; j++) {
+          const t = (j + 0.5) / n;
+          const px = a.x + (b.x - a.x) * t;
+          const py = a.y + (b.y - a.y) * t;
+          const offset = hw + 3 + rand() * 6;
+          const bx = px + nx * offset;
+          const by = py + ny * offset;
+          g.fillStyle(rand() > 0.5 ? PALETTE.mud : PALETTE.mudDark, 0.3 + rand() * 0.15);
+          g.fillEllipse(bx + (rand() - 0.5) * 6, by + (rand() - 0.5) * 6, 10 + rand() * 10, 5 + rand() * 5);
+          if (rand() > 0.4) {
+            g.fillStyle(rand() > 0.5 ? PALETTE.grass : PALETTE.grassAlt, 0.5);
+            const fx = bx + nx * (4 + rand() * 6);
+            const fy = by + ny * (4 + rand() * 6);
+            g.fillRect(fx, fy, 2, 5 + rand() * 4);
+          }
+          if (rand() > 0.75) {
+            g.fillStyle(PALETTE.stoneDark, 0.5);
+            g.fillCircle(bx + (rand() - 0.5) * 8, by + (rand() - 0.5) * 8, 1.5 + rand() * 1.5);
+          }
+        }
+      }
+    }
   }
 
   /** English woodland mass — overlapping canopy, readable as a tree block. */
@@ -1306,6 +1357,19 @@ export class GameScene extends Phaser.Scene {
       for (let r = 1; r < rows; r++) {
         const py = y + (r / rows) * f.height;
         g.lineBetween(x + 8, py, x + f.width - 8, py);
+      }
+      // Seeded grit/tufts — breaks the flat tint on big parcels without hurting readability.
+      const tufts = Math.max(18, Math.floor((f.width * f.height) / 3200));
+      for (let t = 0; t < tufts; t++) {
+        const tx = x + 6 + rand() * Math.max(1, f.width - 12);
+        const ty = y + 6 + rand() * Math.max(1, f.height - 12);
+        const pick = rand();
+        g.fillStyle(pick < 0.34 ? PALETTE.grass : pick < 0.67 ? PALETTE.grassAlt : PALETTE.grassDark, 0.24);
+        if (rand() > 0.5) {
+          g.fillRect(tx, ty, 2, 5 + rand() * 6);
+        } else {
+          g.fillCircle(tx, ty, 1.5 + rand() * 2);
+        }
       }
       g.lineStyle(2, PALETTE.hedgeEdge, 0.15);
       g.strokeRect(x + 2, y + 2, f.width - 4, f.height - 4);
