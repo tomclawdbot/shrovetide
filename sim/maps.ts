@@ -642,9 +642,9 @@ function hedgeCol(
 // Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
 // Former railway + tunnel on the north cutting. Clifton (W) / Sturston (E).
 //
-//   [Tunnel]──trail──(R)──[Baths]──lane──[Coach]
-//   [St Oswald's]   [Old Grammar]  Market Place △ (U)
-//        churchyard      Green Man / halls
+//   [Tunnel]──trail──(R)──[Baths]──lane──[Coach]  (pulled in toward HS)
+//   [St Oswald's]──lane──[Old Grammar]  Market Place △ (U) halls
+//        churchyard           Green Man / Dig St core
 //              ║  centre street (through plinth — no circus)
 //   ▒▒▒▒▒▒▒▒▒▒▒ HENMORE ▒▒▒▒▒▒▒▒▒▒▒  stone bridges
 //        Compton wrap (curved corners)   [Wheel]
@@ -707,39 +707,39 @@ const TOWN_ROADS: RoadSegment[] = [
 
 /** Adjacent hedged parcels — shared edges read as a patchwork, not scattered stamps. */
 const TOWN_FIELDS: FieldParcel[] = [
-  // North of the high street, west of the trail (two neighbours sharing x=960).
+  // North of the high street — west parcel keeps full depth (NW grass playable).
+  // East parcel stops above Market Place halls so civic verge is not field fill.
   sfield(700, 280, 520, 400),
-  sfield(1290, 280, 660, 400),
-  // North-east of the trail.
+  sfield(1290, 200, 660, 300),
+  // North-east of the trail (Coach sits west of this parcel on the lane).
   sfield(2100, 200, 480, 280),
-  // Between Henmore south bank and Compton (cells between the N–S columns).
-  // West cell shifted south of the diagonal west crossing (dry grass centre);
-  // others keep the original bank line packing north of Compton fabric.
+  // Between Henmore south bank and Compton carriageway (not over south-front pubs).
+  // West cell shifted south of the diagonal west crossing (dry grass centre).
   sfield(220, 1300, 280, 200),
-  sfield(700, 1110, 520, 260),
-  sfield(1600, 1110, 720, 260),
-  sfield(2200, 1110, 320, 260),
-  // South of Compton — one row of neighbouring parcels.
-  sfield(320, 1400, 480, 320),
-  sfield(800, 1400, 480, 320),
-  sfield(1280, 1400, 480, 320),
-  sfield(1760, 1400, 480, 320),
+  sfield(700, 1060, 520, 160),
+  sfield(1600, 1060, 720, 160),
+  sfield(2200, 1060, 320, 160),
+  // South of Compton — north edge clears road-front pubs (~y=1186), then patchwork.
+  sfield(320, 1420, 480, 280),
+  sfield(800, 1420, 480, 280),
+  sfield(1280, 1420, 480, 280),
+  sfield(1760, 1420, 480, 280),
 ];
 
 const TOWN_HEDGES: RectZone[] = [
   // Shared edges get one hedge so the patchwork does not double-collar.
   ...parcelHedges(700, 280, 520, 400, 26, {}, 56, { e: true }),
-  ...parcelHedges(1290, 280, 660, 400, 26),
+  ...parcelHedges(1290, 200, 660, 300, 26),
   ...parcelHedges(2100, 200, 480, 280, 26),
-  // South edge skipped — shares its line with the south-of-Compton row's north hedge.
+  // Compton-band keeps its own south hedge — grass strip clears road-front pubs.
   ...parcelHedges(220, 1300, 280, 200, 24, {}, 56, { s: true }),
-  ...parcelHedges(700, 1110, 520, 260, 24, {}, 56, { s: true }),
-  ...parcelHedges(1600, 1110, 720, 260, 24, {}, 56, { s: true }),
-  ...parcelHedges(2200, 1110, 320, 260, 24),
-  ...parcelHedges(320, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(800, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(1760, 1400, 480, 320, 26),
+  ...parcelHedges(700, 1060, 520, 160, 24),
+  ...parcelHedges(1600, 1060, 720, 160, 24),
+  ...parcelHedges(2200, 1060, 320, 160, 24),
+  ...parcelHedges(320, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(800, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(1280, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(1760, 1420, 480, 280, 26),
   // Goal approach — hedges flank the Sturston mud/grass mill corridor, clear of the stone.
   // Clifton (stone ~ (160, 1010), riverside west of x=400) is left open — no goal hedges,
   // so the riverside millstone stays reachable across mud/grass without a hedge gate.
@@ -904,51 +904,54 @@ const TRAIL_X = 1660;
 const TRAIL_HALF = 17;
 
 const TOWN_BUILDINGS: Building[] = [
-  // High street — south verge, spaced so boxes never stack.
-  frontY(760, HS_Y, HS_HALF, 84, 68, 1, 'The George & Dragon', 'pub'),
+  // High street — south verge, spaced so boxes never stack. Tightened toward Dig St.
+  frontY(800, HS_Y, HS_HALF, 84, 68, 1, 'The George & Dragon', 'pub'),
   frontY(980, HS_Y, HS_HALF, 88, 76, 1, 'The Green Man', 'pub'),
   frontY(1140, HS_Y, HS_HALF, 92, 58, 1, "Smith's Butcher", 'shop'),
-  frontY(1340, HS_Y, HS_HALF, 80, 70, 1, 'The Horns', 'pub'),
-  frontY(1560, HS_Y, HS_HALF, 90, 60, 1, 'Station Stores', 'shop'),
-  // Market Place — halls on the north verge, shop on the south.
-  frontY(1080, PLAZA_Y, PLAZA_HALF, 78, 88, -1, 'Market Hall', 'market', LANDMARK_SIZE),
-  frontY(1300, PLAZA_Y, PLAZA_HALF, 72, 80, -1, 'Town Hall', 'hall', LANDMARK_SIZE),
+  frontY(1320, HS_Y, HS_HALF, 80, 70, 1, 'The Horns', 'pub'),
+  frontY(1480, HS_Y, HS_HALF, 90, 60, 1, 'Station Stores', 'shop'),
+  // Market Place — halls on the north verge, shop on the south (plaza core).
+  frontY(1100, PLAZA_Y, PLAZA_HALF, 78, 88, -1, 'Market Hall', 'market', LANDMARK_SIZE),
+  frontY(1280, PLAZA_Y, PLAZA_HALF, 72, 80, -1, 'Town Hall', 'hall', LANDMARK_SIZE),
   frontY(1120, PLAZA_Y, PLAZA_HALF, 100, 62, 1, 'Gingerbread Shop', 'shop'),
-  // Compton — south of the brook, on the south trunk (not in a mid-band field).
+  // Compton — south of the brook, road-front on the wrap (village row, not mid-field).
   frontY(1080, COMPTON_Y, COMPTON_HALF, 96, 70, 1, 'The Vaults', 'pub'),
   frontY(1340, COMPTON_Y, COMPTON_HALF, 88, 72, 1, 'The White Hart', 'pub'),
-  frontY(620, COMPTON_Y, COMPTON_HALF, 86, 64, 1, 'The Wheel', 'pub'),
-  // Destinations on their own lanes.
-  frontY(1900, COACH_Y, COACH_HALF, 104, 72, 1, 'The Coach & Horses', 'pub'),
-  frontX(160, TRAIL_X, TRAIL_HALF, 78, 64, 1, 'The Baths', 'trailhead', LANDMARK_SIZE),
-  slandmark(240, 500, 118, 86, "St Oswald's", 'church'),
-  frontY(700, HS_Y, HS_HALF, 140, 68, -1, 'Old Grammar', 'school', LANDMARK_SIZE),
+  frontY(780, COMPTON_Y, COMPTON_HALF, 86, 64, 1, 'The Wheel', 'pub'),
+  // Trailhead destinations pulled in toward the high-street T (still north/east).
+  frontY(1780, COACH_Y, COACH_HALF, 104, 72, 1, 'The Coach & Horses', 'pub'),
+  frontX(400, TRAIL_X, TRAIL_HALF, 78, 64, 1, 'The Baths', 'trailhead', LANDMARK_SIZE),
+  // St Oswald's — church lane north verge, west of Market Place / Dig St core.
+  frontY(260, 548, 18, 118, 86, -1, "St Oswald's", 'church', LANDMARK_SIZE),
+  frontY(780, HS_Y, HS_HALF, 140, 68, -1, 'Old Grammar', 'school', LANDMARK_SIZE),
   // Ordinary terrace / cottage markers — core density, not landmarks.
+  // Keep clear of Dig St T (x≈1200) and civic footprints.
   shouseY(900, HS_Y, HS_HALF, -1, 'High St 1'),
-  shouseY(1040, HS_Y, HS_HALF, -1, 'High St 2'),
+  shouseY(1000, HS_Y, HS_HALF, -1, 'High St 2'),
   shouseY(1360, HS_Y, HS_HALF, -1, 'High St 3'),
   shouseY(1500, HS_Y, HS_HALF, -1, 'High St 4'),
-  shouseY(870, HS_Y, HS_HALF, 1, 'High St 5'),
-  shouseY(1440, HS_Y, HS_HALF, 1, 'High St 6'),
+  shouseY(880, HS_Y, HS_HALF, 1, 'High St 5'),
+  shouseY(1400, HS_Y, HS_HALF, 1, 'High St 6'),
   // Infill terrace — thickens the high street frontage on both verges.
-  shouseY(825, HS_Y, HS_HALF, -1, 'High St 7'),
-  shouseY(970, HS_Y, HS_HALF, -1, 'High St 8'),
-  shouseY(1280, HS_Y, HS_HALF, -1, 'High St 9'),
-  shouseY(1430, HS_Y, HS_HALF, -1, 'High St 10'),
-  shouseY(821, HS_Y, HS_HALF, 1, 'High St 11'),
-  shouseY(918, HS_Y, HS_HALF, 1, 'High St 12'),
-  shouseY(1396, HS_Y, HS_HALF, 1, 'High St 13'),
-  shouseY(1493, HS_Y, HS_HALF, 1, 'High St 14'),
-  shouseY(1280, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
-  shouseX(615, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
-  shouseX(760, CENTRE_X, CENTRE_HALF, -1, 'Market Row 3'),
-  shouseX(615, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
-  shouseX(690, CENTRE_X, CENTRE_HALF, 1, 'Dig St 3'),
-  shouseX(760, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
-  shouseY(780, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
+  shouseY(1080, HS_Y, HS_HALF, -1, 'High St 7'),
+  shouseY(1440, HS_Y, HS_HALF, -1, 'High St 8'),
+  shouseY(1580, HS_Y, HS_HALF, -1, 'High St 9'),
+  shouseY(1680, HS_Y, HS_HALF, -1, 'High St 10'),
+  shouseY(1060, HS_Y, HS_HALF, 1, 'High St 11'),
+  shouseY(1720, HS_Y, HS_HALF, 1, 'High St 12'),
+  shouseY(1540, HS_Y, HS_HALF, 1, 'High St 13'),
+  shouseY(1620, HS_Y, HS_HALF, 1, 'High St 14'),
+  shouseY(1360, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
+  // Dig / Market rows — west of centre street, clear of Gingerbread + HS kerb.
+  shouseX(640, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
+  shouseX(800, CENTRE_X, CENTRE_HALF, -1, 'Market Row 3'),
+  shouseX(720, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
+  shouseX(820, CENTRE_X, CENTRE_HALF, 1, 'Dig St 3'),
+  shouseX(900, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
+  shouseY(920, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
   shouseY(1520, COMPTON_Y, COMPTON_HALF, 1, 'Compton 2'),
   // Compton infill — fills the gaps between the pubs on the south frontage.
-  shouseY(707, COMPTON_Y, COMPTON_HALF, 1, 'Compton 3'),
+  shouseY(660, COMPTON_Y, COMPTON_HALF, 1, 'Compton 3'),
   shouseY(880, COMPTON_Y, COMPTON_HALF, 1, 'Compton 4'),
   shouseY(1160, COMPTON_Y, COMPTON_HALF, 1, 'Compton 5'),
   shouseY(1260, COMPTON_Y, COMPTON_HALF, 1, 'Compton 6'),
@@ -979,7 +982,7 @@ export const ASHBOURNE_TOWN: TownMap = {
   obstacles: TOWN_BUILDINGS,
 
   outOfBounds: [
-    srect(180, 240, 200, 200),
+    srect(180, 320, 180, 160),
     srect(2220, 1420, 220, 220),
   ],
 

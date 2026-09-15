@@ -30,6 +30,7 @@ import {
   isNorthOfRiver,
   riverYAt,
   distanceToRoad,
+  pointInRect,
   distToSegment,
   isNearRoad,
   isOnBridge,
@@ -1080,6 +1081,11 @@ test('map: every building fronts a road and footprints do not overlap', () => {
       isNearRoad(b.position, map, reach),
       `${b.name} must sit on a road front (d=${d.toFixed(1)} pad=${reach.toFixed(1)})`,
     );
+    // Pubs/shops/civics never float mid-parcel — road verge only (Tom #45).
+    if (b.kind !== 'house') {
+      const inField = map.fields.some((f) => pointInRect(b.position, f));
+      assert.equal(inField, false, `${b.name} must not sit mid-field`);
+    }
     assert.equal(isInObstacle(map.goals[0]!.position, map), false);
   }
   const gap = 6;
@@ -1147,6 +1153,17 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
   assert.ok(byKind.church!.position.x < byKind.market!.position.x, 'St Oswald’s reads west of the square');
   assert.ok(byKind.trailhead!.position.y < byKind.market!.position.y, 'Baths / trail sit toward the north edge');
+
+  // Town-centre cluster — civics hug Market Place / high street, not far field edges.
+  const core = { x: 1200 * TOWN_SCALE, y: 600 * TOWN_SCALE };
+  for (const b of [byKind.church!, byKind.school!, byKind.market!, byKind.hall!]) {
+    const d = Math.hypot(b.position.x - core.x, b.position.y - core.y);
+    assert.ok(d < 1100 * TOWN_SCALE, `${b.name} should cluster near Ashbourne centre (d=${(d / TOWN_SCALE).toFixed(0)})`);
+  }
+  assert.ok(
+    Math.hypot(byKind.trailhead!.position.x - core.x, byKind.trailhead!.position.y - core.y) < 900 * TOWN_SCALE,
+    'Baths pulled in toward the high-street trail T',
+  );
 
   assert.ok(map.roads.some((r) => r.kind === 'trail'), 'former-railway trail strip remains');
   const placeNames = map.places.map((p) => p.name);
