@@ -26,6 +26,9 @@ import {
   opponentGoalFor,
   passChargeRatio,
   placeTeammate,
+  pointInRiver,
+  bridgeCrossingSpan,
+  isOnBridge,
   quickSwitch,
   releasePass,
   RIP_MIN_STAMINA,
@@ -41,6 +44,7 @@ import {
   type Difficulty,
   type Input,
   type Obstacle,
+  type RiverPath,
   type Team,
   type World,
 } from '../sim/index.js';
@@ -226,20 +230,39 @@ const LANDMARK_SPRITE_IDS = [
   'high-st-4',
   'high-st-5',
   'high-st-6',
+  'high-st-7',
+  'high-st-8',
+  'high-st-9',
+  'high-st-10',
+  'high-st-11',
+  'high-st-12',
+  'high-st-13',
+  'high-st-14',
   'market-row-1',
   'market-row-2',
+  'market-row-3',
   'dig-st-1',
   'dig-st-2',
+  'dig-st-3',
   'compton-1',
   'compton-2',
+  'compton-3',
+  'compton-4',
+  'compton-5',
+  'compton-6',
+  'compton-7',
   'clifton-1',
   'clifton-2',
   'clifton-3',
   'clifton-4',
+  'clifton-5',
   'sturston-1',
   'sturston-2',
   'sturston-3',
   'sturston-4',
+  'sturston-5',
+  'sturston-6',
+  'millstone',
 ] as const;
 
 const LANDMARK_TEX_PREFIX = 'landmark-';
@@ -440,28 +463,145 @@ function segIntersect(
   return { x: a.x + t * rx, y: a.y + t * ry };
 }
 
-/** Clip a segment to an inclusive Y band. Used to keep grass verge off the brook. */
-function clipSegY(
+/**
+ * Split a road segment into the sub-segments that lie outside the (bent)
+ * river strip, by walking it in short steps. Used to keep the grass verge
+ * off the brook without assuming a horizontal band.
+ */
+function segmentRunsOutsideRiver(
   a: { x: number; y: number },
   b: { x: number; y: number },
-  minY: number,
-  maxY: number,
-): [{ x: number; y: number }, { x: number; y: number }] | null {
-  const dy = b.y - a.y;
-  const dx = b.x - a.x;
-  if (Math.abs(dy) < 1e-6) {
-    if (a.y < minY || a.y > maxY) return null;
-    return [a, b];
+  river: RiverPath,
+  step = 14,
+): [{ x: number; y: number }, { x: number; y: number }][] {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1e-6) return pointInRiver(a, river) ? [] : [[a, b]];
+  const n = Math.max(1, Math.ceil(len / step));
+  const pts: { x: number; y: number; inside: boolean }[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    pts.push({ ...p, inside: pointInRiver(p, river) });
   }
-  const tMin = (minY - a.y) / dy;
-  const tMax = (maxY - a.y) / dy;
-  const t0 = Math.max(0, Math.min(tMin, tMax));
-  const t1 = Math.min(1, Math.max(tMin, tMax));
-  if (t0 >= t1) return null;
-  return [
-    { x: a.x + dx * t0, y: a.y + dy * t0 },
-    { x: a.x + dx * t1, y: a.y + dy * t1 },
+  const runs: [{ x: number; y: number }, { x: number; y: number }][] = [];
+  let start: { x: number; y: number } | null = null;
+  for (let i = 0; i < pts.length; i++) {
+    const pt = pts[i]!;
+    if (!pt.inside) {
+      if (!start) start = pt;
+    } else if (start) {
+      runs.push([start, pts[i - 1]!]);
+      start = null;
+    }
+  }
+  if (start) runs.push([start, pts[pts.length - 1]!]);
+  return runs.filter(([ra, rb]) => Math.hypot(rb.x - ra.x, rb.y - ra.y) > 1);
+}
+
+/** Unit tangent at polyline index i. */
+function polyTangent(points: { x: number; y: number }[], i: number): { x: number; y: number } {
+  const a = points[Math.max(0, i - 1)]!;
+  const b = points[Math.min(points.length - 1, i + 1)]!;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len };
+}
+
+/** Offset a centreline by `dist` along the left normal (mitred-ish). */
+function offsetPolyline(
+  points: { x: number; y: number }[],
+  dist: number,
+): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const t = polyTangent(points, i);
+    out.push({ x: points[i]!.x - t.y * dist, y: points[i]!.y + t.x * dist });
+  }
+  return out;
+}
+
+/** Axis-free filled rect centred at c, sized (along × across), oriented by unit tangent t. */
+function fillOrientedRect(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  along: number,
+  across: number,
+  tx: number,
+  ty: number,
+): void {
+  const hx = along / 2;
+  const hy = across / 2;
+  const nx = -ty;
+  const ny = tx;
+  const corners = [
+    { x: cx - tx * hx - nx * hy, y: cy - ty * hx - ny * hy },
+    { x: cx + tx * hx - nx * hy, y: cy + ty * hx - ny * hy },
+    { x: cx + tx * hx + nx * hy, y: cy + ty * hx + ny * hy },
+    { x: cx - tx * hx + nx * hy, y: cy - ty * hx + ny * hy },
   ];
+  g.beginPath();
+  g.moveTo(corners[0]!.x, corners[0]!.y);
+  for (let i = 1; i < corners.length; i++) g.lineTo(corners[i]!.x, corners[i]!.y);
+  g.closePath();
+  g.fillPath();
+}
+
+/** Ellipse centred at c, radii (across × along), oriented by unit tangent t — filled as a polygon so it can rotate. */
+function fillOrientedEllipse(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  acrossDiam: number,
+  alongDiam: number,
+  tx: number,
+  ty: number,
+  steps = 24,
+): void {
+  const nx = -ty;
+  const ny = tx;
+  const rAcross = acrossDiam / 2;
+  const rAlong = alongDiam / 2;
+  g.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const a = (s / steps) * Math.PI * 2;
+    const lx = Math.cos(a) * rAcross;
+    const ly = Math.sin(a) * rAlong;
+    const x = cx + nx * lx + tx * ly;
+    const y = cy + ny * lx + ty * ly;
+    if (s === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.fillPath();
+}
+
+/** Arc (as in Phaser's g.arc: angle 0 = local +x/"across", increasing toward local +y/"along") oriented by unit tangent t. */
+function strokeOrientedArc(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  r: number,
+  a0: number,
+  a1: number,
+  tx: number,
+  ty: number,
+  steps = 16,
+): void {
+  const nx = -ty;
+  const ny = tx;
+  g.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const a = a0 + ((a1 - a0) * s) / steps;
+    const lx = Math.cos(a) * r;
+    const ly = Math.sin(a) * r;
+    const x = cx + nx * lx + tx * ly;
+    const y = cy + ny * lx + ty * ly;
+    if (s === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.strokePath();
 }
 
 function buildTag(build: Build): string {
@@ -1003,13 +1143,7 @@ export class GameScene extends Phaser.Scene {
     this.drawForests(rand);
     this.drawApproachMud();
 
-    const rx = map.river.position.x - map.river.width / 2;
-    const ry = map.river.position.y - map.river.height / 2;
-    this.mapGfx.fillStyle(PALETTE.water, 1);
-    this.mapGfx.fillRect(rx, ry, map.river.width, map.river.height);
-    this.mapGfx.fillStyle(PALETTE.waterEdge, 0.6);
-    this.mapGfx.fillRect(rx, ry, map.river.width, 10);
-    this.mapGfx.fillRect(rx, ry + map.river.height - 10, map.river.width, 10);
+    this.drawRiver();
 
     this.drawStoneBridgeDecks();
     this.drawRoads(rand);
@@ -1055,7 +1189,15 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const g of map.goals) {
-      this.drawMillstone(g.position.x, g.position.y, g.name);
+      const size = this.landmarkNativeSize('millstone');
+      this.placeLandmarkSprite(
+        'millstone',
+        g.position.x,
+        g.position.y,
+        size?.w ?? 96,
+        size?.h ?? 96,
+        LANDMARK_GROUND_DEPTH,
+      );
       const label = this.add
         .text(g.position.x, g.position.y + 58, g.name.toUpperCase(), {
           fontFamily: FONT,
@@ -1104,6 +1246,70 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Henmore — bent water strip (SW→NE, soft bends, one hairpin), not a fat slab. */
+  private drawRiver(): void {
+    const g = this.mapGfx;
+    const river = this.world.map.river;
+    const poly = mitredStripPolygon(river.points, river.width);
+    if (!poly || poly.length < 4) return;
+    g.fillStyle(PALETTE.water, 1);
+    g.beginPath();
+    g.moveTo(poly[0]!.x, poly[0]!.y);
+    for (let i = 1; i < poly.length; i++) g.lineTo(poly[i]!.x, poly[i]!.y);
+    g.closePath();
+    g.fillPath();
+    // Soft edge band along both banks — reads on a bend the same way the
+    // old top/bottom highlight rects did on the flat slab.
+    g.lineStyle(10, PALETTE.waterEdge, 0.6);
+    g.beginPath();
+    g.moveTo(poly[0]!.x, poly[0]!.y);
+    for (let i = 1; i < poly.length; i++) g.lineTo(poly[i]!.x, poly[i]!.y);
+    g.closePath();
+    g.strokePath();
+    this.drawRiverBanks(river);
+  }
+
+  /**
+   * Soft continuous mud→grass bank edge along both Henmore banks.
+   * Thick stroked polylines (gentle wobble) break the flat water/grass join
+   * without blotchy fleck/acne spam. Field grit stays separate.
+   */
+  private drawRiverBanks(river: RiverPath): void {
+    const g = this.mapGfx;
+    const points = river.points;
+    if (points.length < 2) return;
+    const hw = river.width / 2;
+    const strokeBank = (
+      side: 1 | -1,
+      baseDist: number,
+      width: number,
+      color: number,
+      alpha: number,
+    ): void => {
+      const path: { x: number; y: number }[] = [];
+      for (let i = 0; i < points.length; i++) {
+        const t = polyTangent(points, i);
+        // Low-frequency wobble — organic edge, not noise flecks.
+        const wobble = Math.sin(i * 0.47) * 2.8 + Math.sin(i * 1.17 + side) * 1.4;
+        const dist = side * (hw + baseDist + wobble);
+        path.push({ x: points[i]!.x - t.y * dist, y: points[i]!.y + t.x * dist });
+      }
+      g.lineStyle(width, color, alpha);
+      g.beginPath();
+      g.moveTo(path[0]!.x, path[0]!.y);
+      for (let i = 1; i < path.length; i++) g.lineTo(path[i]!.x, path[i]!.y);
+      g.strokePath();
+    };
+    for (const side of [1, -1] as const) {
+      // Mud shelf just outside the water edge.
+      strokeBank(side, 5, 16, PALETTE.mud, 0.34);
+      strokeBank(side, 7, 9, PALETTE.mudDark, 0.2);
+      // Soft grass fray further out — continuous transition into the pitch.
+      strokeBank(side, 14, 13, PALETTE.grassDark, 0.26);
+      strokeBank(side, 18, 8, PALETTE.grass, 0.16);
+    }
+  }
+
   /** English woodland mass — overlapping canopy, readable as a tree block. */
   private drawForests(rand: () => number): void {
     const g = this.mapGfx;
@@ -1137,35 +1343,45 @@ export class GameScene extends Phaser.Scene {
       const y = f.position.y - f.height / 2;
       g.fillStyle(tints[i % tints.length]!, 1);
       g.fillRect(x, y, f.width, f.height);
-      g.lineStyle(2, PALETTE.plough, 0.22);
+      g.lineStyle(2, PALETTE.plough, 0.28);
       const rows = Math.max(4, Math.floor(f.height / 20));
       for (let r = 1; r < rows; r++) {
         const py = y + (r / rows) * f.height;
         g.lineBetween(x + 8, py, x + f.width - 8, py);
+      }
+      // Seeded grit/tufts — clearly readable at play zoom, still irregular (no grid).
+      const tufts = Math.max(32, Math.floor((f.width * f.height) / 1400));
+      for (let t = 0; t < tufts; t++) {
+        const tx = x + 6 + rand() * Math.max(1, f.width - 12);
+        const ty = y + 6 + rand() * Math.max(1, f.height - 12);
+        const pick = rand();
+        g.fillStyle(pick < 0.34 ? PALETTE.grass : pick < 0.67 ? PALETTE.grassAlt : PALETTE.grassDark, 0.48 + rand() * 0.12);
+        if (rand() > 0.45) {
+          g.fillRect(tx, ty, 3, 7 + rand() * 8);
+        } else {
+          g.fillCircle(tx, ty, 2.4 + rand() * 2.8);
+        }
       }
       g.lineStyle(2, PALETTE.hedgeEdge, 0.15);
       g.strokeRect(x + 2, y + 2, f.width - 4, f.height - 4);
     }
   }
 
-  /** Mitred UK lanes — square caps, no sausage round-ends. */
+  /** Mitred UK lanes — square caps, no sausage round-ends.
+   * Asphalt never paints through open water: verge AND carriageway are split
+   * with segmentRunsOutsideRiver; bridge decks carry the crossing (bridges-only).
+   */
   private drawRoads(rand: () => number): void {
     const g = this.mapGfx;
     const river = this.world.map.river;
-    const riverTop = river.position.y - river.height / 2;
-    const riverBot = river.position.y + river.height / 2;
     for (const road of this.world.map.roads) {
       const street = road.kind === 'street';
       const trail = road.kind === 'trail';
-      // Grass verge stays on the banks — never a fat collar across the Henmore.
+      // Grass verge + tarmac stay on the banks — never a grey stripe on the Henmore.
       for (let i = 0; i < road.points.length - 1; i++) {
         const a = road.points[i]!;
         const b = road.points[i + 1]!;
-        for (const band of [
-          clipSegY(a, b, -1e6, riverTop),
-          clipSegY(a, b, riverBot, 1e6),
-        ]) {
-          if (!band) continue;
+        for (const band of segmentRunsOutsideRiver(a, b, river)) {
           this.drawMitredStrip(
             g,
             band,
@@ -1173,23 +1389,37 @@ export class GameScene extends Phaser.Scene {
             trail ? PALETTE.trailEdge : PALETTE.verge,
             trail ? 0.4 : 0.55,
           );
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width,
+            trail ? PALETTE.trail : PALETTE.tarmac,
+            0.96,
+          );
+          this.drawMitredStrip(
+            g,
+            band,
+            road.width * 0.36,
+            trail ? PALETTE.trailWear : PALETTE.tarmacWear,
+            trail ? 0.28 : street ? 0.2 : 0.14,
+          );
+          this.stippleRoad(g, band, road.width, rand);
         }
       }
-      this.drawMitredStrip(
-        g,
-        road.points,
-        road.width,
-        trail ? PALETTE.trail : PALETTE.tarmac,
-        0.96,
-      );
-      this.drawMitredStrip(
-        g,
-        road.points,
-        road.width * 0.36,
-        trail ? PALETTE.trailWear : PALETTE.tarmacWear,
-        trail ? 0.28 : street ? 0.2 : 0.14,
-      );
-      this.stippleRoad(g, road.points, road.width, rand);
+    }
+    // Road continuity across Henmore is the bridge deck only (width = crossing road).
+    this.drawBridgeCarriageways();
+  }
+
+  /** Asphalt on each stone bridge — follows crossing-road centreline; no open-water tarmac. */
+  private drawBridgeCarriageways(): void {
+    const g = this.mapGfx;
+    const map = this.world.map;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      this.drawMitredStrip(g, span.points, span.width, PALETTE.tarmac, 0.96);
+      this.drawMitredStrip(g, span.points, span.width * 0.36, PALETTE.tarmacWear, 0.2);
     }
   }
 
@@ -1462,7 +1692,8 @@ export class GameScene extends Phaser.Scene {
           if (
             !this.nearJunctionPaint(x0, y0, junctions, roundabouts) &&
             !this.nearJunctionPaint(xm, ym, junctions, roundabouts) &&
-            !this.nearJunctionPaint(x1, y1, junctions, roundabouts)
+            !this.nearJunctionPaint(x1, y1, junctions, roundabouts) &&
+            !this.isOpenWaterPaint(xm, ym)
           ) {
             g.beginPath();
             g.moveTo(x0 + nx * hw, y0 + ny * hw);
@@ -1516,7 +1747,10 @@ export class GameScene extends Phaser.Scene {
           const t = (segLen * s) / samples;
           const px = a.x + ux * t;
           const py = a.y + uy * t;
-          if (this.nearJunctionPaint(px, py, junctions, roundabouts)) {
+          if (
+            this.nearJunctionPaint(px, py, junctions, roundabouts) ||
+            this.isOpenWaterPaint(px, py)
+          ) {
             if (started) g.strokePath();
             started = false;
             g.beginPath();
@@ -1621,95 +1855,117 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Width of the tarmac that actually crosses this deck. */
-  private crossingRoadWidth(x: number, y: number): number {
+  /** True if paint would sit on open water (river, not on a bridge deck). */
+  private isOpenWaterPaint(x: number, y: number): boolean {
     const map = this.world.map;
-    let best = 0;
-    for (const r of map.roads) {
-      for (let i = 0; i < r.points.length - 1; i++) {
-        if (distToSegment({ x, y }, r.points[i]!, r.points[i + 1]!) <= r.width * 0.65) {
-          if (r.width > best) best = r.width;
-        }
-      }
-    }
-    return best || 88;
+    return pointInRiver({ x, y }, map.river) && !isOnBridge({ x, y }, map);
   }
 
-  /** Packhorse arch in the water — structure hugs the lane, no fat deck collar. */
+  /** Packhorse arch in the water — structure follows the crossing road, no fat deck collar. */
   private drawStoneBridgeDecks(): void {
     const g = this.mapGfx;
-    const river = this.world.map.river;
-    for (const b of this.world.map.bridges) {
-      const x = b.position.x;
-      const y = b.position.y;
-      const h = b.height;
-      const roadW = this.crossingRoadWidth(x, y);
+    const map = this.world.map;
+    const river = map.river;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      const pts = span.points;
+      const roadW = span.width;
       const wall = 13;
       const deck = roadW + wall * 2;
       const pier = 22;
       const archW = roadW + 36;
-      const riverH = river.height;
-      const by = y - h / 2;
-      // Piers sit in the brook beside the carriageway, not as a wide stone plaza.
+      const riverH = river.width;
+      const mid = Math.floor(pts.length / 2);
+      const c = pts[mid]!;
+      const t = polyTangent(pts, mid);
+      const nx = -t.y;
+      const ny = t.x;
+      // Piers sit in the brook beside the carriageway, oriented to the span.
       for (const side of [-1, 1]) {
-        const px = x + side * (roadW / 2 + pier * 0.35);
+        const px = c.x + side * nx * (roadW / 2 + pier * 0.35);
+        const py = c.y + side * ny * (roadW / 2 + pier * 0.35);
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(px - pier / 2, y - riverH * 0.42, pier, riverH * 0.84);
+        fillOrientedRect(g, px, py, riverH * 0.84, pier, t.x, t.y);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(px - pier / 2 + 2, y - riverH * 0.38, pier - 4, riverH * 0.76);
+        fillOrientedRect(g, px, py, riverH * 0.76, Math.max(4, pier - 4), t.x, t.y);
       }
       g.fillStyle(PALETTE.archShadow, 0.95);
-      g.fillEllipse(x, y + 6, archW * 0.92, riverH * 0.72);
+      fillOrientedEllipse(g, c.x + t.x * 6, c.y + t.y * 6, archW * 0.92, riverH * 0.72, t.x, t.y);
       g.fillStyle(PALETTE.water, 0.92);
-      g.fillEllipse(x, y + 10, roadW * 0.72, 22);
+      fillOrientedEllipse(g, c.x + t.x * 10, c.y + t.y * 10, roadW * 0.72, 22, t.x, t.y);
+      const archR = Math.min(archW * 0.36, roadW * 0.48);
+      const ax = c.x + t.x * 10;
+      const ay = c.y + t.y * 10;
       g.lineStyle(5, PALETTE.stone, 0.95);
-      g.beginPath();
-      g.arc(x, y + 10, Math.min(archW * 0.36, roadW * 0.48), Math.PI * 1.02, -0.02, false);
-      g.strokePath();
+      strokeOrientedArc(g, ax, ay, archR, Math.PI * 1.02, -0.02, t.x, t.y);
       g.lineStyle(2.5, PALETTE.stoneDark, 0.85);
-      g.beginPath();
-      g.arc(x, y + 12, Math.min(archW * 0.36, roadW * 0.48) - 3, Math.PI * 1.02, -0.02, false);
-      g.strokePath();
-      // Bank abutments — same width as deck + parapet, not a flopping collar.
-      for (const top of [true, false]) {
-        const ay = top ? by - 6 : by + h - 4;
+      strokeOrientedArc(g, ax + t.x * 2, ay + t.y * 2, archR - 3, Math.PI * 1.02, -0.02, t.x, t.y);
+      // Bank abutments — across the deck at each path end, not axis-aligned stamps.
+      for (const end of [pts[0]!, pts[pts.length - 1]!]) {
+        const ei = end === pts[0]! ? 0 : pts.length - 1;
+        const et = polyTangent(pts, ei);
         g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(x - deck / 2 - 2, ay, deck + 4, 14);
+        fillOrientedRect(g, end.x, end.y, 14, deck + 4, et.x, et.y);
         g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(x - deck / 2, ay + 2, deck, 9);
+        fillOrientedRect(g, end.x, end.y, 9, deck, et.x, et.y);
       }
     }
   }
 
-  /** Low parapets just outside the tarmac so the roadway stays continuous. */
+  /** Low parapets just outside the tarmac — follow the crossing centreline. */
   private drawStoneBridgeParapets(): void {
     const g = this.mapGfx;
-    for (const b of this.world.map.bridges) {
-      const x = b.position.x;
-      const y = b.position.y;
-      const h = b.height;
-      const roadW = this.crossingRoadWidth(x, y);
+    const map = this.world.map;
+    for (const b of map.bridges) {
+      const span = bridgeCrossingSpan(b, map);
+      if (!span || span.points.length < 2) continue;
+      const pts = span.points;
+      const roadW = span.width;
       const wall = 13;
-      const by = y - h / 2;
-      const drawWall = (cx: number): void => {
-        const wx = cx - wall / 2;
-        g.fillStyle(PALETTE.stoneDark, 1);
-        g.fillRect(wx - 1, by - 8, wall + 2, h + 16);
-        g.fillStyle(PALETTE.stone, 1);
-        g.fillRect(wx, by - 6, wall, h + 12);
-        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
-        for (let py = by; py < by + h; py += 11) {
-          g.lineBetween(wx + 1, py, wx + wall - 1, py);
-        }
+      const inset = roadW / 2 + wall / 2 - 1;
+      for (const side of [-1, 1]) {
+        const wallPath = offsetPolyline(pts, side * inset);
+        this.drawMitredStrip(g, wallPath, wall + 2, PALETTE.stoneDark, 1);
+        this.drawMitredStrip(g, wallPath, wall, PALETTE.stone, 1);
+        // Coping caps at each end of the parapet run.
+        const a = wallPath[0]!;
+        const z = wallPath[wallPath.length - 1]!;
         g.fillStyle(PALETTE.stoneLite, 1);
-        g.fillRect(wx - 1, by - 8, wall + 2, 6);
-        g.fillRect(wx - 1, by + h + 2, wall + 2, 6);
-      };
-      drawWall(x - roadW / 2 - wall / 2 + 1);
-      drawWall(x + roadW / 2 + wall / 2 - 1);
+        g.fillRect(a.x - (wall + 2) / 2, a.y - 3, wall + 2, 6);
+        g.fillRect(z.x - (wall + 2) / 2, z.y - 3, wall + 2, 6);
+        // Mortar ticks along the wall.
+        g.lineStyle(1.4, PALETTE.stoneMortar, 0.85);
+        for (let i = 0; i < wallPath.length - 1; i += 2) {
+          const p0 = wallPath[i]!;
+          const p1 = wallPath[Math.min(wallPath.length - 1, i + 1)]!;
+          const t = polyTangent(wallPath, i);
+          const nx = -t.y;
+          const ny = t.x;
+          const mx = (p0.x + p1.x) / 2;
+          const my = (p0.y + p1.y) / 2;
+          g.lineBetween(mx - nx * (wall * 0.35), my - ny * (wall * 0.35), mx + nx * (wall * 0.35), my + ny * (wall * 0.35));
+        }
+      }
+      // Cutwaters at mid-span, outside the kerb.
+      const mid = Math.floor(pts.length / 2);
+      const c = pts[mid]!;
+      const t = polyTangent(pts, mid);
+      const nx = -t.y;
+      const ny = t.x;
       g.fillStyle(PALETTE.stoneLite, 1);
-      g.fillTriangle(x - roadW / 2 - 10, y, x - roadW / 2 + 2, y - 11, x - roadW / 2 + 2, y + 11);
-      g.fillTriangle(x + roadW / 2 + 10, y, x + roadW / 2 - 2, y - 11, x + roadW / 2 - 2, y + 11);
+      for (const side of [-1, 1]) {
+        const kx = c.x + side * nx * (roadW / 2);
+        const ky = c.y + side * ny * (roadW / 2);
+        g.fillTriangle(
+          kx + side * nx * 10,
+          ky + side * ny * 10,
+          kx - t.x * 11,
+          ky - t.y * 11,
+          kx + t.x * 11,
+          ky + t.y * 11,
+        );
+      }
     }
   }
 
@@ -1728,34 +1984,6 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(PALETTE.lampGlass, 0.85);
       g.fillRect(x - 4, y - 24, 8, 6);
     }
-  }
-
-  /** Sturston (Up goal) blue/yellow hoops; Clifton (Down goal) black. */
-  private drawMillstone(x: number, y: number, name: string): void {
-    const g = this.mapGfx;
-    if (name === MILL_CLIFTON) {
-      g.lineStyle(11, PALETTE.teamDownEdge, 0.95);
-      g.strokeCircle(x, y, 42);
-      g.lineStyle(8, PALETTE.teamDown, 1);
-      g.strokeCircle(x, y, 42);
-    } else {
-      const segs = 8;
-      for (let i = 0; i < segs; i++) {
-        const a0 = (i / segs) * Math.PI * 2 - Math.PI / 2;
-        const a1 = ((i + 1) / segs) * Math.PI * 2 - Math.PI / 2;
-        g.lineStyle(10, i % 2 === 0 ? PALETTE.teamUp : PALETTE.teamUpTrim, 0.95);
-        g.beginPath();
-        g.arc(x, y, 42, a0, a1, false);
-        g.strokePath();
-      }
-    }
-    g.fillStyle(PALETTE.millstone, 1);
-    g.fillCircle(x, y, 22);
-    g.lineStyle(4, PALETTE.millstoneEdge, 1);
-    g.strokeCircle(x, y, 22);
-    g.strokeCircle(x, y, 12);
-    g.fillStyle(PALETTE.millstoneEdge, 1);
-    g.fillCircle(x, y, 4);
   }
 
   /** Placeholder Ashbourne turn-up plinth — render only, no collision. */
@@ -3930,13 +4158,15 @@ export class GameScene extends Phaser.Scene {
         Math.max(1.5, h.height * sy),
       );
     }
-    g.fillStyle(PALETTE.water, 0.9);
-    g.fillRect(
-      ox,
-      oy + (map.river.position.y - map.river.height / 2) * sy,
-      MINIMAP_W,
-      map.river.height * sy,
-    );
+    if (map.river.points.length >= 2) {
+      g.lineStyle(Math.max(2, map.river.width * ((sx + sy) / 2)), PALETTE.water, 0.9);
+      g.beginPath();
+      g.moveTo(ox + map.river.points[0]!.x * sx, oy + map.river.points[0]!.y * sy);
+      for (let i = 1; i < map.river.points.length; i++) {
+        g.lineTo(ox + map.river.points[i]!.x * sx, oy + map.river.points[i]!.y * sy);
+      }
+      g.strokePath();
+    }
 
     g.fillStyle(PALETTE.building, 0.85);
     for (const b of map.obstacles) {

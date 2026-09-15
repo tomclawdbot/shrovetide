@@ -113,7 +113,33 @@ export interface GoalMarker {
   name: MillName;
 }
 
+/**
+ * Henmore centerline — a bent polyline strip (diagonal run, soft bends, one
+ * tight hairpin switchback) rather than a single axis-aligned slab. `width`
+ * is the full water breadth measured perpendicular to the local run.
+ */
+export interface RiverPath {
+  /** Vertices in sim space. Consecutive points form the strip's segments. */
+  points: Vec2Like[];
+  /** Full width of the water strip. */
+  width: number;
+}
+
 export interface Bridge extends RectZone {}
+
+/** The road polyline a bridge deck should paint/collide along, plus its width. */
+export interface BridgeCrossingSpan {
+  /** Sub-polyline of the crossing road: river run + a short dry-bank apron on each end. */
+  points: Vec2Like[];
+  /** Width of the crossing road (deck width, no parapet collar). */
+  width: number;
+}
+
+// Declared here (well before ASHBOURNE_TOWN's module-eval-time construction,
+// which calls bridgeCrossingSpan indirectly via townLamps) to dodge TDZ.
+const BRIDGE_SPAN_CACHE = new WeakMap<Bridge, BridgeCrossingSpan | null>();
+/** Sampling step (sim px) used to densify a road's vertex list before extracting a span. */
+const BRIDGE_SPAN_SAMPLE_STEP = 10;
 
 /**
  * UK mini-roundabout — tarmac ring around a grass island. Visual — not collision.
@@ -133,7 +159,7 @@ export interface FieldParcel extends RectZone {}
 /** Edge woodland / tree belt. Visual boundary — not a hard OOB. */
 export interface ForestStand extends RectZone {}
 
-/** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
+/** Town street, minor lane, or former-railway trail. Visual — not collision. */
 export type RoadKind = 'street' | 'lane' | 'trail';
 
 /** Polyline lane. Joints are mitred in the client — keep vertices on junctions / ring entries. */
@@ -157,8 +183,8 @@ export interface TownMap {
   obstacles: Obstacle[];
   /** Players can't enter with or without ball. Ball entering → teleport to nearest legal point. */
   outOfBounds: RectZone[];
-  /** Water zone. Slow movement (RIVER_SPEED_MULT) unless on a bridge. */
-  river: RectZone;
+  /** Henmore water strip. Slow movement (RIVER_SPEED_MULT) unless on a bridge. */
+  river: RiverPath;
   /** Walkable segments crossing the river. Fast movement. */
   bridges: Bridge[];
   /**
@@ -220,8 +246,12 @@ function srect(x: number, y: number, w: number, h: number): RectZone {
 
 /** Buildings move with the parish but do not become fortresses. */
 const BUILDING_SIZE = 1.25;
-/** Civic massing reads from a screenshot without walling off hug routes. */
-const LANDMARK_SIZE = 1.65;
+/**
+ * Civic massing reads from a screenshot without walling off hug routes.
+ * Second +30% on civic only (2.15 → ~2.795) so church/school/halls read
+ * as destinations at play zoom (Tom 2026-09-14 evening).
+ */
+const LANDMARK_SIZE = 2.795;
 function sbuilding(
   x: number,
   y: number,
@@ -605,15 +635,16 @@ function hedgeCol(
 //
 // Layout grammar (from the overworld refs, not their dirt / fantasy props):
 //   one E–W trunk, one N–S through the plinth, a rounded secondary wrap,
-//   mill spurs, trailhead ring. Generous grass. Never a circle on the plinth.
+//   trailhead ring. Generous grass. Never a circle on the plinth.
+//   Millstones: mud/grass hedge corridor — no dedicated approach road.
 //
 // Henmore along the south edge of the historic core. High street and Market
 // Place north of the brook. St Oswald’s west (churchyard OOB). Compton south.
 // Former railway + tunnel on the north cutting. Clifton (W) / Sturston (E).
 //
-//   [Tunnel]──trail──(R)──[Baths]──lane──[Coach]
-//   [St Oswald's]   [Old Grammar]  Market Place △ (U)
-//        churchyard      Green Man / halls
+//   [Tunnel]──trail──(R)          (ring stays north; destinations on HS)
+//   [St Oswald's]──[Old Grammar]──Market Place △──[Baths]──[Coach]  (HS north)
+//        west HS           Green Man / Dig St core     trail T east
 //              ║  centre street (through plinth — no circus)
 //   ▒▒▒▒▒▒▒▒▒▒▒ HENMORE ▒▒▒▒▒▒▒▒▒▒▒  stone bridges
 //        Compton wrap (curved corners)   [Wheel]
@@ -643,7 +674,7 @@ const TOWN_ROADS: RoadSegment[] = [
     [960, 520],
     [1420, 520],
     [1420, 660],
-  ], { radius: 48 }),
+  ], { radius: 58, smooth: 1 }),
   // Secondary through street — church T south, Compton wrap, east column up to
   // the high street. A real through route (not a minor lane): broken-white centre.
   sroad('street', 44, [
@@ -651,17 +682,7 @@ const TOWN_ROADS: RoadSegment[] = [
     [400, 1140],
     [2000, 1140],
     [2000, 660],
-  ], { radius: 72 }),
-  // Clifton millstone — hedge corridor, then off the west edge.
-  sroad('lane', 44, [
-    [0, 790],
-    [400, 790],
-  ]),
-  // Sturston millstone — hedge corridor, then off the east edge.
-  sroad('lane', 44, [
-    [2000, 790],
-    [2400, 790],
-  ]),
+  ], { radius: 170, smooth: 1 }),
   // St Oswald's south frontage — T on the wrap, then off the west edge.
   sroad('lane', 36, [
     [400, 548],
@@ -686,70 +707,174 @@ const TOWN_ROADS: RoadSegment[] = [
 
 /** Adjacent hedged parcels — shared edges read as a patchwork, not scattered stamps. */
 const TOWN_FIELDS: FieldParcel[] = [
-  // North of the high street, west of the trail (two neighbours sharing x=960).
+  // North of the high street — west parcel keeps full depth (NW grass playable).
+  // East parcel stops above Market Place halls so civic verge is not field fill.
   sfield(700, 280, 520, 400),
-  sfield(1290, 280, 660, 400),
-  // North-east of the trail.
+  sfield(1290, 200, 660, 300),
+  // North-east of the trail (Coach / Baths sit on the high-street trail T, not here).
   sfield(2100, 200, 480, 280),
-  // Between Henmore south bank and Compton (cells between the N–S columns).
-  sfield(220, 1050, 280, 140),
-  sfield(700, 1050, 520, 140),
-  sfield(1600, 1050, 720, 140),
-  sfield(2200, 1050, 320, 140),
-  // South of Compton — one row of neighbouring parcels.
-  sfield(320, 1400, 480, 320),
-  sfield(800, 1400, 480, 320),
-  sfield(1280, 1400, 480, 320),
-  sfield(1760, 1400, 480, 320),
+  // Between Henmore south bank and Compton carriageway (not over south-front pubs).
+  // West cell shifted south of the diagonal west crossing (dry grass centre).
+  sfield(220, 1300, 280, 200),
+  sfield(700, 1060, 520, 160),
+  sfield(1600, 1060, 720, 160),
+  sfield(2200, 1060, 320, 160),
+  // South of Compton — north edge clears road-front pubs (~y=1186), then patchwork.
+  sfield(320, 1420, 480, 280),
+  sfield(800, 1420, 480, 280),
+  sfield(1280, 1420, 480, 280),
+  sfield(1760, 1420, 480, 280),
 ];
 
 const TOWN_HEDGES: RectZone[] = [
   // Shared edges get one hedge so the patchwork does not double-collar.
   ...parcelHedges(700, 280, 520, 400, 26, {}, 56, { e: true }),
-  ...parcelHedges(1290, 280, 660, 400, 26),
+  ...parcelHedges(1290, 200, 660, 300, 26),
   ...parcelHedges(2100, 200, 480, 280, 26),
-  ...parcelHedges(220, 1050, 280, 140, 24),
-  ...parcelHedges(700, 1050, 520, 140, 24),
-  ...parcelHedges(1600, 1050, 720, 140, 24),
-  ...parcelHedges(2200, 1050, 320, 140, 24),
-  ...parcelHedges(320, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(800, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(1280, 1400, 480, 320, 26, {}, 56, { e: true }),
-  ...parcelHedges(1760, 1400, 480, 320, 26),
-  // Goal approaches — hedges flank the millstone lanes, clear of the stones.
-  srect(355, 754, 270, 22),
-  srect(355, 826, 270, 18),
-  srect(2045, 754, 270, 22),
-  srect(2045, 826, 270, 18),
+  // Compton-band keeps its own south hedge — grass strip clears road-front pubs.
+  ...parcelHedges(220, 1300, 280, 200, 24, {}, 56, { s: true }),
+  ...parcelHedges(700, 1060, 520, 160, 24),
+  ...parcelHedges(1600, 1060, 720, 160, 24),
+  ...parcelHedges(2200, 1060, 320, 160, 24),
+  ...parcelHedges(320, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(800, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(1280, 1420, 480, 280, 26, {}, 56, { e: true }),
+  ...parcelHedges(1760, 1420, 480, 280, 26),
+  // Both mill approaches stay open mud/grass — no goal-flank hedges.
+  // Clifton stone ~ (160, 1010); Sturston ~ (2260, 768). Parcel hedges above
+  // still bound the pitch fields; riverside stones stay reachable without a hedge gate.
 ];
 
-/** Ashbourne edge woodland — readable tree blocks, not fantasy clutter. */
+/**
+ * Ashbourne edge woodland — one clustered canopy mass along the north edge
+ * (split only by the trail cutting through), plus a tiny SW edge strip.
+ * Clear of the trailhead ring, plinth approach, and both mill corridors.
+ */
 const TOWN_FORESTS: ForestStand[] = [
-  // North belt above the north parcels (trail cuts the gap to the NE block).
-  srect(620, 72, 1240, 168),
-  srect(2180, 170, 400, 280),
-  srect(70, 560, 168, 340),
-  srect(70, 1460, 200, 260),
-  srect(2384, 720, 128, 500),
+  srect(800, 60, 1520, 160),
+  srect(2070, 60, 620, 160),
+  srect(30, 1040, 100, 280),
+];
+
+/**
+ * Henmore centerline — a real SW→NE diagonal (bottom-left to upper-right),
+ * not a flat east–west slab, with soft bends and one tight open-U
+ * hairpin that continues downstream (Tom 2026-09-14: "hairpin, not oxbow"
+ * — FAIL if closed/nearly-closed pond). Endpoints run off-map on both ends
+ * (no rectangular stub inside the frame). The WEST_X/CENTRE_X/EAST_X
+ * crossings are exact vertices so the N–S roads (and their bridges) land on
+ * the water without drift. The hairpin sits between the centre and east
+ * bridges, south of the high street — an open U (tip clear of HS asphalt)
+ * with clear parallel legs so the channel stays constant-width, not a lake.
+ * Tip must not intersect the high street or trailhead T (bridges-only crossings).
+ */
+const RIVER_WIDTH = 60;
+const RIVER_WEST_Y = 1020;
+const RIVER_CENTRE_Y = 880;
+const RIVER_EAST_Y = 740;
+
+/** Off-map SW entry through the west bridge and on to the centre bridge. */
+const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
+  [-160, 1240],
+  [-40, 1185],
+  [100, 1135],
+  [260, 1075],
+  [400, RIVER_WEST_Y],
+  [560, 980],
+  [720, 940],
+  [900, 905],
+  [1060, 888],
+  [1200, RIVER_CENTRE_Y],
+  [1320, 862],
+  [1420, 848],
+];
+/**
+ * Hairpin switchback — OPEN U that continues downstream (NE).
+ * North-opening U: up the left arm, around the tip, down the right arm,
+ * then on NE. Legs ~170 design-px apart (≫ RIVER_WIDTH) so inbound and
+ * outbound stay visually separate — FAIL if nearly-touching oxbow/pond.
+ * Apex south of the high street (y=660). Tom 2026-09-14: hairpin, not lake.
+ */
+const TOWN_RIVER_HAIRPIN: ReadonlyArray<readonly [number, number]> = [
+  // Approach, then OPEN U (opens south, continues NE).
+  // Leg gap ~170 ≫ RIVER_WIDTH — clear grass inside the U, not a pond silhouette.
+  // Tip south of high street (y=660) + trailhead T (1660,660): clearance ≥
+  // river half (30) + street half (26) + margin so asphalt never overlays water
+  // except on bridge decks (Game Art FAIL).
+  [1480, 860],
+  [1540, 875],
+  [1585, 882],
+  [1620, 870],
+  // Left arm north — stop well south of HS
+  [1620, 840],
+  [1615, 810],
+  [1625, 780],
+  [1660, 758],
+  [1695, 748], // tip — south of HS/trail T, not through the carriageway
+  [1730, 758],
+  [1765, 780],
+  [1775, 810],
+  // Right arm south — wide open (FAIL if nearly-touching oxbow neck)
+  [1780, 840],
+  [1790, 870],
+  // Resume NE toward the east bridge
+  [1830, 860],
+  [1880, 820],
+  [1910, 780],
+];
+/**
+ * East bridge then NE off-map — stays clear of the high street (y=660,
+ * half-width 26) all the way to the east frame edge (x=2400) before
+ * turning north, so no centerline sample near the map edge lands in water.
+ * The x≈2220–2320 stretch also threads the Sturston millstone clearance
+ * test (riverside, ≥72 design-px from (2260,768)) — a narrow but exact
+ * (not sampled) window, so don't nudge these y-values without re-checking
+ * both constraints.
+ */
+const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
+  [2000, RIVER_EAST_Y],
+  [2100, 720],
+  [2220, 696],
+  [2320, 693],
+  [2400, 701],
+  [2560, 696],
+  [2660, 600],
+  [2760, 450],
+  [2860, 300],
+];
+
+const TOWN_RIVER: RiverPath = {
+  points: [
+    ...TOWN_RIVER_RUN_A.map(([x, y]) => sxy(x, y)),
+    ...TOWN_RIVER_HAIRPIN.map(([x, y]) => sxy(x, y)),
+    ...TOWN_RIVER_RUN_B.map(([x, y]) => sxy(x, y)),
+  ],
+  width: sx(RIVER_WIDTH),
+};
+
+const TOWN_BRIDGES: Bridge[] = [
+  srect(400, RIVER_WEST_Y, 44, 150),
+  srect(1200, RIVER_CENTRE_Y, 52, 150),
+  srect(2000, RIVER_EAST_Y, 44, 150),
 ];
 
 function townLamps(): StreetLight[] {
   const lamps = vergeLights(TOWN_ROADS, TOWN_ROUNDABOUTS);
-  const riverY = sx(880);
-  const riverH = sx(58);
-  const decks = [sx(400), sx(1200), sx(2000)];
-  const stones = [sxy(140, 790), sxy(2260, 790)];
+  const stones = [sxy(160, 1010), sxy(2260, 768)];
   const extra = [
-    slight(400, 766),
-    slight(2000, 766),
-    slight(1200, 808),
-    slight(1200, 952),
+    slight(400, 940),
+    slight(2000, 690),
+    slight(1200, 820),
+    slight(1200, 940),
     slight(1660, 160),
     slight(1200, 600),
   ];
+  // Partial map — enough for isOnBridge's crossing-span lookup (roads + river);
+  // ASHBOURNE_TOWN itself isn't built yet at this point in module init.
+  const spanMap = { bridges: TOWN_BRIDGES, roads: TOWN_ROADS, river: TOWN_RIVER } as TownMap;
   return [...lamps, ...extra].filter((l) => {
-    const inRiver = Math.abs(l.position.y - riverY) < riverH;
-    const onDeck = decks.some((bx) => Math.abs(l.position.x - bx) < sx(80));
+    const inRiver = pointInRiver(l.position, TOWN_RIVER);
+    const onDeck = isOnBridge(l.position, spanMap);
     if (inRiver && !onDeck) return false;
     for (const g of stones) {
       if (Math.hypot(l.position.x - g.x, l.position.y - g.y) < 48) return false;
@@ -770,53 +895,74 @@ const WEST_X = 400;
 const WEST_HALF = 22;
 const EAST_X = 2000;
 const EAST_HALF = 22;
-const COACH_Y = 280;
-const COACH_HALF = 20;
-const TRAIL_X = 1660;
-const TRAIL_HALF = 17;
 
 const TOWN_BUILDINGS: Building[] = [
-  // High street — south verge, spaced so boxes never stack.
-  frontY(760, HS_Y, HS_HALF, 84, 68, 1, 'The George & Dragon', 'pub'),
+  // High street — south verge, spaced so boxes never stack. Tightened toward Dig St.
+  frontY(800, HS_Y, HS_HALF, 84, 68, 1, 'The George & Dragon', 'pub'),
   frontY(980, HS_Y, HS_HALF, 88, 76, 1, 'The Green Man', 'pub'),
   frontY(1140, HS_Y, HS_HALF, 92, 58, 1, "Smith's Butcher", 'shop'),
-  frontY(1340, HS_Y, HS_HALF, 80, 70, 1, 'The Horns', 'pub'),
-  frontY(1560, HS_Y, HS_HALF, 90, 60, 1, 'Station Stores', 'shop'),
-  // Market Place — halls on the north verge, shop on the south.
-  frontY(1080, PLAZA_Y, PLAZA_HALF, 78, 88, -1, 'Market Hall', 'market', LANDMARK_SIZE),
-  frontY(1300, PLAZA_Y, PLAZA_HALF, 72, 80, -1, 'Town Hall', 'hall', LANDMARK_SIZE),
+  frontY(1320, HS_Y, HS_HALF, 80, 70, 1, 'The Horns', 'pub'),
+  frontY(1480, HS_Y, HS_HALF, 90, 60, 1, 'Station Stores', 'shop'),
+  // Market Place — halls on the north verge, shop on the south (plaza core).
+  frontY(1100, PLAZA_Y, PLAZA_HALF, 78, 88, -1, 'Market Hall', 'market', LANDMARK_SIZE),
+  frontY(1280, PLAZA_Y, PLAZA_HALF, 72, 80, -1, 'Town Hall', 'hall', LANDMARK_SIZE),
   frontY(1120, PLAZA_Y, PLAZA_HALF, 100, 62, 1, 'Gingerbread Shop', 'shop'),
-  // Compton — south of the brook, on the south trunk (not in a mid-band field).
-  frontY(1080, COMPTON_Y, COMPTON_HALF, 96, 70, 1, 'The Vaults', 'pub'),
+  // Compton — south of the brook, pulled tight around Dig St centre column.
+  frontY(1140, COMPTON_Y, COMPTON_HALF, 96, 70, 1, 'The Vaults', 'pub'),
   frontY(1340, COMPTON_Y, COMPTON_HALF, 88, 72, 1, 'The White Hart', 'pub'),
-  frontY(620, COMPTON_Y, COMPTON_HALF, 86, 64, 1, 'The Wheel', 'pub'),
-  // Destinations on their own lanes.
-  frontY(1900, COACH_Y, COACH_HALF, 104, 72, 1, 'The Coach & Horses', 'pub'),
-  frontX(160, TRAIL_X, TRAIL_HALF, 78, 64, 1, 'The Baths', 'trailhead', LANDMARK_SIZE),
-  slandmark(240, 500, 118, 86, "St Oswald's", 'church'),
-  frontY(700, HS_Y, HS_HALF, 140, 68, -1, 'Old Grammar', 'school', LANDMARK_SIZE),
+  frontY(940, COMPTON_Y, COMPTON_HALF, 86, 64, 1, 'The Wheel', 'pub'),
+  // Civic + trail destinations hug Dig St / Market Place on the high-street verges.
+  // Baths + Coach sit at the trail T (still east); St Oswald's west of Old Grammar.
+  frontY(560, HS_Y, HS_HALF, 118, 86, -1, "St Oswald's", 'church', LANDMARK_SIZE),
+  frontY(780, HS_Y, HS_HALF, 140, 68, -1, 'Old Grammar', 'school', LANDMARK_SIZE),
+  frontY(1560, HS_Y, HS_HALF, 78, 64, -1, 'The Baths', 'trailhead', LANDMARK_SIZE),
+  frontY(1720, HS_Y, HS_HALF, 104, 72, -1, 'The Coach & Horses', 'pub'),
   // Ordinary terrace / cottage markers — core density, not landmarks.
+  // Keep clear of Dig St T (x≈1200) and civic footprints.
   shouseY(900, HS_Y, HS_HALF, -1, 'High St 1'),
-  shouseY(1040, HS_Y, HS_HALF, -1, 'High St 2'),
+  shouseY(1000, HS_Y, HS_HALF, -1, 'High St 2'),
   shouseY(1360, HS_Y, HS_HALF, -1, 'High St 3'),
-  shouseY(1500, HS_Y, HS_HALF, -1, 'High St 4'),
-  shouseY(870, HS_Y, HS_HALF, 1, 'High St 5'),
-  shouseY(1440, HS_Y, HS_HALF, 1, 'High St 6'),
-  shouseY(1280, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
-  shouseX(615, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
-  shouseX(615, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
-  shouseX(760, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
-  shouseY(780, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
-  shouseY(1520, COMPTON_Y, COMPTON_HALF, 1, 'Compton 2'),
-  // Clifton village — west column east verge, clear of the millstone hedges.
+  shouseY(1220, HS_Y, HS_HALF, -1, 'High St 4'),
+  shouseY(880, HS_Y, HS_HALF, 1, 'High St 5'),
+  shouseY(1400, HS_Y, HS_HALF, 1, 'High St 6'),
+  // Infill terrace — thickens the high street; north-east slots left for Baths/Coach.
+  shouseY(1080, HS_Y, HS_HALF, -1, 'High St 7'),
+  shouseY(1440, HS_Y, HS_HALF, -1, 'High St 8'),
+  shouseY(1880, HS_Y, HS_HALF, -1, 'High St 9'),
+  shouseY(2000, HS_Y, HS_HALF, -1, 'High St 10'),
+  shouseY(1060, HS_Y, HS_HALF, 1, 'High St 11'),
+  shouseY(1760, HS_Y, HS_HALF, 1, 'High St 12'),
+  shouseY(1540, HS_Y, HS_HALF, 1, 'High St 13'),
+  shouseY(1620, HS_Y, HS_HALF, 1, 'High St 14'),
+  shouseY(1360, PLAZA_Y, PLAZA_HALF, 1, 'Market Row 1'),
+  // Dig / Market rows — west of centre street, clear of Gingerbread + HS kerb.
+  shouseX(640, CENTRE_X, CENTRE_HALF, -1, 'Market Row 2'),
+  shouseX(800, CENTRE_X, CENTRE_HALF, -1, 'Market Row 3'),
+  shouseX(720, CENTRE_X, CENTRE_HALF, 1, 'Dig St 1'),
+  shouseX(820, CENTRE_X, CENTRE_HALF, 1, 'Dig St 3'),
+  shouseX(900, CENTRE_X, CENTRE_HALF, 1, 'Dig St 2'),
+  // Compton fabric — gaps between the tightened pub row, then east wing.
+  shouseY(800, COMPTON_Y, COMPTON_HALF, 1, 'Compton 1'),
+  shouseY(1040, COMPTON_Y, COMPTON_HALF, 1, 'Compton 2'),
+  shouseY(660, COMPTON_Y, COMPTON_HALF, 1, 'Compton 3'),
+  shouseY(1240, COMPTON_Y, COMPTON_HALF, 1, 'Compton 4'),
+  shouseY(1480, COMPTON_Y, COMPTON_HALF, 1, 'Compton 5'),
+  shouseY(1580, COMPTON_Y, COMPTON_HALF, 1, 'Compton 6'),
+  shouseY(1700, COMPTON_Y, COMPTON_HALF, 1, 'Compton 7'),
+  // Clifton village — west column east verge, clear of the riverside mill approach (no goal hedges).
+  // Tightened spacing (evenly ~40 apart) so it reads as one cluster.
   shouseX(560, WEST_X, WEST_HALF, 1, 'Clifton 1'),
+  shouseX(600, WEST_X, WEST_HALF, 1, 'Clifton 5'),
   shouseX(640, WEST_X, WEST_HALF, 1, 'Clifton 2'),
   shouseX(680, WEST_X, WEST_HALF, 1, 'Clifton 3'),
   shouseX(715, WEST_X, WEST_HALF, 1, 'Clifton 4'),
   // Sturston village — east column west verge + high-street end.
+  // Extended to match Clifton's density, evenly spaced along the lane.
+  shouseX(645, EAST_X, EAST_HALF, -1, 'Sturston 5'),
   shouseX(675, EAST_X, EAST_HALF, -1, 'Sturston 1'),
   shouseX(705, EAST_X, EAST_HALF, -1, 'Sturston 2'),
   shouseX(735, EAST_X, EAST_HALF, -1, 'Sturston 3'),
+  shouseX(765, EAST_X, EAST_HALF, -1, 'Sturston 6'),
   shouseY(1880, HS_Y, HS_HALF, 1, 'Sturston 4'),
 ];
 
@@ -829,17 +975,13 @@ export const ASHBOURNE_TOWN: TownMap = {
   obstacles: TOWN_BUILDINGS,
 
   outOfBounds: [
-    srect(180, 240, 200, 200),
+    srect(180, 320, 180, 160),
     srect(2220, 1420, 220, 220),
   ],
 
-  river: srect(1200, 880, 2400, 120),
+  river: TOWN_RIVER,
 
-  bridges: [
-    srect(400, 880, 64, 150),
-    srect(1200, 880, 72, 150),
-    srect(2000, 880, 64, 150),
-  ],
+  bridges: TOWN_BRIDGES,
 
   roundabouts: TOWN_ROUNDABOUTS,
 
@@ -860,11 +1002,12 @@ export const ASHBOURNE_TOWN: TownMap = {
   ],
 
   goals: [
-    { team: 0, name: MILL_CLIFTON, position: sxy(140, 790) },
-    { team: 1, name: MILL_STURSTON, position: sxy(2260, 790) },
+    // Riverside / near bank (not mid-channel). Clearance ≥ half-width + ~42.
+    { team: 0, name: MILL_CLIFTON, position: sxy(160, 1010) },
+    { team: 1, name: MILL_STURSTON, position: sxy(2260, 768) },
   ],
 
-  turnUp: sxy(1200, 880),
+  turnUp: sxy(1200, RIVER_CENTRE_Y),
 };
 
 // ---------------------------------------------------------------------------
@@ -900,14 +1043,147 @@ export function isInObstacle(p: Vec2Like, map: TownMap): boolean {
   return false;
 }
 
-/** True iff the point lies in the river (any rect — currently one). */
-export function isInRiver(p: Vec2Like, map: TownMap): boolean {
-  return pointInRect(p, map.river);
+/** True iff the point lies within `river.width` of the Henmore centerline. */
+export function pointInRiver(p: Vec2Like, river: RiverPath): boolean {
+  const half = river.width / 2;
+  for (let i = 0; i < river.points.length - 1; i++) {
+    if (distToSegment(p, river.points[i]!, river.points[i + 1]!) <= half) return true;
+  }
+  return false;
 }
 
-/** True iff the point lies on any bridge. */
+/** True iff the point lies in the river. */
+export function isInRiver(p: Vec2Like, map: TownMap): boolean {
+  return pointInRiver(p, map.river);
+}
+
+/**
+ * Local Henmore centerline y at a given x — linear interpolation across the
+ * nearest crossing segment (narrowest x-span, to favour a steep local crossing
+ * — a bridge approach or the hairpin's near-vertical legs — over a long
+ * near-horizontal reach sharing the same x). Used for "north of the brook"
+ * placement checks, not collision.
+ */
+export function riverYAt(x: number, river: RiverPath): number {
+  let best: number | null = null;
+  let bestSpan = Infinity;
+  for (let i = 0; i < river.points.length - 1; i++) {
+    const a = river.points[i]!;
+    const b = river.points[i + 1]!;
+    const lo = Math.min(a.x, b.x);
+    const hi = Math.max(a.x, b.x);
+    if (x < lo || x > hi) continue;
+    const span = hi - lo;
+    if (span < 1e-6) continue;
+    const t = (x - a.x) / (b.x - a.x);
+    const y = a.y + t * (b.y - a.y);
+    if (span < bestSpan) {
+      bestSpan = span;
+      best = y;
+    }
+  }
+  return best ?? river.points[0]!.y;
+}
+
+/** True iff the point sits north of the local Henmore bank (historic core side). */
+export function isNorthOfRiver(p: Vec2Like, map: TownMap): boolean {
+  return p.y < riverYAt(p.x, map.river);
+}
+
+/**
+ * The crossing road's sub-polyline through a bridge — the road nearest the
+ * bridge centre, walked through its river crossing plus a short dry-bank
+ * apron on each end (so abutments land on dry approaches, not mid-water).
+ * Result is cached per bridge (map geometry is static once built).
+ */
+export function bridgeCrossingSpan(bridge: Bridge, map: TownMap): BridgeCrossingSpan | null {
+  if (BRIDGE_SPAN_CACHE.has(bridge)) return BRIDGE_SPAN_CACHE.get(bridge)!;
+  const span = computeBridgeCrossingSpan(bridge, map);
+  BRIDGE_SPAN_CACHE.set(bridge, span);
+  return span;
+}
+
+function computeBridgeCrossingSpan(bridge: Bridge, map: TownMap): BridgeCrossingSpan | null {
+  const c = bridge.position;
+
+  // Road whose centreline passes closest to the bridge centre.
+  let road: RoadSegment | null = null;
+  let bestDist = Infinity;
+  for (const r of map.roads) {
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const d = distToSegment(c, r.points[i]!, r.points[i + 1]!);
+      if (d < bestDist) {
+        bestDist = d;
+        road = r;
+      }
+    }
+  }
+  if (!road || bestDist > road.width) return null;
+
+  // Densify the road's vertex list so a filleted / smoothed approach is
+  // represented by more than its coarse corner vertices.
+  const samples: Vec2Like[] = [road.points[0]!];
+  for (let i = 0; i < road.points.length - 1; i++) {
+    const a = road.points[i]!;
+    const b = road.points[i + 1]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(len / BRIDGE_SPAN_SAMPLE_STEP));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+
+  // Sample nearest the bridge centre anchors the crossing run.
+  let anchor = 0;
+  let anchorDist = Infinity;
+  for (let i = 0; i < samples.length; i++) {
+    const d = Math.hypot(samples[i]!.x - c.x, samples[i]!.y - c.y);
+    if (d < anchorDist) {
+      anchorDist = d;
+      anchor = i;
+    }
+  }
+
+  // Contiguous in-river run containing (or nearest to) the anchor.
+  let lo = anchor;
+  let hi = anchor;
+  if (pointInRiver(samples[anchor]!, map.river)) {
+    while (lo > 0 && pointInRiver(samples[lo - 1]!, map.river)) lo--;
+    while (hi < samples.length - 1 && pointInRiver(samples[hi + 1]!, map.river)) hi++;
+  }
+
+  // Dry-bank apron on each end so abutments land off the water.
+  const pad = Math.max(map.river.width, bridge.height * 0.5);
+  const extend = (idx: number, dir: -1 | 1): number => {
+    let d = 0;
+    let i = idx;
+    while (d < pad) {
+      const ni = i + dir;
+      if (ni < 0 || ni >= samples.length) break;
+      d += Math.hypot(samples[ni]!.x - samples[i]!.x, samples[ni]!.y - samples[i]!.y);
+      i = ni;
+    }
+    return i;
+  };
+  const loExt = extend(lo, -1);
+  const hiExt = extend(hi, 1);
+  if (hiExt <= loExt) return null;
+
+  return { points: samples.slice(loExt, hiExt + 1), width: road.width };
+}
+
+/** True iff the point lies on any bridge (matches the painted deck, not the AABB). */
 export function isOnBridge(p: Vec2Like, map: TownMap): boolean {
-  return map.bridges.some((b) => pointInRect(p, b));
+  return map.bridges.some((b) => {
+    const span = bridgeCrossingSpan(b, map);
+    if (!span) return pointInRect(p, b);
+    const half = span.width / 2;
+    for (let i = 0; i < span.points.length - 1; i++) {
+      if (distToSegment(p, span.points[i]!, span.points[i + 1]!) <= half) return true;
+    }
+    return false;
+  });
 }
 
 /** True iff the point is in water (river but not on a bridge). */
