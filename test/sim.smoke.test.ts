@@ -1264,33 +1264,47 @@ test('map: 17v17 placement stays out of walls and OOB', () => {
   }
 });
 
-test('map: Henmore is a hairpin diagonal that exits off-map both ends', () => {
+test('map: Henmore has a tight hairpin switchback, not a closed oxbow loop', () => {
   const map = ASHBOURNE_TOWN;
   const pts = map.river.points;
   assert.ok(pts.length >= 8, 'river is a bent polyline');
   const first = pts[0]!;
   const last = pts[pts.length - 1]!;
-  assert.ok(first.x < 0, `SW end must run off-map (x=${first.x})`);
-  assert.ok(last.x > map.width, `NE end must run off-map (x=${last.x} vs w=${map.width})`);
-  // Bridges still sit on the river centerline (deck excludes isInWater).
+  assert.equal(first.x, 0, 'SW end sits at the west map edge');
+  assert.equal(last.x, map.width, 'NE end sits at the east map edge');
+  // Bridges still sit over the Henmore.
   for (const b of map.bridges) {
     assert.equal(isInRiver(b.position, map), true, 'bridge centre is over the Henmore');
   }
-  // Hairpin (not oxbow): between centre and east bridges the centerline should
-  // briefly reverse in x (a tight U), without spanning a huge closed lake.
+  // Hairpin (not oxbow): between the centre and east bridges, the heading
+  // should swing through a near-180° reversal (a tight U-turn) at some point.
   const midLo = 1200 * TOWN_SCALE;
   const midHi = 2000 * TOWN_SCALE;
-  let sawReverse = false;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1]!;
-    const b = pts[i]!;
-    if (a.x < midLo || a.x > midHi) continue;
-    if (b.x < a.x - 8 * TOWN_SCALE) {
-      sawReverse = true;
-      break;
+  const hairpin = pts.filter((p) => p.x >= midLo && p.x <= midHi);
+  assert.ok(hairpin.length >= 6, 'hairpin has enough points to read as a tight U');
+  const dirs: { x: number; y: number }[] = [];
+  for (let i = 0; i < hairpin.length - 1; i++) {
+    const a = hairpin[i]!;
+    const b = hairpin[i + 1]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    dirs.push({ x: (b.x - a.x) / len, y: (b.y - a.y) / len });
+  }
+  let sawReversal = false;
+  for (let i = 0; i < dirs.length; i++) {
+    for (let j = i + 2; j < dirs.length; j++) {
+      const dot = dirs[i]!.x * dirs[j]!.x + dirs[i]!.y * dirs[j]!.y;
+      if (dot < -0.7) sawReversal = true;
     }
   }
-  assert.ok(sawReverse, 'expected a brief westward reverse in the hairpin');
+  assert.ok(sawReversal, 'expected a tight U-turn (near-180° heading reversal) in the hairpin');
+  // Not a closed loop: non-adjacent points in the hairpin stay farther apart
+  // than the water width, so the two banks never merge into a lake.
+  for (let i = 0; i < hairpin.length; i++) {
+    for (let j = i + 3; j < hairpin.length; j++) {
+      const d = Math.hypot(hairpin[i]!.x - hairpin[j]!.x, hairpin[i]!.y - hairpin[j]!.y);
+      assert.ok(d > map.river.width * 0.5, 'hairpin banks stay clear of each other (not a closed loop)');
+    }
+  }
 });
 
 test('map: hedge speed is slower than river speed', () => {

@@ -115,8 +115,8 @@ export interface GoalMarker {
 
 /**
  * Henmore centerline — a bent polyline strip (diagonal run, soft bends, one
- * oxbow loop) rather than a single axis-aligned slab. `width` is the full
- * water breadth measured perpendicular to the local run.
+ * tight hairpin switchback) rather than a single axis-aligned slab. `width`
+ * is the full water breadth measured perpendicular to the local run.
  */
 export interface RiverPath {
   /** Vertices in sim space. Consecutive points form the strip's segments. */
@@ -145,7 +145,7 @@ export interface FieldParcel extends RectZone {}
 /** Edge woodland / tree belt. Visual boundary — not a hard OOB. */
 export interface ForestStand extends RectZone {}
 
-/** Town street, millstone-approach track, or former-railway trail. Visual — not collision. */
+/** Town street, minor lane, or former-railway trail. Visual — not collision. */
 export type RoadKind = 'street' | 'lane' | 'trail';
 
 /** Polyline lane. Joints are mitred in the client — keep vertices on junctions / ring entries. */
@@ -745,59 +745,67 @@ const TOWN_FORESTS: ForestStand[] = [
 ];
 
 /**
- * Henmore centerline — SW→NE diagonal with soft bends and one tight hairpin
- * (Tom 2026-09-14). Not a closed oxbow / cutoff lake. Endpoints sit past the
- * design frame so the water strip runs off-map on both ends (no rectangular
- * stub). WEST_X/CENTRE_X/EAST_X crossings are exact vertices so the N–S roads
- * (and their bridges) land on the water without drift. The hairpin sits
- * between the centre and east bridges, in the open ground north of the field
- * hedges and south of the high-street shopfronts.
+ * Henmore centerline — SW to NE diagonal with soft bends and one tight
+ * hairpin switchback (Tom 2026-09-14: "hairpin, not oxbow"). The
+ * WEST_X/CENTRE_X/EAST_X crossings are exact vertices so the N–S roads (and
+ * their bridges) land on the water without drift. The hairpin sits between
+ * the centre and east bridges, in the open ground north of the field hedges
+ * and south of the high-street shopfronts — a comfortable margin on both
+ * sides so the U-turn reads as a sharp kink, not a lake.
  */
 const RIVER_WIDTH = 60;
 const RIVER_WEST_Y = 900;
 const RIVER_CENTRE_Y = 860;
 const RIVER_EAST_Y = 900;
 
-/** Design-space centerline; first/last points are off-map (x<0 / x>2400). */
-const TOWN_RIVER_POLY: ReadonlyArray<readonly [number, number]> = [
-  // Off-map SW entry — square strip terminus stays outside the pitch frame.
-  [-140, 1060],
-  [-60, 1005],
-  [40, 965],
-  [200, 925],
+const TOWN_RIVER_RUN_A: ReadonlyArray<readonly [number, number]> = [
+  [0, 960],
+  [60, 915],
+  [280, 900],
   [400, RIVER_WEST_Y],
   [520, 900],
-  [700, 890],
-  [900, 875],
-  [1050, 865],
+  [650, 895],
+  [850, 880],
+  [1000, 865],
   [1200, RIVER_CENTRE_Y],
-  [1380, 872],
-  [1520, 865],
-  // Hairpin — tight switchback U (brief westward reverse), not a closed oxbow.
-  // Apex stays south of the high street (y=660) with river half-width clearance.
-  [1650, 850],
-  [1740, 815],
-  [1765, 770],
-  [1710, 740],
-  [1625, 750],
-  [1585, 795],
-  [1635, 845],
-  [1725, 870],
-  // Continue to east bridge — stay south of Sturston (2260,790) until past it,
-  // then swing NE and exit off-map (no rectangular stub inside the frame).
-  [1860, 880],
+  [1400, 880],
+];
+/**
+ * Hairpin switchback — approach the turn, a tight 180° U (radius 50) with
+ * two ~100-apart legs, then continue NE. Open U, not a near-closed loop:
+ * the banks stay ~80 sim px clear of each other at the tip, and the apex
+ * (y=750) sits well south of the high street (y=660) with room to spare.
+ */
+const TOWN_RIVER_HAIRPIN: ReadonlyArray<readonly [number, number]> = [
+  [1520, 858],
+  [1620, 830],
+  [1650, 800],
+  [1654, 781],
+  [1665, 765],
+  [1681, 754],
+  [1700, 750],
+  [1719, 754],
+  [1735, 765],
+  [1746, 781],
+  [1750, 800],
+  [1780, 828],
+  [1830, 858],
+];
+const TOWN_RIVER_RUN_B: ReadonlyArray<readonly [number, number]> = [
+  [1900, 900],
   [2000, RIVER_EAST_Y],
   [2060, 895],
   [2200, 890],
-  [2320, 850],
-  [2420, 760],
-  [2520, 640],
-  [2620, 500],
-  [2720, 360],
+  [2300, 830],
+  [2400, 700],
 ];
 
 const TOWN_RIVER: RiverPath = {
-  points: TOWN_RIVER_POLY.map(([x, y]) => sxy(x, y)),
+  points: [
+    ...TOWN_RIVER_RUN_A.map(([x, y]) => sxy(x, y)),
+    ...TOWN_RIVER_HAIRPIN.map(([x, y]) => sxy(x, y)),
+    ...TOWN_RIVER_RUN_B.map(([x, y]) => sxy(x, y)),
+  ],
   width: sx(RIVER_WIDTH),
 };
 
@@ -1006,8 +1014,9 @@ export function isInRiver(p: Vec2Like, map: TownMap): boolean {
 /**
  * Local Henmore centerline y at a given x — linear interpolation across the
  * nearest crossing segment (narrowest x-span, to favour a steep local crossing
- * over a long near-horizontal reach when the hairpin doubles back across the
- * same x). Used for "north of the brook" placement checks, not collision.
+ * — a bridge approach or the hairpin's near-vertical legs — over a long
+ * near-horizontal reach sharing the same x). Used for "north of the brook"
+ * placement checks, not collision.
  */
 export function riverYAt(x: number, river: RiverPath): number {
   let best: number | null = null;
