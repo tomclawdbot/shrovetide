@@ -1152,18 +1152,30 @@ test('map: Ashbourne landmarks orient church, school, trail, and market', () => 
   assert.ok(isNorthOfRiver(byKind.trailhead!.position, map), 'trailhead is on the north cutting');
   assert.ok(byKind.trailhead!.position.x > map.width * 0.55, 'trail reads toward Sturston / east');
   assert.ok(byKind.church!.position.x < byKind.market!.position.x, 'St Oswald’s reads west of the square');
-  assert.ok(byKind.trailhead!.position.y < byKind.market!.position.y, 'Baths / trail sit toward the north edge');
+  assert.ok(isNorthOfRiver(byKind.trailhead!.position, map), 'Baths stay north of the Henmore');
+  assert.ok(
+    byKind.trailhead!.position.y < 800 * TOWN_SCALE,
+    'Baths sit on / just north of the high-street trail T',
+  );
 
-  // Town-centre cluster — civics hug Market Place / high street, not far field edges.
+  // Town-centre cluster — civics + destinations hug Dig St / Market Place / HS.
   const core = { x: 1200 * TOWN_SCALE, y: 600 * TOWN_SCALE };
   for (const b of [byKind.church!, byKind.school!, byKind.market!, byKind.hall!]) {
     const d = Math.hypot(b.position.x - core.x, b.position.y - core.y);
-    assert.ok(d < 1100 * TOWN_SCALE, `${b.name} should cluster near Ashbourne centre (d=${(d / TOWN_SCALE).toFixed(0)})`);
+    assert.ok(d < 750 * TOWN_SCALE, `${b.name} should cluster near Ashbourne centre (d=${(d / TOWN_SCALE).toFixed(0)})`);
   }
   assert.ok(
-    Math.hypot(byKind.trailhead!.position.x - core.x, byKind.trailhead!.position.y - core.y) < 900 * TOWN_SCALE,
-    'Baths pulled in toward the high-street trail T',
+    Math.hypot(byKind.trailhead!.position.x - core.x, byKind.trailhead!.position.y - core.y) < 500 * TOWN_SCALE,
+    'Baths pulled onto the high-street trail T',
   );
+  const pubs = map.obstacles.filter(isBuilding).filter((b) => b.kind === 'pub');
+  const byName = Object.fromEntries(pubs.map((b) => [b.name, b] as const));
+  for (const name of ['The Coach & Horses', 'The Wheel', 'The Vaults', 'The White Hart'] as const) {
+    const b = byName[name];
+    assert.ok(b, `${name} present`);
+    const d = Math.hypot(b!.position.x - core.x, b!.position.y - core.y);
+    assert.ok(d < 700 * TOWN_SCALE, `${name} should cluster toward Dig St / Market Place (d=${(d / TOWN_SCALE).toFixed(0)})`);
+  }
 
   assert.ok(map.roads.some((r) => r.kind === 'trail'), 'former-railway trail strip remains');
   const placeNames = map.places.map((p) => p.name);

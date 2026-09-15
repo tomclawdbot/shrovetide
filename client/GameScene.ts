@@ -1269,7 +1269,7 @@ export class GameScene extends Phaser.Scene {
     this.drawRiverBanks(river);
   }
 
-  /** Mud + grass + stone flecks just outside both Henmore banks — breaks the flat edge. */
+  /** Mud + grass + stone flecks just outside both Henmore banks — readable at play zoom. */
   private drawRiverBanks(river: RiverPath): void {
     const g = this.mapGfx;
     const points = river.points;
@@ -1283,7 +1283,8 @@ export class GameScene extends Phaser.Scene {
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    const step = 18;
+    // Denser than the first pass — still irregular, not a dashed grid.
+    const step = 11;
     for (const side of [1, -1] as const) {
       for (let i = 0; i < points.length - 1; i++) {
         const a = points[i]!;
@@ -1299,20 +1300,20 @@ export class GameScene extends Phaser.Scene {
           const t = (j + 0.5) / n;
           const px = a.x + (b.x - a.x) * t;
           const py = a.y + (b.y - a.y) * t;
-          const offset = hw + 3 + rand() * 6;
+          const offset = hw + 2 + rand() * 8;
           const bx = px + nx * offset;
           const by = py + ny * offset;
-          g.fillStyle(rand() > 0.5 ? PALETTE.mud : PALETTE.mudDark, 0.3 + rand() * 0.15);
-          g.fillEllipse(bx + (rand() - 0.5) * 6, by + (rand() - 0.5) * 6, 10 + rand() * 10, 5 + rand() * 5);
-          if (rand() > 0.4) {
-            g.fillStyle(rand() > 0.5 ? PALETTE.grass : PALETTE.grassAlt, 0.5);
-            const fx = bx + nx * (4 + rand() * 6);
-            const fy = by + ny * (4 + rand() * 6);
-            g.fillRect(fx, fy, 2, 5 + rand() * 4);
+          g.fillStyle(rand() > 0.5 ? PALETTE.mud : PALETTE.mudDark, 0.5 + rand() * 0.22);
+          g.fillEllipse(bx + (rand() - 0.5) * 8, by + (rand() - 0.5) * 8, 14 + rand() * 14, 7 + rand() * 7);
+          if (rand() > 0.22) {
+            g.fillStyle(rand() > 0.5 ? PALETTE.grass : PALETTE.grassAlt, 0.72);
+            const fx = bx + nx * (3 + rand() * 7);
+            const fy = by + ny * (3 + rand() * 7);
+            g.fillRect(fx, fy, 3, 7 + rand() * 6);
           }
-          if (rand() > 0.75) {
-            g.fillStyle(PALETTE.stoneDark, 0.5);
-            g.fillCircle(bx + (rand() - 0.5) * 8, by + (rand() - 0.5) * 8, 1.5 + rand() * 1.5);
+          if (rand() > 0.5) {
+            g.fillStyle(PALETTE.stoneDark, 0.72);
+            g.fillCircle(bx + (rand() - 0.5) * 10, by + (rand() - 0.5) * 10, 2.2 + rand() * 2.4);
           }
         }
       }
@@ -1352,23 +1353,23 @@ export class GameScene extends Phaser.Scene {
       const y = f.position.y - f.height / 2;
       g.fillStyle(tints[i % tints.length]!, 1);
       g.fillRect(x, y, f.width, f.height);
-      g.lineStyle(2, PALETTE.plough, 0.22);
+      g.lineStyle(2, PALETTE.plough, 0.28);
       const rows = Math.max(4, Math.floor(f.height / 20));
       for (let r = 1; r < rows; r++) {
         const py = y + (r / rows) * f.height;
         g.lineBetween(x + 8, py, x + f.width - 8, py);
       }
-      // Seeded grit/tufts — breaks the flat tint on big parcels without hurting readability.
-      const tufts = Math.max(18, Math.floor((f.width * f.height) / 3200));
+      // Seeded grit/tufts — clearly readable at play zoom, still irregular (no grid).
+      const tufts = Math.max(32, Math.floor((f.width * f.height) / 1400));
       for (let t = 0; t < tufts; t++) {
         const tx = x + 6 + rand() * Math.max(1, f.width - 12);
         const ty = y + 6 + rand() * Math.max(1, f.height - 12);
         const pick = rand();
-        g.fillStyle(pick < 0.34 ? PALETTE.grass : pick < 0.67 ? PALETTE.grassAlt : PALETTE.grassDark, 0.24);
-        if (rand() > 0.5) {
-          g.fillRect(tx, ty, 2, 5 + rand() * 6);
+        g.fillStyle(pick < 0.34 ? PALETTE.grass : pick < 0.67 ? PALETTE.grassAlt : PALETTE.grassDark, 0.48 + rand() * 0.12);
+        if (rand() > 0.45) {
+          g.fillRect(tx, ty, 3, 7 + rand() * 8);
         } else {
-          g.fillCircle(tx, ty, 1.5 + rand() * 2);
+          g.fillCircle(tx, ty, 2.4 + rand() * 2.8);
         }
       }
       g.lineStyle(2, PALETTE.hedgeEdge, 0.15);
