@@ -866,8 +866,10 @@ test('map: millstones sit farther apart on the scaled town', () => {
   const a = ASHBOURNE_TOWN.goals[0]!.position;
   const b = ASHBOURNE_TOWN.goals[1]!.position;
   const span = Math.hypot(b.x - a.x, b.y - a.y);
+  const dx = Math.abs(b.x - a.x);
   assert.ok(span > 2120 * 1.4, `millstones should be farther than the old town (${span})`);
-  assert.equal(span, 2120 * TOWN_SCALE);
+  // West/east riverside stones — keep a wide parish span (design dx ≈ 2100).
+  assert.ok(dx >= 2000 * TOWN_SCALE, `east–west mill span should stay wide (dx=${dx})`);
 });
 
 test('map: Clifton is the Down mill (west), Sturston the Up mill (east)', () => {
@@ -1014,15 +1016,16 @@ test('map: street lights sit on the road network', () => {
 test('map: millstone approaches are hedge corridors without dedicated roads', () => {
   const map = ASHBOURNE_TOWN;
   const samples = [
-    { name: 'Clifton', x: 320 * TOWN_SCALE, y: 790 * TOWN_SCALE },
-    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 790 * TOWN_SCALE },
+    // Corridor midpoints flanking riverside stones (Clifton y≈1010, Sturston y≈768).
+    { name: 'Clifton', x: 320 * TOWN_SCALE, y: 1010 * TOWN_SCALE, northY: 974, southY: 1046 },
+    { name: 'Sturston', x: 2080 * TOWN_SCALE, y: 768 * TOWN_SCALE, northY: 732, southY: 804 },
   ];
   for (const s of samples) {
     // Tom: no road required to scoring millstones — mud/grass is fine.
     assert.equal(isOnRoad(s, map), false, `${s.name} approach must not be a dedicated road`);
     assert.ok(isWalkable(s, map), `${s.name} approach stays playable grass/mud`);
-    const north = { x: s.x, y: 754 * TOWN_SCALE };
-    const south = { x: s.x, y: 826 * TOWN_SCALE };
+    const north = { x: s.x, y: s.northY * TOWN_SCALE };
+    const south = { x: s.x, y: s.southY * TOWN_SCALE };
     assert.equal(isInHedge(north, map), true, `${s.name} corridor has a north hedge`);
     assert.equal(isInHedge(south, map), true, `${s.name} corridor has a south hedge`);
   }
@@ -1264,6 +1267,29 @@ test('map: 17v17 placement stays out of walls and OOB', () => {
   }
 });
 
+test('map: scoring millstones sit riverside near the Henmore bank', () => {
+  const map = ASHBOURNE_TOWN;
+  const half = map.river.width / 2;
+  // Collision clearance ~r=42 (design) → world 84; stay off mid-channel.
+  const minClear = half + 42 * TOWN_SCALE;
+  const maxBank = half + 140 * TOWN_SCALE; // near bank, not a field inland
+  for (const goal of map.goals) {
+    const ry = riverYAt(goal.position.x, map.river);
+    assert.ok(ry != null, `${goal.name} must have a Henmore crossing at its x`);
+    const dist = Math.abs(goal.position.y - ry!);
+    assert.ok(
+      dist >= minClear,
+      `${goal.name} must clear the channel (dist=${dist}, min=${minClear})`,
+    );
+    assert.ok(
+      dist <= maxBank,
+      `${goal.name} should sit near the bank (dist=${dist}, max=${maxBank})`,
+    );
+    assert.equal(isInRiver(goal.position, map), false, `${goal.name} not mid-channel`);
+    assert.ok(isWalkable(goal.position, map), `${goal.name} stays standable`);
+  }
+});
+
 test('map: Henmore has a tight hairpin switchback, not a closed oxbow loop', () => {
   const map = ASHBOURNE_TOWN;
   const pts = map.river.points;
@@ -1307,14 +1333,23 @@ test('map: Henmore has a tight hairpin switchback, not a closed oxbow loop', () 
     }
   }
   assert.ok(sawReversal, 'expected a tight U-turn (near-180° heading reversal) in the hairpin');
-  // Not a closed loop: non-adjacent points in the hairpin stay farther apart
-  // than the water width, so the two banks never merge into a lake.
+  // Not a closed loop: non-adjacent points stay clear so banks never merge into a lake.
   for (let i = 0; i < hairpin.length; i++) {
     for (let j = i + 3; j < hairpin.length; j++) {
       const d = Math.hypot(hairpin[i]!.x - hairpin[j]!.x, hairpin[i]!.y - hairpin[j]!.y);
       assert.ok(d > map.river.width * 0.5, 'hairpin banks stay clear of each other (not a closed loop)');
     }
   }
+  // Open U (not oxbow pond): the up-leg and down-leg midpoints must sit
+  // farther apart than the water width — a clear dry gap inside the U.
+  const tipIdx = hairpin.reduce((bi, p, i, arr) => (p.y < arr[bi]!.y ? i : bi), 0);
+  const up = hairpin[Math.max(0, tipIdx - 3)]!;
+  const down = hairpin[Math.min(hairpin.length - 1, tipIdx + 3)]!;
+  const armGap = Math.hypot(down.x - up.x, down.y - up.y);
+  assert.ok(
+    armGap > map.river.width,
+    `open-U arm gap must exceed river width (gap=${armGap}, width=${map.river.width})`,
+  );
 });
 
 test('map: hedge speed is slower than river speed', () => {
