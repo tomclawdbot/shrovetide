@@ -9,13 +9,18 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
-    "test:sim": "node --import tsx --test test/*.test.ts"
+    "test:sim": "node --import tsx --test test/*.test.ts",
+    "cap:sync": "npm run build && cap sync ios",
+    "cap:ios": "cap open ios"
   },
   "dependencies": {
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/ios": "^7.6.9",
     "matter-js": "^0.20.0",
     "phaser": "^3.90.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.9",
     "@types/matter-js": "^0.20.0",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
