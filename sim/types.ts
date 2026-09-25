@@ -126,11 +126,11 @@ export interface GoalTapState {
   maxChainTicks: number;
 }
 
-/** Match result once state === 'over' (after both days). */
+/** Match result once state === 'over' (manual end / legacy). */
 export interface WinState {
   /** Winning team by aggregate score, or null for a draw. */
   winner: Team | null;
-  /** How the final day ended. */
+  /** How the event ended. */
   reason: 'goal' | 'time';
   /** id of the character who scored the closing goal (null if time / draw). */
   scorerId: string | null;
@@ -149,8 +149,8 @@ export interface SimState {
   rngSeed: number;
   /** Current match state. */
   matchState: MatchState;
-  /** Day of the two-day event (1 or 2). */
-  eventDay: 1 | 2;
+  /** Current endless event day (1, 2, 3, …). */
+  eventDay: number;
   /** Seconds remaining on the current day's clock. */
   matchTimeRemaining: number;
   /**

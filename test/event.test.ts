@@ -184,7 +184,7 @@ test('event: day 1 timer expiry starts day 2 placement without a goal', () => {
   assert.ok(world.matchTimeRemaining > 290);
 });
 
-test('event: late goal on day 2 ends the event with aggregate winner', () => {
+test('event: late goal on day 2 rolls into day 3 placement (endless days)', () => {
   const world = createWorld();
   startMatch(world);
   world.eventDay = 2;
@@ -192,13 +192,19 @@ test('event: late goal on day 2 ends the event with aggregate winner', () => {
   world.matchTimeRemaining = 60;
   threeTapGoal(world);
 
-  assert.equal(world.matchState, 'over');
+  assert.equal(world.matchState, 'placement', 'days are endless — no Final Day');
+  assert.equal(world.eventDay, 3);
   assert.equal(world.score[world.player.team], world.player.team === 0 ? 2 : 1);
-  assert.equal(world.winState?.winner, world.player.team);
-  assert.equal(world.winState?.reason, 'goal');
+  assert.equal(world.winState, null);
+  assert.equal(world.matchTimeRemaining, 0);
+
+  startMatch(world);
+  assert.equal(world.matchState, 'playing');
+  assert.equal(world.eventDay, 3);
+  assert.ok(world.matchTimeRemaining > 290, 'day 3 kickoff gets a fresh ~5:00');
 });
 
-test('event: day 2 timer expiry can draw when scores are level', () => {
+test('event: day 2 timer expiry starts day 3 placement without ending the event', () => {
   const world = createWorld();
   startMatch(world);
   world.eventDay = 2;
@@ -207,22 +213,24 @@ test('event: day 2 timer expiry can draw when scores are level', () => {
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
-  assert.equal(world.matchState, 'over');
-  assert.equal(world.winState?.winner, null, 'level scores are a draw');
-  assert.equal(world.winState?.reason, 'time');
+  assert.equal(world.matchState, 'placement');
+  assert.equal(world.eventDay, 3);
+  assert.equal(world.winState, null, 'level scores do not end an endless event');
   assert.deepEqual(world.score, [1, 1]);
 });
 
-test('event: day 2 timer expiry awards the side ahead on aggregate', () => {
+test('event: day N timer expiry keeps rolling forever', () => {
   const world = createWorld();
   startMatch(world);
-  world.eventDay = 2;
+  world.eventDay = 7;
   world.score = [0, 2];
   world.kickoffTimeRemaining = 0;
   world.matchTimeRemaining = 1 / 60;
   stepWorld(world, IDLE, 1 / 60);
 
-  assert.equal(world.matchState, 'over');
-  assert.equal(world.winState?.winner, 1);
-  assert.equal(world.winState?.reason, 'time');
+  assert.equal(world.matchState, 'placement');
+  assert.equal(world.eventDay, 8);
+  assert.equal(world.winState, null);
+  assert.equal(world.score[1], 2, 'aggregate score is kept across days');
 });
+

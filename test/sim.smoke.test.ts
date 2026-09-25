@@ -517,7 +517,7 @@ test('smoke: goaling — early 3-tap scores and tosses up without ending the eve
   assert.equal(world.ball.ownerId, null, 'toss-up clears ownership');
 });
 
-test('smoke: late goal on day 2 ends the event', () => {
+test('smoke: late goal on day 2 rolls into day 3 (endless days)', () => {
   const world = createWorld();
   startMatch(world);
   world.eventDay = 2;
@@ -531,9 +531,10 @@ test('smoke: late goal on day 2 ends the event', () => {
     for (let i = 0; i < 60; i++) stepWorld(world, IDLE, 1 / 60);
     stepWorld(world, tap, 1 / 60);
   }
-  assert.equal(world.matchState, 'over');
-  assert.ok(world.winState !== null, 'winState populated');
-  assert.equal(world.winState?.winner, world.player.team);
+  assert.equal(world.matchState, 'placement');
+  assert.equal(world.eventDay, 3);
+  assert.equal(world.winState, null);
+  assert.equal(world.score[world.player.team], 1);
 });
 
 test('feel: holding one direction stays on the pitch', () => {
