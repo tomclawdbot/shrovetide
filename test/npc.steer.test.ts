@@ -456,7 +456,7 @@ test('npc: carrier at the scoring millstone auto-taps; early goal tosses up', ()
   assert.equal(world.winState, null);
 });
 
-test('npc: late goal on day 2 ends the event for the scoring side', () => {
+test('npc: late goal on day 2 rolls into day 3 for the scoring side', () => {
   const world = createWorld({ seed: 7, playerTeam: 0 });
   startMatch(world);
   world.eventDay = 2;
@@ -466,11 +466,9 @@ test('npc: late goal on day 2 ends the event for the scoring side', () => {
   isolate(world, hunter.id, goal.x, goal.y - 24);
   giveBallTo(world, hunter.id);
   runTicks(world, IDLE, 120);
-  assert.equal(world.matchState, 'over', 'late day-2 goal finishes the event');
-  assert.equal(world.winState?.reason, 'goal');
-  assert.equal(world.winState?.scorerId, hunter.id);
-  assert.equal(world.winState?.scorerTeam, 1);
-  assert.equal(world.winState?.winner, 1);
+  assert.equal(world.matchState, 'placement', 'late day-2 goal rolls to day 3');
+  assert.equal(world.eventDay, 3);
+  assert.equal(world.winState, null);
   assert.equal(world.score[1], 1);
   assert.equal(world.score[0], 0);
 });
@@ -485,8 +483,9 @@ test('npc: team 0 carrier goals at Sturston, not home Clifton', () => {
   isolate(world, hunter.id, down.x, down.y - 24);
   giveBallTo(world, hunter.id);
   runTicks(world, IDLE, 120);
-  assert.equal(world.matchState, 'over');
-  assert.equal(world.winState?.scorerTeam, 0);
+  assert.equal(world.matchState, 'placement');
+  assert.equal(world.eventDay, 3);
+  assert.equal(world.winState, null);
   assert.equal(world.score[0], 1);
 });
 

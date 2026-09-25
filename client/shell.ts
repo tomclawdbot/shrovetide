@@ -29,6 +29,34 @@ let audioCtx: AudioContext | null = null;
 let unlocked = false;
 let onAudioUnlock: (() => void) | null = null;
 let onViewport: (() => void) | null = null;
+/** User mute preference — shared by pause menu and the unmute shell button. */
+let audioMuted = false;
+let onMuteChange: ((muted: boolean) => void) | null = null;
+
+export function isAudioMuted(): boolean {
+  return audioMuted;
+}
+
+export function setAudioMuted(muted: boolean): void {
+  audioMuted = muted;
+  applyMuteToContext();
+  onMuteChange?.(audioMuted);
+  syncUnmute();
+}
+
+export function toggleAudioMuted(): boolean {
+  setAudioMuted(!audioMuted);
+  return audioMuted;
+}
+
+function applyMuteToContext(): void {
+  if (!audioCtx) return;
+  if (audioMuted) {
+    if (audioCtx.state === 'running') void audioCtx.suspend();
+  } else if (audioCtx.state === 'suspended') {
+    void audioCtx.resume();
+  }
+}
 
 function audioCtor(): typeof AudioContext | null {
   const w = window as Window & { webkitAudioContext?: typeof AudioContext };
@@ -54,7 +82,12 @@ export async function unlockAudio(): Promise<void> {
     return;
   }
   try {
-    if (ctx.state === 'suspended') await ctx.resume();
+    if (!audioMuted && ctx.state === 'suspended') await ctx.resume();
+    if (audioMuted) {
+      unlocked = false;
+      syncUnmute();
+      return;
+    }
     const buf = ctx.createBuffer(1, 1, 22050);
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -117,7 +150,8 @@ function syncUnmute(): void {
   const btn = document.getElementById('unmute-btn');
   if (!btn) return;
   const ctx = audioCtx;
-  const need = !!ctx && ctx.state !== 'running';
+  // Show when Web Audio is locked AND the user has not chosen mute.
+  const need = !audioMuted && !!ctx && ctx.state !== 'running';
   btn.hidden = !need;
 }
 
@@ -166,9 +200,14 @@ function preventZoomAndOverscroll(): void {
   );
 }
 
-export function installGameShell(opts?: { onUnlock?: () => void; onViewport?: () => void }): void {
+export function installGameShell(opts?: {
+  onUnlock?: () => void;
+  onViewport?: () => void;
+  onMuteChange?: (muted: boolean) => void;
+}): void {
   onAudioUnlock = opts?.onUnlock ?? null;
   onViewport = opts?.onViewport ?? null;
+  onMuteChange = opts?.onMuteChange ?? null;
   preventZoomAndOverscroll();
 
   const applyViewport = (): void => {
@@ -184,6 +223,7 @@ export function installGameShell(opts?: { onUnlock?: () => void; onViewport?: ()
   const unmute = document.getElementById('unmute-btn');
   unmute?.addEventListener('pointerdown', (ev) => {
     ev.preventDefault();
+    if (audioMuted) setAudioMuted(false);
     void unlockAudio();
   });
 

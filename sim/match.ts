@@ -1,10 +1,10 @@
 // sim/match.ts — two-day event state machine + scorekeeping + timer.
 //
 // State machine:
-//   placement ──startMatch()──▶ playing (Day 1, plinth throw-up)
+//   placement ──startMatch()──▶ playing (Day N, plinth throw-up)
 //     early goal (<3 min) ──▶ throw-up + 10s recovery (clock paused)
-//     late goal / timer expiry ──▶ Day 2 placement (full reset like Day 1)
-//     Day 2 late goal / timer expiry ──▶ over (aggregate score / draw)
+//     late goal / timer expiry ──▶ Day N+1 placement (full reset; days endless)
+//     endEvent() only for explicit/legacy callers (no Day-2 cap)
 //
 // Pure functions over World state — no callbacks, no events.
 // stepWorld() in world.ts calls tickMatch() each frame to advance the timer
@@ -257,8 +257,8 @@ function restoreSquadBreath(world: World): void {
 export function startMatch(world: World): void {
   if (world.matchState !== 'placement') return;
   world.matchState = 'playing';
-  // Keep eventDay (Day 2 placement already set it to 2).
-  if (world.eventDay !== 1 && world.eventDay !== 2) world.eventDay = 1;
+  // Keep eventDay (next-day placement already advanced it).
+  if (!(world.eventDay >= 1)) world.eventDay = 1;
   if (world.eventDay === 1) world.winState = null;
   throwUpBall(world);
   world.matchTimeRemaining = DEFAULT_MATCH_DURATION_SECONDS;
@@ -307,19 +307,20 @@ export function endDay(
   reason: 'goal' | 'time',
 ): void {
   if (world.matchState !== 'playing') return;
-  if (world.eventDay === 1) {
-    beginDay2Placement(world);
-    return;
-  }
-  endEvent(world, scorerId, scorerTeam, reason);
+  // Days are endless — always roll into the next day's placement.
+  // scorerId / scorerTeam / reason kept for API stability (HUD flashes goal).
+  void scorerId;
+  void scorerTeam;
+  void reason;
+  beginNextDayPlacement(world);
 }
 
 /**
- * Day 2 starts like Day 1: placement phase, auto-reset squads to toss-up
- * shape, fresh Breath, stone on the turn-up. Score is kept.
+ * Roll into the next day's placement: auto-reset squads to toss-up shape,
+ * fresh Breath, stone on the turn-up. Score is kept. Days are endless.
  */
-export function beginDay2Placement(world: World): void {
-  world.eventDay = 2;
+export function beginNextDayPlacement(world: World): void {
+  world.eventDay = Math.max(1, world.eventDay) + 1;
   world.matchState = 'placement';
   world.matchTimeRemaining = 0;
   world.recoveryTimeRemaining = 0;
@@ -333,9 +334,14 @@ export function beginDay2Placement(world: World): void {
   tossUpBall(world);
 }
 
+/** @deprecated Alias — days are endless; prefer beginNextDayPlacement. */
+export function beginDay2Placement(world: World): void {
+  beginNextDayPlacement(world);
+}
+
 /**
- * Finish the two-day event. Winner is whoever leads on aggregate goals;
- * equal scores are a draw (winner null).
+ * Finish the event. Winner is whoever leads on aggregate goals;
+ * equal scores are a draw (winner null). Not used by the endless day loop.
  */
 export function endEvent(
   world: World,

@@ -44,11 +44,16 @@ import {
   type Team,
   type World,
 } from '../sim/index.js';
-import { canvasSafePad, unlockAudio } from './shell.js';
+import {
+  canvasSafePad,
+  isAudioMuted,
+  toggleAudioMuted,
+  unlockAudio,
+} from './shell.js';
 import { resolveKickAim, shouldCommitAim, TouchControls } from './touch.js';
 
 const FIXED_DT = 1 / 60;
-const MAX_STEPS_PER_FRAME = 2;
+const MAX_STEPS_PER_FRAME = 8;
 
 const VIEW_W = 1200;
 const VIEW_H = 800;
@@ -494,6 +499,8 @@ interface KeyState {
   MINUS: Phaser.Input.Keyboard.Key;
   OPEN_BRACKET: Phaser.Input.Keyboard.Key;
   CLOSED_BRACKET: Phaser.Input.Keyboard.Key;
+  ESC: Phaser.Input.Keyboard.Key;
+  P: Phaser.Input.Keyboard.Key;
 }
 
 interface RenderChar {
@@ -569,6 +576,10 @@ export class GameScene extends Phaser.Scene {
   private placeLeft = 0;
   private placeTargetId: string | null = null;
   private spaceReady = false;
+  /** Pause freezes sim clock + physics/AI while still allowing mute. */
+  private paused = false;
+  private pauseLayer: Phaser.GameObjects.Container | null = null;
+  private pauseMuteLabel: Phaser.GameObjects.Text | null = null;
   private eatPointer = false;
   private teach: Teach = 'move';
   private buildTeachAt = 0;
@@ -580,7 +591,7 @@ export class GameScene extends Phaser.Scene {
   private lastThumpAt = 0;
   private lastWall = 0;
   private lastScore: [number, number] = [0, 0];
-  private lastEventDay: 1 | 2 = 1;
+  private lastEventDay = 1;
   private lastStamina = 100;
   private windedUntil = 0;
   private nightfallShownDay = 0;
@@ -651,7 +662,7 @@ export class GameScene extends Phaser.Scene {
 
     const kb = this.input.keyboard;
     if (kb) {
-      kb.addCapture('TAB,SPACE,E,Q,F,W,A,S,D,SHIFT,C');
+      kb.addCapture('TAB,SPACE,E,Q,F,W,A,S,D,SHIFT,C,ESC,P');
       this.keys = {
         W: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
@@ -673,8 +684,12 @@ export class GameScene extends Phaser.Scene {
         MINUS: kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS),
         OPEN_BRACKET: kb.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET),
         CLOSED_BRACKET: kb.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET),
+        ESC: kb.addKey(Phaser.Input.Keyboard.KeyCodes.ESC),
+        P: kb.addKey(Phaser.Input.Keyboard.KeyCodes.P),
       };
       kb.on('keydown-SPACE', this.handleSpace);
+      kb.on('keydown-ESC', this.handlePauseToggle);
+      kb.on('keydown-P', this.handlePauseToggle);
       kb.on('keyup-SPACE', this.handlePassRelease);
       kb.on('keydown-E', () => {
         if (this.flow === 'title') this.setDifficulty('easy');
@@ -2584,7 +2599,7 @@ export class GameScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           VIEW_H / 2,
-          "SHROVETIDE\n\nTwo days · 1pm–10pm each.\nCarry the stone to their millstone.\nThree taps to goal.\n\nGoal before dusk → toss-up.\nNightfall ends the day.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
+          "SHROVETIDE\n\nEndless days · 1pm–10pm each.\nCarry the stone to their millstone.\nThree taps to goal.\n\nGoal before dusk → toss-up.\nNightfall rolls into the next day.\n\nBreath returns only when still.\nSpent Breath = crawl.\n\nEsc / P — pause\nE/N/H — difficulty\nU/1 or D/2 — pick a side",
           {
             fontFamily: FONT,
             fontSize: '24px',
@@ -2722,7 +2737,11 @@ export class GameScene extends Phaser.Scene {
       this.chooseTeam(0);
       return;
     }
-    if (this.flow === 'placing') return;
+    if (this.paused) return;
+    if (this.flow === 'placing') {
+      this.whistle();
+      return;
+    }
     this.beginPassCharge();
   };
 
@@ -3116,6 +3135,13 @@ export class GameScene extends Phaser.Scene {
     const dt = Math.min(1 / 30, Math.max(0, (now - this.lastWall) / 1000));
     this.lastWall = now;
 
+    // While paused: freeze sim clock + physics/AI. Mute still works from the menu.
+    if (this.paused) {
+      this.syncPauseMenu();
+      this.render();
+      return;
+    }
+
     if (this.flow === 'placing') {
       moveControlled(
         this.world,
@@ -3123,8 +3149,8 @@ export class GameScene extends Phaser.Scene {
         this.inputState.move.y * PLACE_SPEED * dt,
       );
       this.placeLeft = Math.max(0, this.placeLeft - dt);
-      if (this.spaceReady && this.keys && Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.whistle();
-      else if (this.placeLeft <= 0) this.whistle();
+      // Space starts play on first press via handleSpace; timer still auto-whistles.
+      if (this.placeLeft <= 0) this.whistle();
     }
 
     if (this.flow === 'playing') {
@@ -3140,7 +3166,10 @@ export class GameScene extends Phaser.Scene {
         this.accumulator -= FIXED_DT;
         steps += 1;
       }
-      if (steps >= MAX_STEPS_PER_FRAME) this.accumulator = 0;
+      // Keep a short backlog so hitchy frames still catch up toward wall clock.
+      if (steps >= MAX_STEPS_PER_FRAME) {
+        this.accumulator = Math.min(this.accumulator, FIXED_DT * 2);
+      }
       this.advanceTeach();
     }
 
@@ -3597,7 +3626,16 @@ export class GameScene extends Phaser.Scene {
     }
     this.updateWindedVeil(exhausted);
 
-    this.timerText.setText(`Day ${this.world.eventDay} · ${formatDayClock(this.world)}`);
+    const clock = formatDayClock(this.world);
+    const status = this.paused
+      ? 'Paused'
+      : this.world.matchState === 'playing'
+        ? 'Playing'
+        : this.world.matchState === 'placement'
+          ? 'Placing'
+          : 'Over';
+    // Live day clock + status — never a static "Full time" label.
+    this.timerText.setText(`Day ${this.world.eventDay} · ${clock} · ${status}`);
     this.scoreText.setText(`Up ${this.world.score[0]} — ${this.world.score[1]} Down`);
     this.updateNightfall();
 
@@ -3615,7 +3653,7 @@ export class GameScene extends Phaser.Scene {
       if (ws.winner === null) {
         msg =
           this.world.score[0] === 0 && this.world.score[1] === 0
-            ? 'Two days. Nobody goaled.'
+            ? 'Nobody goaled.'
             : `Draw.\n${tally}`;
       } else {
         const teamLabel = ws.winner === 0 ? "Up'Ards" : "Down'Ards";
@@ -3706,7 +3744,103 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Enter Day 2 placement — same walk-them-out beat as Day 1. */
-  private beginDay2Placement(): void {
+  
+  private handlePauseToggle = (): void => {
+    if (this.flow !== 'placing' && this.flow !== 'playing') return;
+    if (this.world.matchState === 'over') return;
+    if (this.paused) this.resumeFromPause();
+    else this.openPauseMenu();
+  };
+
+  private openPauseMenu(): void {
+    this.paused = true;
+    this.clearPassCharge();
+    if (!this.pauseLayer) this.buildPauseMenu();
+    this.pauseLayer?.setVisible(true);
+    this.syncPauseMenu();
+  }
+
+  private resumeFromPause(): void {
+    this.paused = false;
+    this.pauseLayer?.setVisible(false);
+    this.lastWall = this.now();
+  }
+
+  private quitToTitle(): void {
+    this.paused = false;
+    this.pauseLayer?.setVisible(false);
+    this.scene.restart();
+  }
+
+  private buildPauseMenu(): void {
+    const layer = this.add.container(0, 0).setDepth(40).setScrollFactor(0);
+    const veil = this.add
+      .rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x0a0806, 0.72)
+      .setScrollFactor(0)
+      .setInteractive();
+    const panel = this.add
+      .rectangle(VIEW_W / 2, VIEW_H / 2, 420, 360, 0x140e0a, 0.96)
+      .setStrokeStyle(2, 0xf3ead4, 0.55)
+      .setScrollFactor(0);
+    const title = this.add
+      .text(VIEW_W / 2, VIEW_H / 2 - 140, 'Paused', {
+        fontFamily: FONT,
+        fontSize: '36px',
+        color: '#f3ead4',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0);
+    const mkBtn = (y: number, label: string, onClick: () => void): Phaser.GameObjects.Text => {
+      const t = this.add
+        .text(VIEW_W / 2, y, label, {
+          fontFamily: FONT,
+          fontSize: '24px',
+          color: '#1a140c',
+          backgroundColor: '#e4d4a8',
+          padding: { x: 28, y: 10 },
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
+      t.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        pointer.event?.stopPropagation?.();
+        this.eatPointer = true;
+        onClick();
+      });
+      return t;
+    };
+    const resume = mkBtn(VIEW_H / 2 - 60, 'Resume', () => this.resumeFromPause());
+    const mute = mkBtn(VIEW_H / 2, 'Mute', () => {
+      toggleAudioMuted();
+      this.syncPauseMenu();
+    });
+    this.pauseMuteLabel = mute;
+    const controls = this.add
+      .text(
+        VIEW_W / 2,
+        VIEW_H / 2 + 70,
+        "Controls\nWASD / stick move · Space / Kick charge\nTab switch · Q nearest · E / Goal tap\nF rip/wriggle · C follow · Esc/P pause",
+        {
+          fontFamily: FONT,
+          fontSize: '16px',
+          color: '#f3ead4',
+          align: 'center',
+        },
+      )
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0);
+    const quit = mkBtn(VIEW_H / 2 + 150, 'Quit to title', () => this.quitToTitle());
+    layer.add([veil, panel, title, resume, mute, controls, quit]);
+    layer.setVisible(false);
+    this.pauseLayer = this.adoptHud(layer);
+  }
+
+  private syncPauseMenu(): void {
+    if (!this.pauseMuteLabel) return;
+    this.pauseMuteLabel.setText(isAudioMuted() ? 'Unmute' : 'Mute');
+  }
+
+  private beginNextDayPlacement(): void {
     this.flow = 'placing';
     this.placeLeft = PLACE_SECONDS;
     this.lastWall = this.now();
@@ -3717,12 +3851,12 @@ export class GameScene extends Phaser.Scene {
     this.buildTeachAt = 0;
     this.scoredJuice = false;
     this.lastScore = [...this.world.score];
-    this.lastEventDay = 2;
+    this.lastEventDay = this.world.eventDay;
     this.lastStamina = this.world.player.stamina;
     this.nightfallShownDay = 0;
     this.windedUntil = 0;
     this.placeTargetId = this.world.npcs.find((n) => n.team === this.world.player.team)?.id ?? null;
-    this.flash('Day 2 — place your people');
+    this.flash(`Day ${this.world.eventDay} — place your people`);
     this.syncTouchFlow();
     this.layoutHud();
   }
@@ -3732,11 +3866,10 @@ export class GameScene extends Phaser.Scene {
     // Day 1 ended → sim returned to placement for Day 2.
     if (
       this.world.matchState === 'placement' &&
-      this.world.eventDay === 2 &&
-      this.lastEventDay === 1 &&
+      this.world.eventDay > this.lastEventDay &&
       this.flow === 'playing'
     ) {
-      this.beginDay2Placement();
+      this.beginNextDayPlacement();
       return;
     }
 
@@ -3798,7 +3931,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.inKickoff()) {
       const mill = scoringGoalMarker(this.world.player.team, this.world.map).name.toUpperCase();
-      const day = this.world.eventDay === 2 ? 'DAY 2 — ' : '';
+      const day = this.world.eventDay > 1 ? `DAY ${this.world.eventDay} — ` : '';
       this.setCaption(
         isBallAirborne(this.world)
           ? `${day}Turned up`

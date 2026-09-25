@@ -2,7 +2,7 @@
 
 import Phaser from 'phaser';
 import { GameScene } from './GameScene.js';
-import { installGameShell } from './shell.js';
+import { installGameShell, isAudioMuted } from './shell.js';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -31,6 +31,15 @@ const config: Phaser.Types.Core.GameConfig = {
 
 const game = new Phaser.Game(config);
 (window as unknown as { game: Phaser.Game }).game = game;
+
+function syncGameMute(): void {
+  try {
+    game.sound.mute = isAudioMuted();
+  } catch {
+    /* sound system may not be ready */
+  }
+}
+
 installGameShell({
   onUnlock: () => {
     try {
@@ -38,8 +47,13 @@ installGameShell({
     } catch {
       /* Phaser sound may not be ready yet */
     }
+    syncGameMute();
   },
   onViewport: () => {
     game.scale.refresh();
   },
+  onMuteChange: () => {
+    syncGameMute();
+  },
 });
+syncGameMute();

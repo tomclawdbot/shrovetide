@@ -218,6 +218,7 @@ export {
   endMatch,
   endDay,
   endEvent,
+  beginNextDayPlacement,
   beginDay2Placement,
   scoreGoal,
   tossUpBall,
